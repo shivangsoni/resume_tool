@@ -36,6 +36,36 @@ npm run build --prefix frontend
 
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 
+### Current development deployment
+
+Last verified: August 5, 2026
+
+| Resource | Value |
+| --- | --- |
+| Subscription | Visual Studio Enterprise Subscription (`b5f1fa5f-c39f-4d7d-866c-57836fe7382f`) |
+| Resource group | `apply` |
+| Application region | `centralus` |
+| Infrastructure deployment | `applypilot-20260805-005152` |
+| Frontend | https://blue-water-0d76ed710.7.azurestaticapps.net |
+| Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Free) |
+| Backend | https://applypilotcentral-api-khaah5ti4wzag.azurewebsites.net |
+| Function App | `applypilotcentral-api-khaah5ti4wzag` (Node.js 22, Linux Consumption) |
+| SQL logical server | `simplyapply.database.windows.net` |
+| SQL database | `applypilot` (Basic) |
+| Key Vault | `applypilotcentralvaultkh` |
+
+Verified production checks:
+
+- Frontend returns HTTP 200 and includes the Static Web Apps security configuration.
+- Frontend CORS and the compiled API URL target the Function App above.
+- `/api/health` returns `status: ok` with Azure SQL connected.
+- `/api/jobs` returns current Greenhouse and Remotive listings.
+- Database migrations `001_initial`, `002_job_search`, and `003_job_sync_procedure` are applied.
+
+### Deployment documentation policy
+
+Any change to Bicep, Azure resource names, regions, application settings, database migrations, build output, deployment packaging, runtime versions, URLs, CORS, or release commands must update this README in the same commit. Deployment instructions are considered incomplete until they have been executed or clearly marked unverified.
+
 ### 1. Prerequisites
 
 Install these tools and confirm they work:
