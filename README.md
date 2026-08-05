@@ -97,18 +97,18 @@ Verified production checks:
 - Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
 - The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
-- The persistent top navigation exposes the Résumé page so signed-in users can upload or replace a PDF/DOCX and review extracted profile fields at any viewport width.
+- The persistent top navigation exposes the Résumé page at every viewport width. It lists current and past PDF/DOCX uploads, previews PDFs with React PDF, downloads DOCX files, and removes individual documents.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
 - Database migrations `001_initial` through `008_submission_queue` are applied by CI/CD before backend publication.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
 - Resumes are held in a private Blob container and accessed by the Function managed identity.
-- Resume extraction uses Document Intelligence through managed identity; detected values fill blank profile fields only.
+- Resume extraction uses Document Intelligence through managed identity, but extracted values remain document metadata and never update the profile automatically.
 - Queuing an application sends a real confirmation to the authenticated identity email through Azure Communication Services when that identity exposes a valid email address.
 
 ### Application lifecycle
 
 1. Sign in with Microsoft through Static Web Apps authentication.
-2. Upload a PDF or DOCX resume (maximum 4 MB on the F0 tier). ApplyPilot extracts reusable details into blank profile fields for review.
+2. Upload one or more PDF or DOCX résumés (maximum 4 MB each on the F0 tier). ApplyPilot retains past versions in private Blob Storage. Extraction is stored as document metadata and never changes the user profile or queued answers.
 3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record with the complete saved profile snapshot and stays inside the portal.
 4. When your résumé or profile changes, queued `review` applications are refreshed automatically with the latest answers.
 5. `POST /api/applications/{id}/submit` verifies ownership and sends the application ID to Azure Service Bus using managed identity.
@@ -417,4 +417,4 @@ The frontend and backend can be redeployed independently. See [docs/JOB_SOURCES.
 
 ## Privacy and security
 
-Profile and application data are scoped to the Microsoft-authenticated user and stored in Azure SQL. Resume files are stored in a private Blob container; extracted fields and status are stored in SQL. Existing profile fields are never overwritten by extraction. The browser keeps only non-sensitive display preferences as a fallback. Never enter passwords, Social Security numbers, government IDs, or payment information, and never upload those values as screening answers.
+Profile and application data are scoped to the authenticated user and stored in Azure SQL. Résumé files are stored in a private Blob container; extraction and status are document metadata only. Uploading or deleting a résumé does not alter profile fields. The browser keeps only non-sensitive display preferences as a fallback. Never enter passwords, Social Security numbers, government IDs, or payment information, and never upload those values as screening answers.

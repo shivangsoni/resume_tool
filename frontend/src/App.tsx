@@ -15,10 +15,14 @@ import {
   Settings,
   SlidersHorizontal,
   Upload,
+  Trash2,
   UserRound,
   WandSparkles,
   X,
 } from "lucide-react";
+import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
 import {
   createApplication,
@@ -27,13 +31,18 @@ import {
   getCurrentUser,
   getMailbox,
   getRemoteProfile,
+  getResumes,
+  getResumeContentUrl,
   putRemoteProfile,
   markMailboxMessageRead,
   updateApplication,
   uploadResume,
+  deleteResume,
 } from "./api";
-import type { Application, MailMessage, Profile } from "./types";
+import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
+
+pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
 type Job = {
@@ -83,11 +92,7 @@ export default function App() {
     userDetails?: string;
   } | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [resumeDocument, setResumeDocument] = useState<{
-    name: string;
-    size: number;
-    extractionStatus: "succeeded" | "failed";
-  } | null>(null);
+  const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
@@ -97,9 +102,10 @@ export default function App() {
       .then(async (user) => {
         setCurrentUser(user);
         if (user) {
-          const [remoteProfile, remoteApplications] = await Promise.all([
+          const [remoteProfile, remoteApplications, remoteResumes] = await Promise.all([
             getRemoteProfile(),
             getApplications(),
+            getResumes(),
           ]);
           if (remoteProfile.profile) {
             const normalized = { ...emptyProfile, ...remoteProfile.profile };
@@ -107,6 +113,7 @@ export default function App() {
             saveProfile(normalized);
           }
           setApplications(remoteApplications.applications);
+          setResumeDocuments(remoteResumes.documents);
         }
       })
       .catch(() => notify("Account data could not be loaded"))
@@ -364,7 +371,7 @@ export default function App() {
         )}
         {page === "resume" && (
           <Resume
-            document={resumeDocument}
+            documents={resumeDocuments}
             upload={async (file) => {
               if (!currentUser) {
                 location.href = "/.auth/login/aad?post_login_redirect_uri=/dashboard";
@@ -372,31 +379,26 @@ export default function App() {
               }
               try {
                 const result = await uploadResume(file);
-                setResumeDocument({
-                  name: result.document.FileName,
-                  size: result.document.SizeBytes,
-                  extractionStatus: result.extractionStatus,
-                });
-                if (result.profile) {
-                  const normalized = { ...emptyProfile, ...result.profile };
-                  setProfile(normalized);
-                  saveProfile(normalized);
-                }
-                try {
-                  const refreshed = await getApplications();
-                  setApplications(refreshed.applications);
-                } catch {
-                  // ignore application refresh failures for upload
-                }
+                setResumeDocuments((items) => [result.document, ...items.map((item) => ({ ...item, isPrimary: false }))]);
                 notify(
                   result.extractionStatus === "succeeded"
-                    ? "Resume uploaded; detected details added to blank profile fields"
+                    ? "Résumé uploaded. Your profile was not changed."
                     : "Resume uploaded securely, but automatic extraction needs retrying",
                 );
               } catch (error) {
                 notify(
                   error instanceof Error ? error.message : "Upload failed",
                 );
+              }
+            }}
+            remove={async (id) => {
+              try {
+                await deleteResume(id);
+                const refreshed = await getResumes();
+                setResumeDocuments(refreshed.documents);
+                notify("Résumé removed");
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "Résumé could not be removed");
               }
             }}
           />
@@ -870,44 +872,30 @@ function Applications({
   );
 }
 function Resume({
-  document,
+  documents,
   upload,
+  remove,
 }: {
-  document: {
-    name: string;
-    size: number;
-    extractionStatus: "succeeded" | "failed";
-  } | null;
+  documents: ResumeDocument[];
   upload: (file: File) => Promise<void>;
+  remove: (id: string) => Promise<void>;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pageCount, setPageCount] = useState(0);
+  const selected = documents.find((item) => item.id === selectedId) || documents[0] || null;
   return (
     <div className="basic-page">
-      <h1>Resumes</h1>
-      <p>Your résumé powers job matching and application answers.</p>
+      <h1>Résumés</h1>
+      <p>Upload and review résumé versions. Uploading never changes your profile automatically.</p>
       <div className="upload-card">
         <span>
           <Upload />
         </span>
-        <h2>{document ? document.name : "Upload your primary résumé"}</h2>
-        <p>
-          {document
-            ? `${(document.size / 1024).toFixed(0)} KB · Stored privately in Azure`
-            : "PDF or DOCX, up to 4 MB"}
-        </p>
-        {document && (
-          <p className={`extraction-status ${document.extractionStatus}`}>
-            {document.extractionStatus === "succeeded"
-              ? "Details extracted. Review your profile before applying."
-              : "The file is safe in Blob Storage, but details were not extracted."}
-          </p>
-        )}
+        <h2>Upload another résumé</h2>
+        <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
         <label className="apply">
-          {uploading
-            ? "Uploading…"
-            : document
-              ? "Replace résumé"
-              : "Choose résumé"}
+          {uploading ? "Uploading…" : "Choose résumé"}
           <input
             type="file"
             accept=".pdf,.docx"
@@ -926,6 +914,31 @@ function Resume({
             }}
           />
         </label>
+      </div>
+      <div className="resume-library">
+        <section className="resume-history simple-card">
+          <h2>Uploaded résumés</h2>
+          {documents.length === 0 && <p>No résumés uploaded yet.</p>}
+          {documents.map((item) => (
+            <article className={selected?.id === item.id ? "selected" : ""} key={item.id}>
+              <button className="resume-select" onClick={() => { setSelectedId(item.id); setPageCount(0); }}>
+                <FileText />
+                <span><b>{item.fileName}</b><small>{(item.sizeBytes / 1024).toFixed(0)} KB · {new Date(item.createdAt).toLocaleDateString()} {item.isPrimary ? "· Primary" : ""}</small></span>
+              </button>
+              <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Trash2 /></button>
+            </article>
+          ))}
+        </section>
+        <section className="resume-preview simple-card">
+          <h2>{selected ? selected.fileName : "Preview"}</h2>
+          {!selected ? <p>Select an uploaded PDF to preview it.</p> : selected.contentType !== "application/pdf" ? (
+            <div className="resume-preview-empty"><FileText /><p>DOCX preview is not available in the browser.</p><a className="apply" href={getResumeContentUrl(selected.id)} download={selected.fileName}>Download DOCX</a></div>
+          ) : (
+            <PdfDocument key={selected.id} file={getResumeContentUrl(selected.id)} loading="Loading PDF…" error="PDF preview could not be loaded." onLoadSuccess={({ numPages }) => setPageCount(numPages)}>
+              {Array.from({ length: pageCount }, (_, index) => <PdfPage key={index + 1} pageNumber={index + 1} renderAnnotationLayer renderTextLayer />)}
+            </PdfDocument>
+          )}
+        </section>
       </div>
     </div>
   );

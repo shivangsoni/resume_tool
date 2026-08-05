@@ -51,3 +51,13 @@ export type MailMessage = {
   isRead: boolean;
   attachmentCount: number;
 };
+
+export type ResumeDocument = {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  isPrimary: boolean;
+  extractionStatus: "not_requested" | "processing" | "succeeded" | "failed";
+  createdAt: string;
+};

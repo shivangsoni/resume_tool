@@ -89,8 +89,8 @@ The inbound path uses Postmark's inbound stream and authenticated Azure Function
 2. The Function validates MIME type and size and stores the original in the private `resumes` container under a hashed user prefix and random filename.
 3. The Function uses its managed identity to call the GA `prebuilt-layout` Document Intelligence model.
 4. Deterministic parsing derives candidate name, email, phone, LinkedIn, portfolio, and recognized technical skills from returned text.
-5. Extraction output and status are recorded in SQL. Detected values fill only blank profile fields; existing candidate values are never overwritten.
-6. The browser displays extraction status and asks the candidate to review the profile.
+5. Extraction output and status are recorded only as document metadata. Uploading a résumé never modifies candidate profile fields or queued application answers.
+6. The résumé library lists every retained version. Authenticated users can preview PDFs through React PDF, download DOCX files, and remove documents they own.
 
 If analysis fails, the upload remains available and is recorded with `failed` extraction status. A temporary analysis failure therefore does not lose the candidate's file.
 
@@ -104,7 +104,7 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 6. Unsupported providers or missing requirements move the application to `needs_action`; they are never represented as submitted.
 7. Transient provider errors are retried by Service Bus up to five deliveries, then retained in the dead-letter queue for investigation.
 8. Only a non-empty employer receipt advances the record to `submitted`; every attempt and receipt is audited in SQL.
-9. When a résumé upload or profile update enriches the candidate profile, review applications are refreshed with the latest saved answers.
+9. Only an explicit profile save refreshes blank answers on review applications; résumé uploads remain isolated from profile and application data.
 
 ```mermaid
 stateDiagram-v2
@@ -207,6 +207,7 @@ Infrastructure deployment precedes backend deployment when a service or setting 
 
 - Job providers are isolated so one provider failure does not invalidate other results.
 - Resume upload and extraction have distinct outcomes; extraction failure does not discard the file.
+- Résumé list, content, and deletion operations are scoped to the authenticated internal user ID; Blob Storage remains private and content responses disable caching and MIME sniffing.
 - Health checks expose API and SQL connectivity without credentials or personal data.
 - Application Insights receives Function errors and extraction warnings.
 - Application snapshots preserve employer URLs and titles after upstream job removal.

@@ -1,4 +1,4 @@
-import type { Application, MailMessage, Profile } from "./types";
+import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
 
@@ -80,18 +80,15 @@ export async function uploadResume(file: File) {
   if (!response.ok)
     throw new Error(body.error || `Upload failed (${response.status})`);
   return body as {
-    document: {
-      Id: string;
-      FileName: string;
-      SizeBytes: number;
-      CreatedAt: string;
-      ExtractionStatus: "succeeded" | "failed";
-    };
-    profile?: Profile;
+    document: ResumeDocument;
     suggestions: Partial<Profile>;
     extractionStatus: "succeeded" | "failed";
   };
 }
+
+export const getResumes = () => request<{ documents: ResumeDocument[] }>("/resumes");
+export const getResumeContentUrl = (id: string) => `${API}/resumes/${encodeURIComponent(id)}/content`;
+export const deleteResume = (id: string) => request<void>(`/resumes/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 export const getMailbox = (offset = 0) =>
   request<{ address: string | null; messages: MailMessage[]; total: number }>(`/mailbox?limit=25&offset=${offset}`);

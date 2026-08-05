@@ -212,6 +212,60 @@ export async function saveDocument(principal, document) {
   } catch (error) { await transaction.rollback(); throw error; }
 }
 
+const mapDocument = (row) => ({
+  id: row.Id,
+  fileName: row.FileName,
+  contentType: row.ContentType,
+  sizeBytes: Number(row.SizeBytes),
+  isPrimary: Boolean(row.IsPrimary),
+  extractionStatus: row.ExtractionStatus,
+  createdAt: row.CreatedAt,
+});
+
+export async function listResumeDocuments(principal) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).query(`
+    SELECT Id,FileName,ContentType,SizeBytes,IsPrimary,ExtractionStatus,CreatedAt
+    FROM dbo.Documents WHERE UserId=@userId AND DocumentType='resume'
+    ORDER BY IsPrimary DESC, CreatedAt DESC;
+  `);
+  return result.recordset.map(mapDocument);
+}
+
+export async function getResumeDocument(principal, id) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id).query(`
+    SELECT Id,FileName,ContentType,BlobName,SizeBytes,IsPrimary,ExtractionStatus,CreatedAt
+    FROM dbo.Documents WHERE Id=@id AND UserId=@userId AND DocumentType='resume';
+  `);
+  return result.recordset[0] || null;
+}
+
+export async function deleteResumeDocument(principal, id) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    const found = await new sql.Request(transaction).input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id).query(`
+      DELETE FROM dbo.Documents OUTPUT deleted.BlobName,deleted.IsPrimary
+      WHERE Id=@id AND UserId=@userId AND DocumentType='resume';
+    `);
+    if (!found.recordset.length) { await transaction.rollback(); return null; }
+    if (found.recordset[0].IsPrimary) {
+      await new sql.Request(transaction).input("userId", sql.UniqueIdentifier, userId).query(`
+        UPDATE dbo.Documents SET IsPrimary=1 WHERE Id=(
+          SELECT TOP 1 Id FROM dbo.Documents WHERE UserId=@userId AND DocumentType='resume' ORDER BY CreatedAt DESC
+        );
+      `);
+    }
+    await transaction.commit();
+    return found.recordset[0].BlobName;
+  } catch (error) { await transaction.rollback(); throw error; }
+}
+
 export async function persistJobs(jobs) {
   const connection = pool();
   if (!connection || !jobs.length) return false;
