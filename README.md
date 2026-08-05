@@ -116,6 +116,18 @@ Required external inputs:
 
 Azure Communication Services Email provides outbound delivery only. The deployed Azure-managed domain sends queue confirmations from its fixed `donotreply@...azurecomm.net` address; Azure-managed sender usernames cannot be personalized. The Function uses managed identity with the Communication and Email Service Owner role, so no email connection string is stored in the app.
 
+Inbound mail uses a Postmark inbound stream. Until the custom MX domain is verified, each user receives a plus-addressed alias under the server address configured by `POSTMARK_INBOUND_ADDRESS`. After Postmark verifies `applypilotmail.accesscam.org`, set `mailboxDomain` in `infra/dev.bicepparam` to expose the shorter `alias@applypilotmail.accesscam.org` form. The webhook is an Azure Function with `function` authorization; never commit or publish its function key.
+
+After deploying the backend, retrieve the webhook key locally and paste the resulting URL into Postmark **Inbound stream → Webhook URL**:
+
+```powershell
+$webhookKey = az functionapp function keys list --resource-group apply --name $backendName --function-name postmarkInbound --query default -o tsv
+$postmarkWebhook = "$frontendUrl/api/webhooks/postmark/inbound?code=$webhookKey"
+$postmarkWebhook | Set-Clipboard
+```
+
+Postmark must receive HTTP 200 from its webhook check. Apply migration `007_inbound_mailbox.sql` before sending the check payload. Messages are deduplicated by provider message ID; only bounded plain text and attachment counts are stored, and attachment downloads remain disabled pending malware scanning.
+
 `apply.com` is not owned by this subscription and cannot be used or verified here. Unique receiving aliases such as `username@your-domain.example` require:
 
 1. A domain you own and can verify through DNS.
@@ -229,6 +241,7 @@ sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/003_job_sync_proced
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/004_application_workflow.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/005_resume_documents.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/006_resume_extraction.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/007_inbound_mailbox.sql
 ```
 
 Next, open `db/bootstrap/001_function_identity.sql`, replace `APPLY_FUNCTION_APP_NAME` with the value of `$backendName`, and execute it:
@@ -259,6 +272,19 @@ az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
 Always repeat this backend package deployment after any Bicep run that creates or updates the Static Web Apps linked backend. The infrastructure release can recreate the link metadata; publishing and restarting the Function afterward ensures `/api/*` routes are registered at the edge.
+
+If `config-zip` times out and Application Insights reports `0 functions loaded`, compare the local ZIP length with the blob referenced by `WEBSITE_RUN_FROM_PACKAGE`; an interrupted upload can leave a truncated package. Upload the validated ZIP to the private `function-releases` container and use managed-identity package loading instead of a SAS URL:
+
+```powershell
+$packageBlob = 'releases/backend.zip'
+$storageKey = az storage account keys list --resource-group $resourceGroup --account-name $storageAccountName --query '[0].value' -o tsv
+az storage blob upload --account-name $storageAccountName --account-key $storageKey --container-name function-releases --name $packageBlob --file backend.zip --overwrite true
+$packageUrl = "https://$storageAccountName.blob.core.windows.net/function-releases/$packageBlob"
+az functionapp config appsettings set --resource-group $resourceGroup --name $backendName --settings WEBSITE_RUN_FROM_PACKAGE=$packageUrl WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned --output none
+az functionapp restart --resource-group $resourceGroup --name $backendName
+```
+
+The Function's existing Storage Blob Data Contributor role permits this private read; do not make the package container public.
 
 After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 

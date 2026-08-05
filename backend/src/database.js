@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { createHash } from "node:crypto";
 
 let poolPromise;
 
@@ -152,4 +153,59 @@ export async function checkDatabase() {
     poolPromise = undefined;
     return { configured: true, connected: false };
   }
+}
+
+const mailboxAlias = (subject) => `u${createHash("sha256").update(subject).digest("hex").slice(0, 20)}`;
+const mapMessage = (row) => ({ id: row.Id, from: { name: row.SenderName, email: row.SenderEmail }, subject: row.Subject, textBody: row.TextBody || "", receivedAt: row.ReceivedAt, isRead: Boolean(row.IsRead), attachmentCount: row.AttachmentCount });
+
+export async function ensureMailbox(principal) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("alias", sql.VarChar(64), mailboxAlias(principal.subject)).query(`
+    MERGE dbo.Mailboxes WITH (HOLDLOCK) AS target
+    USING (SELECT @userId UserId, @alias Alias) incoming ON target.UserId=incoming.UserId
+    WHEN MATCHED THEN UPDATE SET Alias=target.Alias
+    WHEN NOT MATCHED THEN INSERT (UserId, Alias) VALUES (incoming.UserId, incoming.Alias)
+    OUTPUT inserted.Id, inserted.Alias;
+  `);
+  return result.recordset[0];
+}
+
+export async function listInboundMessages(principal, limit = 25, offset = 0) {
+  const mailbox = await ensureMailbox(principal);
+  const db = await pool();
+  const result = await db.request().input("mailboxId", sql.UniqueIdentifier, mailbox.Id).input("limit", sql.Int, limit).input("offset", sql.Int, offset).query(`
+    SELECT *, COUNT(*) OVER() TotalCount FROM dbo.InboundMessages WHERE MailboxId=@mailboxId
+    ORDER BY ReceivedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
+  `);
+  return { mailbox, messages: result.recordset.map(mapMessage), total: result.recordset[0]?.TotalCount || 0 };
+}
+
+export async function markInboundMessageRead(principal, id) {
+  const mailbox = await ensureMailbox(principal);
+  const db = await pool();
+  const result = await db.request().input("mailboxId", sql.UniqueIdentifier, mailbox.Id).input("id", sql.UniqueIdentifier, id).query(`
+    UPDATE dbo.InboundMessages SET IsRead=1 OUTPUT inserted.* WHERE Id=@id AND MailboxId=@mailboxId;
+  `);
+  return result.recordset.length ? mapMessage(result.recordset[0]) : null;
+}
+
+export async function saveInboundMessage(payload) {
+  const alias = String(payload.MailboxHash || "").toLowerCase() || String(payload.ToFull?.[0]?.Email || payload.To || "").split("@")[0].split("+").pop().toLowerCase();
+  if (!alias) return null;
+  const db = await pool();
+  const result = await db.request().input("alias", sql.VarChar(64), alias)
+    .input("providerId", sql.NVarChar(255), String(payload.MessageID || "").slice(0, 255))
+    .input("senderName", sql.NVarChar(200), String(payload.FromName || payload.FromFull?.Name || "").slice(0, 200) || null)
+    .input("senderEmail", sql.NVarChar(320), String(payload.FromFull?.Email || payload.From || "").slice(0, 320))
+    .input("subject", sql.NVarChar(500), String(payload.Subject || "(no subject)").slice(0, 500))
+    .input("body", sql.NVarChar(sql.MAX), String(payload.TextBody || payload.StrippedTextReply || "").slice(0, 250000))
+    .input("receivedAt", sql.DateTime2, new Date(payload.Date || Date.now()))
+    .input("attachments", sql.Int, Math.min(Number(payload.Attachments?.length || 0), 100)).query(`
+      INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ReceivedAt,AttachmentCount)
+      OUTPUT inserted.*
+      SELECT Id,@providerId,@senderName,@senderEmail,@subject,@body,@receivedAt,@attachments FROM dbo.Mailboxes WHERE Alias=@alias
+      AND NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
+    `);
+  return result.recordset.length ? mapMessage(result.recordset[0]) : null;
 }

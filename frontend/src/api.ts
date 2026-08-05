@@ -1,4 +1,4 @@
-import type { Application, Profile } from "./types";
+import type { Application, MailMessage, Profile } from "./types";
 
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
 
@@ -92,3 +92,9 @@ export async function uploadResume(file: File) {
     extractionStatus: "succeeded" | "failed";
   };
 }
+
+export const getMailbox = (offset = 0) =>
+  request<{ address: string | null; messages: MailMessage[]; total: number }>(`/mailbox?limit=25&offset=${offset}`);
+
+export const markMailboxMessageRead = (id: string) =>
+  request<{ message: MailMessage }>(`/mailbox/${id}`, { method: "PATCH", body: "{}" });

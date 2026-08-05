@@ -25,12 +25,14 @@ import {
   getApplications,
   getAllJobs,
   getCurrentUser,
+  getMailbox,
   getRemoteProfile,
   putRemoteProfile,
+  markMailboxMessageRead,
   updateApplication,
   uploadResume,
 } from "./api";
-import type { Application, Profile } from "./types";
+import type { Application, MailMessage, Profile } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
@@ -947,11 +949,39 @@ function AuthPage() {
 }
 
 function InboxPage() {
+  const [messages, setMessages] = useState<MailMessage[]>([]);
+  const [address, setAddress] = useState<string | null>(null);
+  const [selected, setSelected] = useState<MailMessage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getMailbox().then((result) => {
+      setAddress(result.address);
+      setMessages(result.messages);
+      setSelected(result.messages[0] || null);
+    }).catch((cause) => setError(cause.message === "AUTH_REQUIRED" ? "Sign in to open your mailbox." : cause.message)).finally(() => setLoading(false));
+  }, []);
+
+  const openMessage = async (message: MailMessage) => {
+    setSelected(message);
+    if (!message.isRead) {
+      const result = await markMailboxMessageRead(message.id);
+      setMessages((current) => current.map((item) => item.id === message.id ? result.message : item));
+      setSelected(result.message);
+    }
+  };
+
   return (
     <div className="simple-page">
       <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Application messages received through a connected mailbox appear here.</p></div>
-      <div className="info-banner">Outbound queue confirmations are sent to your sign-in email. An inbound mailbox provider is not connected yet, so no messages are fabricated or copied from another account.</div>
-      <section className="simple-card empty-feature"><Mail /><h2>Inbound mailbox requires a verified domain</h2><p>Connect an owned domain and inbound email webhook before unique aliases and recruiter replies can be synchronized.</p><button disabled>Domain and inbound provider required</button></section>
+      {address && <div className="info-banner">Your private application address: <strong>{address}</strong></div>}
+      {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Use the address above on applications. Recruiter replies and verification messages will appear here.</p></section> : (
+        <section className="simple-card mailbox-layout">
+          <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
+          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p><pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
+        </section>
+      )}
     </div>
   );
 }

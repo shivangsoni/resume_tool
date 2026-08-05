@@ -1417,6 +1417,17 @@ select {
 .setting-row small {
   display: block;
 }
+.mailbox-layout { display: grid; grid-template-columns: minmax(260px, 34%) 1fr; min-height: 520px; overflow: hidden; }
+.mail-list { border-right: 1px solid #e5e7eb; max-height: 650px; overflow-y: auto; }
+.mail-list button { display: grid; width: 100%; border: 0; border-bottom: 1px solid #e5e7eb; background: white; padding: 16px; text-align: left; gap: 5px; color: #667085; }
+.mail-list button b { color: #182230; }
+.mail-list button.unread b, .mail-list button.unread span { font-weight: 700; }
+.mail-list button.active { background: #eff6ff; border-left: 3px solid #2563eb; }
+.mail-list button small { color: #98a2b3; }
+.mail-content { padding: 24px; min-width: 0; }
+.mail-content h2 { margin: 0 0 8px; }
+.mail-from { color: #667085; border-bottom: 1px solid #e5e7eb; padding-bottom: 16px; }
+.mail-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
 .queued-message {
   color: #8a5300;
   background: #fff7e8;
@@ -1576,4 +1587,6 @@ select {
   .searchbox {
     width: 100%;
   }
+  .mailbox-layout { grid-template-columns: 1fr; }
+  .mail-list { border-right: 0; max-height: 300px; }
 }

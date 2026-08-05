@@ -2,7 +2,8 @@
   "routes": [
     { "route": "/api/profile*", "allowedRoles": ["authenticated"] },
     { "route": "/api/applications*", "allowedRoles": ["authenticated"] },
-    { "route": "/api/resume*", "allowedRoles": ["authenticated"] }
+    { "route": "/api/resume*", "allowedRoles": ["authenticated"] },
+    { "route": "/api/mailbox*", "allowedRoles": ["authenticated"] }
   ],
   "navigationFallback": { "rewrite": "/index.html", "exclude": ["/assets/*.{css,js,png,jpg,svg}", "/api/*", "/.auth/*"] },
   "globalHeaders": {

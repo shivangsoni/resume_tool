@@ -10,6 +10,8 @@ param greenhouseBoards string
 param documentIntelligenceEndpoint string
 param emailEndpoint string
 param emailSenderAddress string
+param postmarkInboundAddress string = ''
+param mailboxDomain string = ''
 param tags object
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -93,6 +95,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligenceEndpoint }
         { name: 'EMAIL_COMMUNICATION_ENDPOINT', value: emailEndpoint }
         { name: 'EMAIL_SENDER_ADDRESS', value: emailSenderAddress }
+        { name: 'POSTMARK_INBOUND_ADDRESS', value: postmarkInboundAddress }
+        { name: 'MAILBOX_DOMAIN', value: mailboxDomain }
       ]
     }
   }

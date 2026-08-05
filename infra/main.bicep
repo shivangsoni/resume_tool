@@ -22,6 +22,12 @@ param sqlServerName string
 @description('Database name created on the existing SQL server.')
 param sqlDatabaseName string = 'applypilot'
 
+@description('Postmark server inbound address used for plus-addressed user mailboxes.')
+param postmarkInboundAddress string = ''
+
+@description('Custom inbound domain after its MX record is connected to Postmark.')
+param mailboxDomain string = ''
+
 @description('Tags applied to every supported resource.')
 param tags object = {
   application: 'ApplyPilot'
@@ -87,6 +93,8 @@ module backend 'modules/backend.bicep' = {
     documentIntelligenceEndpoint: documentIntelligence.outputs.endpoint
     emailEndpoint: email.outputs.endpoint
     emailSenderAddress: email.outputs.senderAddress
+    postmarkInboundAddress: postmarkInboundAddress
+    mailboxDomain: mailboxDomain
     tags: tags
   }
 }

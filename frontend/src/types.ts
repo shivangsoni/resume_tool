@@ -41,3 +41,13 @@ export type Application = {
   updatedAt: string;
   appliedAt?: string;
 };
+
+export type MailMessage = {
+  id: string;
+  from: { name?: string | null; email: string };
+  subject: string;
+  textBody: string;
+  receivedAt: string;
+  isRead: boolean;
+  attachmentCount: number;
+};

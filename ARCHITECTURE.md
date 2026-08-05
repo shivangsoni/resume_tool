@@ -73,7 +73,7 @@ flowchart LR
     Function -. consented forwarding .-> IdentityEmail
 ```
 
-The solid path is deployed. The dotted inbound path is intentionally inactive until an owned domain and inbound provider are supplied. Azure Communication Services Email is not a receiving mailbox service, and an Azure-managed domain cannot provide personalized sender usernames.
+The inbound path uses Postmark's inbound stream and authenticated Azure Function webhook. Postmark parses messages addressed to a deterministic per-user alias, the Function maps that alias to an internal user, and SQL stores bounded plain-text content. The custom Dynu hostname is activated only after its MX record and Postmark inbound-domain forwarding are verified. Azure Communication Services remains the outbound notification service.
 
 ### Resume ingestion and profile enrichment
 
