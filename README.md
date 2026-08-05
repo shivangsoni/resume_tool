@@ -72,7 +72,7 @@ The SQL grant step reads the browser worker's managed-identity principal ID from
 
 The GitHub SQL principal also requires `ALTER ANY USER`, provisioned by `db/bootstrap/002_github_identity.sql`, to create or repair that contained worker user. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
 
-The worker principal ID is converted through SQL Server's `uniqueidentifier` representation before it is used as the contained user's SID. Do not remove this conversion: concatenating the GUID's display-order hex produces a different SID and causes token-based worker logins to fail. The Container Apps Service Bus scaler receives the bare namespace name, while the worker process receives the fully qualified namespace hostname.
+The browser worker uses a Bicep-managed user-assigned identity so its application/client ID is stable and available without Microsoft Graph. That client ID is converted through SQL Server's `uniqueidentifier` representation before it is used as the contained user's SID; using the identity's principal/object ID causes token-based worker logins to fail. The Container Apps Service Bus scaler receives the bare namespace name, while the worker process receives the fully qualified namespace hostname.
 
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 

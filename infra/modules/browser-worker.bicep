@@ -44,11 +44,20 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
 }
 
+resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${name}-id'
+  location: location
+  tags: tags
+}
+
 resource worker 'Microsoft.App/containerApps@2025-07-01' = {
   name: name
   location: location
   tags: tags
-  identity: { type: 'SystemAssigned' }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${workerIdentity.id}': {} }
+  }
   properties: {
     managedEnvironmentId: environment.id
     configuration: {
@@ -67,6 +76,7 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           { name: 'AZURE_SQL_DATABASE', value: sqlDatabaseName }
           { name: 'AZURE_STORAGE_ACCOUNT', value: storageAccountName }
           { name: 'RESUME_CONTAINER', value: 'resumes' }
+          { name: 'AZURE_CLIENT_ID', value: workerIdentity.properties.clientId }
         ]
         resources: {
           cpu: json('1.0')
@@ -85,7 +95,7 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
               queueName: queueName
               messageCount: '1'
             }
-            identity: 'system'
+            identity: workerIdentity.id
           }
         }]
       }
@@ -94,10 +104,10 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
 }
 
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, worker.id, 'acr-pull')
+  name: guid(registry.id, workerIdentity.id, 'acr-pull')
   scope: registry
   properties: {
-    principalId: worker.identity.principalId
+    principalId: workerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
   }
@@ -108,10 +118,10 @@ resource bus 'Microsoft.ServiceBus/namespaces@2024-01-01' existing = {
 }
 
 resource busReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(bus.id, worker.id, 'receiver')
+  name: guid(bus.id, workerIdentity.id, 'receiver')
   scope: bus
   properties: {
-    principalId: worker.identity.principalId
+    principalId: workerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '090c5cfd-751d-490a-894a-3ce6f1109419')
   }
@@ -122,10 +132,10 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
 }
 
 resource blobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, worker.id, 'blob-reader')
+  name: guid(storage.id, workerIdentity.id, 'blob-reader')
   scope: storage
   properties: {
-    principalId: worker.identity.principalId
+    principalId: workerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
   }
@@ -134,3 +144,6 @@ resource blobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 output workerName string = worker.name
 output registryName string = registry.name
 output registryServer string = registry.properties.loginServer
+output identityName string = workerIdentity.name
+output identityId string = workerIdentity.id
+output identityClientId string = workerIdentity.properties.clientId

@@ -25,6 +25,7 @@ env:
   FRONTEND_URL: https://blue-water-0d76ed710.7.azurestaticapps.net
   BROWSER_WORKER: applypilotcentral-browser-khaah5
   BROWSER_REGISTRY: applypilotcentralbrowserkhaah5w2
+  BROWSER_IDENTITY: applypilotcentral-browser-khaah5-id
   AZURE_CLIENT_ID: f7743fa2-90ca-4580-a292-012e5ccac741
   AZURE_TENANT_ID: 80fa3d36-87ac-489f-890a-6f0b55870bc5
   AZURE_SUBSCRIPTION_ID: b5f1fa5f-c39f-4d7d-866c-57836fe7382f
@@ -88,9 +89,9 @@ jobs:
           AZURE_SQL_DATABASE: applypilot
           WORKER_IDENTITY_NAME: ${{ env.BROWSER_WORKER }}
         run: |
-          worker_principal_id="$(az containerapp show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --query identity.principalId --output tsv)"
-          test -n "$worker_principal_id"
-          WORKER_PRINCIPAL_ID="$worker_principal_id" npm run grant-worker --prefix backend
+          worker_client_id="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_IDENTITY" --query clientId --output tsv)"
+          test -n "$worker_client_id"
+          WORKER_CLIENT_ID="$worker_client_id" npm run grant-worker --prefix backend
 
       - name: Remove temporary SQL firewall rule
         if: always() && steps.sql_firewall.outputs.rule_name != ''
@@ -116,7 +117,9 @@ jobs:
       - name: Build and deploy Playwright browser worker
         run: |
           az acr build --registry "$BROWSER_REGISTRY" --image "applypilot-browser:${GITHUB_SHA}" worker
-          az containerapp registry set --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --server "${BROWSER_REGISTRY}.azurecr.io" --identity system
+          worker_identity_id="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_IDENTITY" --query id --output tsv)"
+          test -n "$worker_identity_id"
+          az containerapp registry set --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --server "${BROWSER_REGISTRY}.azurecr.io" --identity "$worker_identity_id"
           az containerapp update --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --image "${BROWSER_REGISTRY}.azurecr.io/applypilot-browser:${GITHUB_SHA}" --command npm start
 
       - name: Build frontend
