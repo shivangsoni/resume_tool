@@ -81,7 +81,7 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           custom: {
             type: 'azure-servicebus'
             metadata: {
-              namespace: serviceBusNamespace
+              namespace: first(split(serviceBusNamespace, '.'))
               queueName: queueName
               messageCount: '1'
             }
