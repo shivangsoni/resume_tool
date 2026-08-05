@@ -1,8 +1,6 @@
 param name string
 param location string
 param functionPrincipalId string
-param secretName string
-param secretValue string
 param tags object
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
@@ -30,14 +28,4 @@ resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource aadSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (secretValue != '') {
-  name: '${vault.name}/${secretName}'
-  properties: {
-    value: secretValue
-  }
-  dependsOn: [vault]
-}
-
 output name string = vault.name
-output id string = vault.id
-output uri string = vault.properties.vaultUri
