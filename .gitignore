@@ -9,3 +9,4 @@ vite.config.d.ts
 .DS_Store
 .azure/
 .swa/
+*.zip
