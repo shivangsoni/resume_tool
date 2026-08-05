@@ -14,9 +14,10 @@ db/         Forward-only Azure SQL schema migrations and identity bootstrap
 ## Local development
 
 ```powershell
-npm run install:all
-npm run dev:backend
-npm run dev:frontend
+npm install --prefix backend --workspaces=false
+npm install --prefix frontend --workspaces=false
+npm run start --prefix backend
+npm run dev --prefix frontend
 ```
 
 Copy `backend/local.settings.example.json` to `backend/local.settings.json` for local Functions development. Point `frontend/.env` at `http://localhost:7071/api`.
@@ -24,9 +25,10 @@ Copy `backend/local.settings.example.json` to `backend/local.settings.json` for 
 ## Validation
 
 ```powershell
-npm run lint
-npm test
-npm run build
+npm run lint --prefix frontend
+npm test --prefix frontend
+npm test --prefix backend
+npm run build --prefix frontend
 ```
 
 ## Deployment
