@@ -197,6 +197,23 @@ Traffic uses HTTPS/TLS and Azure-managed services encrypt stored data. No storag
 
 ## Deployment boundaries
 
+```mermaid
+flowchart TB
+    Branch[Feature branch] --> StageCI[CI]
+    StageCI --> Stage[Non-production]
+    Stage -->|user acceptance| PR[Approved pull request]
+    PR --> Main[Protected main]
+    Main --> Prod[Production]
+    subgraph Isolated data planes
+      Stage --> StageData[(Staging SQL, Blob, Queue)]
+      Prod --> ProdData[(Production SQL, Blob, Queue)]
+    end
+    Mail[Current inbound Postmark stream] -. temporary shared configuration .-> Stage
+    Mail -. inbound configuration .-> Prod
+```
+
+Non-production mirrors production compute and persistence but never shares candidate data, résumé blobs, application queues, or worker state. The current inbound mailbox configuration is temporarily reused. Non-production outbound messages are marked `TEST` in both subject and body so recipients cannot mistake acceptance testing for a production application event.
+
 - `frontend/` builds and deploys independently to Static Web Apps.
 - `backend/` packages and deploys independently to Azure Functions.
 - `worker/` builds the isolated Playwright submission container.

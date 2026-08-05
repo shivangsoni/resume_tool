@@ -2,6 +2,8 @@
 
 ApplyPilot is a production-oriented React job search and application tracker. It retrieves current listings, stores a signed-in user's profile and application history in Azure SQL, uploads resumes to private Blob Storage, opens the employer's real application form, and requires the user to confirm the final submission.
 
+The React portal runs inside Fluent UI v9 and uses Fluent design tokens for typography, color, focus, elevation, controls, and responsive layout. The résumé workspace reserves one third of its desktop width for upload/history and two thirds for the selected PDF viewer; it collapses to one column on small screens.
+
 The product deliberately uses a review-first workflow. It does not claim an application was submitted merely because an employer page was opened, and it does not bypass employer consent, CAPTCHA, screening questions, or terms of service.
 
 ## Repository structure
@@ -41,6 +43,23 @@ npm run build --prefix frontend
 ```
 
 ## GitHub CI/CD
+
+### Promotion flow
+
+```mermaid
+flowchart LR
+    Feature[User feature branch] --> CI[CI: frontend, API, worker, Bicep]
+    CI --> NonProd[Isolated non-production deployment]
+    NonProd --> Test[User acceptance testing]
+    Test --> PR[Pull request to main]
+    PR --> Approval[Required owner approval + required checks]
+    Approval --> Main[Protected main branch]
+    Main --> Production[Production deployment]
+```
+
+Never push changes directly to `main`. Work on a user/feature branch, wait for `Deploy non-production`, test the non-production URL, and then open a pull request. Repository protection requires a pull request, one approving review, resolved conversations, and passing CI before merge. Only the resulting protected `main` commit can start `Deploy production`.
+
+The non-production stack has a separate Static Web App, Function App, Blob Storage, Azure SQL database (`applypilot_nonprod`), Service Bus namespace/queue, browser worker, registry, telemetry, and managed identities. It temporarily reuses the current Postmark inbound address. Outbound staging email uses the staging Communication Service and both its subject and body begin with `TEST`; production email remains unchanged.
 
 GitHub Actions now validates every pull request and every push to `main` with [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It installs locked dependencies, runs frontend lint/tests/build, runs backend tests, and compiles the Bicep template. A successful `main` run triggers [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml), which deploys Bicep, applies pending SQL migrations, publishes the Function package and frontend independently, and smoke-tests production. The production workflow can also be started manually from **Actions → Deploy production → Run workflow**.
 

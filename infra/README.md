@@ -19,6 +19,17 @@ az deployment group what-if --resource-group apply --parameters infra/dev.bicepp
 az deployment group create --resource-group apply --parameters infra/dev.bicepparam
 ```
 
+`dev.bicepparam` is the production parameter set retained for compatibility. `nonprod.bicepparam` creates an isolated acceptance-test stack with distinct resource names and the `applypilot_nonprod` database. Supply `azureClientSecretValue` securely from Key Vault at invocation time; never place it in a parameter file.
+
+```powershell
+$secret = az keyvault secret show --vault-name applypilotcentralvaultkh --name azure-client-secret --query value -o tsv
+try {
+  az deployment group create --resource-group apply --template-file infra/main.bicep --parameters infra/nonprod.bicepparam azureClientSecretValue=$secret
+} finally {
+  $secret = $null
+}
+```
+
 Review `what-if` before creating resources. If `apply` is not the intended resource group, substitute its actual resource-group name.
 
 After deployment, execute the scripts in `db/migrations/` as a Microsoft Entra SQL administrator, then replace the placeholder in `db/bootstrap/001_function_identity.sql` with the `backendName` output and execute it. This grants the Function App managed identity data access without a database password.

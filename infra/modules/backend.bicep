@@ -14,6 +14,7 @@ param postmarkInboundAddress string = ''
 param mailboxDomain string = ''
 param serviceBusNamespace string
 param submissionQueueName string
+param deploymentEnvironment string = 'production'
 param tags object
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -102,6 +103,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SERVICE_BUS_NAMESPACE', value: serviceBusNamespace }
         { name: 'SERVICE_BUS__fullyQualifiedNamespace', value: serviceBusNamespace }
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
+        { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
       ]
     }
   }

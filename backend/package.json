@@ -9,6 +9,7 @@
     "dev": "node src/dev-server.js",
     "migrate": "node scripts/migrate.js",
     "grant-worker": "node scripts/grant-worker.js",
+    "grant-database-identity": "node scripts/grant-database-identity.js",
     "test": "node --test"
   },
   "dependencies": {

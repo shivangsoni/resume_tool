@@ -12,6 +12,7 @@ param sqlDatabaseName = 'applypilot'
 param postmarkInboundAddress = 'c4e1c6ba7398a087b9d10354733b79fd@inbound.postmarkapp.com'
 // Enable only after Postmark inbound-domain forwarding and the MX record are verified.
 param mailboxDomain = ''
+param deploymentEnvironment = 'production'
 param tags = {
   application: 'ApplyPilot'
   environment: 'dev'

@@ -1,8 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 :root {
-  font-family: Inter, Arial, sans-serif;
-  color: #172033;
-  background: #f7f8fb;
+  font-family: "Segoe UI Variable", "Segoe UI", Inter, Arial, sans-serif;
+  color: var(--colorNeutralForeground1, #242424);
+  background: var(--colorNeutralBackground2, #f5f5f5);
   font-synthesis: none;
 }
 * {
@@ -10,7 +10,9 @@
 }
 body {
   margin: 0;
+  background: var(--colorNeutralBackground2, #f5f5f5);
 }
+.fluent-app { min-height: 100vh; background: var(--colorNeutralBackground2); color: var(--colorNeutralForeground1); }
 button,
 input,
 select {
@@ -25,7 +27,7 @@ select {
   position: sticky;
   top: 0;
   height: 100vh;
-  background: #101828;
+  background: #242424;
   color: #cbd0da;
   padding: 25px 14px 16px;
   display: flex;
@@ -180,7 +182,8 @@ select {
 .sa-header {
   height: 65px;
   background: white;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  box-shadow: var(--shadow2);
   display: flex;
   align-items: center;
   padding: 0 28px;
@@ -999,7 +1002,7 @@ select {
 }
 .resume-library {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
   gap: 20px;
   margin-top: 20px;
   align-items: start;
@@ -1433,11 +1436,11 @@ select {
   color: #667085;
 }
 .simple-card {
-  background: white;
-  border: 1px solid #dde3eb;
-  border-radius: 12px;
+  background: var(--colorNeutralBackground1, white);
+  border: 1px solid var(--colorNeutralStroke2, #e0e0e0);
+  border-radius: var(--borderRadiusLarge, 8px);
   padding: 24px;
-  box-shadow: 0 1px 3px rgb(16 24 40 / 4%);
+  box-shadow: var(--shadow4);
 }
 .search-panel h2,
 .settings-page h1 {
