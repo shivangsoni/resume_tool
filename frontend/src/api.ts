@@ -26,6 +26,25 @@ export async function getCurrentUser() {
   return body.clientPrincipal || null;
 }
 
+export async function getAllJobs(signal?: AbortSignal) {
+  const jobs: unknown[] = [];
+  let offset: number | null = 0;
+  let total = 0;
+  let pageCount = 0;
+  while (offset !== null) {
+    if (pageCount >= 100) throw new Error("Job API returned too many pages.");
+    const page: { jobs: unknown[]; total: number; nextOffset: number | null } = await request(
+      `/jobs?limit=100&offset=${offset}`,
+      { signal },
+    );
+    pageCount += 1;
+    jobs.push(...(page.jobs || []));
+    total = page.total || jobs.length;
+    offset = page.nextOffset;
+  }
+  return { jobs, total };
+}
+
 export const getRemoteProfile = () =>
   request<{ profile: Profile | null; updatedAt: string | null }>("/profile");
 export const putRemoteProfile = (profile: Profile) =>

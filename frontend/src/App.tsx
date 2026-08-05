@@ -19,6 +19,7 @@ import { emptyProfile, loadProfile, saveProfile } from "./storage";
 import {
   createApplication,
   getApplications,
+  getAllJobs,
   getCurrentUser,
   getRemoteProfile,
   putRemoteProfile,
@@ -26,6 +27,7 @@ import {
   uploadResume,
 } from "./api";
 import type { Application, Profile } from "./types";
+import { matchesJob } from "./job-filter";
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile";
 type Job = {
@@ -55,6 +57,8 @@ export default function App() {
   const [status, setStatus] = useState<"all" | "ready" | "applied" | "failed">(
     "all",
   );
+  const [source, setSource] = useState("all");
+  const [workplace, setWorkplace] = useState("all");
   const [dismissed, setDismissed] = useState<number[]>([]);
   const [profile, setProfile] = useState(loadProfile);
   const [toast, setToast] = useState("");
@@ -101,16 +105,9 @@ export default function App() {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${import.meta.env.VITE_API_BASE_URL || "/api"}/jobs?limit=50`, {
-      signal: controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok)
-          throw new Error(`Job API returned ${response.status}`);
-        return response.json();
-      })
-      .then((result: { jobs?: Job[] }) => {
-        const incoming = result.jobs || [];
+    getAllJobs(controller.signal)
+      .then((result) => {
+        const incoming = result.jobs as Job[];
         setLiveJobs(incoming);
         setSelected(incoming[0]?.id || 0);
         setFeedState("live");
@@ -148,10 +145,9 @@ export default function App() {
       displayJobs.filter(
         (j) =>
           !dismissed.includes(j.id) &&
-          (status === "all" || j.status === status) &&
-          (j.title + j.company).toLowerCase().includes(query.toLowerCase()),
+          matchesJob(j, query, status, source, workplace),
       ),
-    [dismissed, status, query, displayJobs],
+    [dismissed, status, source, workplace, query, displayJobs],
   );
   const job = displayJobs.find((j) => j.id === selected) || visible[0];
   return (
@@ -217,14 +213,25 @@ export default function App() {
             </i>
             <small>Persisted in your account</small>
           </div>
-          <div className="user">
-            <span>SS</span>
-            <div>
-              <b>Shivang Soni</b>
-              <small>Free plan</small>
-            </div>
-            <ChevronRight />
-          </div>
+          {authReady && currentUser ? (
+            <button className="user" onClick={() => setPage("profile")}>
+              <span>{(profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase()}</span>
+              <div>
+                <b>{[profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in"}</b>
+                <small>Profile and applications saved</small>
+              </div>
+              <ChevronRight />
+            </button>
+          ) : (
+            <a className="user login-card" href="/.auth/login/aad?post_login_redirect_uri=/">
+              <span><UserRound /></span>
+              <div>
+                <b>Sign in</b>
+                <small>Save profile and applications</small>
+              </div>
+              <ChevronRight />
+            </a>
+          )}
         </div>
       </aside>
       <main className="sa-main">
@@ -262,6 +269,10 @@ export default function App() {
             setQuery={setQuery}
             status={status}
             setStatus={setStatus}
+            source={source}
+            setSource={setSource}
+            workplace={workplace}
+            setWorkplace={setWorkplace}
             feedState={feedState}
             feedError={feedError}
             retry={() => {
@@ -430,6 +441,10 @@ function Dashboard(p: {
   setQuery: (s: string) => void;
   status: "all" | "ready" | "applied" | "failed";
   setStatus: (s: "all" | "ready" | "applied" | "failed") => void;
+  source: string;
+  setSource: (source: string) => void;
+  workplace: string;
+  setWorkplace: (workplace: string) => void;
   feedState: "loading" | "live" | "error";
   feedError: string;
   retry: () => void;
@@ -491,6 +506,17 @@ function Dashboard(p: {
             onChange={(e) => p.setQuery(e.target.value)}
           />
         </div>
+        <select value={p.source} onChange={(e) => p.setSource(e.target.value)} aria-label="Job source">
+          <option value="all">All sources</option>
+          {[...new Set(p.allJobs.map((job) => job.source).filter(Boolean))].sort().map((source) => (
+            <option key={source} value={source}>{source}</option>
+          ))}
+        </select>
+        <select value={p.workplace} onChange={(e) => p.setWorkplace(e.target.value)} aria-label="Workplace">
+          <option value="all">All workplaces</option>
+          <option value="remote">Remote</option>
+          <option value="onsite">On-site / hybrid</option>
+        </select>
         <select
           value={p.status}
           onChange={(e) => p.setStatus(e.target.value as typeof p.status)}

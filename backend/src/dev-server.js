@@ -18,11 +18,13 @@ const server = createServer(async (request, response) => {
       if (Date.now() >= cache.expiresAt || !cache.jobs.length) {
         cache = { jobs: await fetchLatestJobs(), expiresAt: Date.now() + 60 * 60 * 1000 };
       }
-      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 100);
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 100);
+      const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
       const search = (url.searchParams.get("search") || "").trim().slice(0, 100).toLowerCase();
       const filtered = search ? cache.jobs.filter((job) => `${job.title} ${job.company} ${job.location} ${job.skills.join(" ")}`.toLowerCase().includes(search)) : cache.jobs;
       response.setHeader("Cache-Control", "public, max-age=900");
-      response.end(JSON.stringify({ jobs: filtered.slice(0, limit), total: filtered.length, sources: [...new Set(filtered.map((job) => job.source))], fetchedAt: new Date().toISOString() }));
+      const jobs = filtered.slice(offset, offset + limit);
+      response.end(JSON.stringify({ jobs, total: filtered.length, offset, limit, nextOffset: offset + jobs.length < filtered.length ? offset + jobs.length : null, sources: [...new Set(filtered.map((job) => job.source))], fetchedAt: new Date().toISOString() }));
     } catch (error) {
       response.statusCode = 502;
       response.end(JSON.stringify({ error: "The job feeds are temporarily unavailable.", detail: error instanceof Error ? error.message : "Unknown error" }));

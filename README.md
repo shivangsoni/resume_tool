@@ -69,6 +69,9 @@ Verified production checks:
 - Frontend CORS and the compiled API URL target the Function App above.
 - `/api/health` returns `status: ok` with Azure SQL connected.
 - `/api/jobs` returns current Greenhouse and Remotive listings.
+- The frontend follows paginated job responses (100 per request) until the complete feed is loaded; API responses include `offset`, `limit`, `total`, and `nextOffset`.
+- Job search covers title, company, location, description, skills, and source. Status, source, and workplace filters can be combined.
+- Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
 - Database migrations `001_initial` through `006_resume_extraction` are applied.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
@@ -281,6 +284,9 @@ az cognitiveservices account show --resource-group $resourceGroup --name $docume
 
 Invoke-RestMethod "$frontendUrl/api/health"
 Invoke-RestMethod "$frontendUrl/api/jobs?limit=3"
+
+$firstPage = Invoke-RestMethod "$frontendUrl/api/jobs?limit=100&offset=0"
+$firstPage | Select-Object total,offset,limit,nextOffset
 
 try { Invoke-WebRequest "$frontendUrl/api/profile" -UseBasicParsing } catch { $_.Exception.Response.StatusCode.value__ }
 # Expected while signed out: 401

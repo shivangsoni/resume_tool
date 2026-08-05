@@ -67,7 +67,7 @@ export async function mergeProfileSuggestions(principal, suggestions) {
   return saveProfile(principal, profile);
 }
 
-const mapApplication = (row) => ({ id: row.Id, jobId: row.JobId, jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
+const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
 
 export async function listApplications(principal) {
   const userId = await ensureUser(principal);

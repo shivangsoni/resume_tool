@@ -134,6 +134,19 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.login-card:hover b,
+.user:hover b {
+  color: white;
 }
 .user > span {
   width: 33px;
