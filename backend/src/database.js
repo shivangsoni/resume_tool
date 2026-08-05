@@ -32,7 +32,11 @@ export async function ensureUser(principal) {
       BEGIN TRANSACTION;
       DECLARE @userId uniqueidentifier=(SELECT UserId FROM dbo.UserIdentities WITH (UPDLOCK,HOLDLOCK) WHERE ExternalSubject=@subject);
       IF @userId IS NULL AND @email IS NOT NULL
-        SELECT TOP (1) @userId=u.Id FROM dbo.Users u WITH (UPDLOCK,HOLDLOCK) WHERE LOWER(u.Email)=LOWER(@email) ORDER BY u.UpdatedAt DESC;
+        SELECT TOP (1) @userId=i.UserId
+        FROM dbo.Users u WITH (UPDLOCK,HOLDLOCK)
+        JOIN dbo.UserIdentities i ON i.ExternalSubject=u.ExternalSubject
+        WHERE LOWER(u.Email)=LOWER(@email)
+        ORDER BY u.UpdatedAt DESC;
       IF @userId IS NULL BEGIN
         SET @userId=NEWID();
         INSERT dbo.Users (Id,ExternalSubject,Email) VALUES (@userId,@subject,@email);
