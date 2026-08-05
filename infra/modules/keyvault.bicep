@@ -2,6 +2,7 @@ param name string
 param location string
 param functionPrincipalId string
 param secretName string
+@secure()
 param secretValue string
 param tags object
 

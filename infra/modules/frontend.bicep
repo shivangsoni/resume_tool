@@ -2,7 +2,6 @@ param name string
 param location string
 param sku string
 param tags object
-param azureClientId string
 
 resource staticWebApp 'Microsoft.Web/staticSites@2023-12-01' = {
   name: name

@@ -51,6 +51,7 @@ param tags object = {
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, appName)
 var safeBase = toLower(replace(appName, '-', ''))
 var keyVaultName = take('${safeBase}vault${suffix}', 24)
+var frontendResourceName = '${appName}-web-${suffix}'
 
 module serviceBus 'modules/service-bus.bicep' = {
   name: 'serviceBus'
@@ -83,11 +84,10 @@ module documentIntelligence 'modules/document-intelligence.bicep' = {
 module frontend 'modules/frontend.bicep' = {
   name: 'frontend'
   params: {
-    name: '${appName}-web-${suffix}'
+    name: frontendResourceName
     location: location
     sku: staticWebAppSku
     tags: tags
-    azureClientId: azureClientId
   }
 }
 
@@ -104,7 +104,7 @@ module keyVault 'modules/keyvault.bicep' = {
 }
 
 resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
-  name: '${frontend.outputs.name}/appsettings'
+  name: '${frontendResourceName}/appsettings'
   properties: {
     AZURE_CLIENT_ID: azureClientId
     AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${concat(keyVault.outputs.uri, 'secrets/', azureClientSecretName)})'
@@ -185,13 +185,6 @@ module documentIntelligenceAccess 'modules/document-intelligence-access.bicep' =
 
 
 module linkedBackend 'modules/link-backend.bicep' = {
-  name: 'linkedBackend'
-  params: {
-    staticWebAppName: frontend.outputs.name
-    backendResourceId: backend.outputs.id
-    backendRegion: location
-  }
-}
   name: 'linkedBackend'
   params: {
     staticWebAppName: frontend.outputs.name
