@@ -4,26 +4,28 @@
 
 ApplyPilot is a review-first job application assistant. It discovers current jobs and prepares reusable candidate data, while the candidate reviews employer-specific questions and performs the final submission on the employer's site.
 
-```text
-Candidate browser
-  |-- Microsoft sign-in ----------------------> Azure Static Web Apps auth
-  |-- React application + same-origin /api ---> Azure Static Web Apps Standard
-                                                    |
-                                                    | linked backend + trusted principal
-                                                    v
-                                               Azure Functions (Node.js 22)
-                                                |       |          |
-                         managed identity ------+       |          +----> Job providers
-                                                |       |                 Greenhouse / Remotive
-                                                v       v
-                                           Azure SQL   Private Blob Storage
-                                           profile,    original resumes
-                                           jobs,
-                                           applications
-                                                ^
-                                                |
-                                      Azure AI Document Intelligence
-                                      prebuilt-layout resume text
+```mermaid
+flowchart LR
+    Candidate[Candidate browser]
+    Auth[Static Web Apps<br/>Microsoft authentication]
+    SWA[React on Static Web Apps<br/>Standard]
+    API[Azure Functions<br/>Node.js 22]
+    SQL[(Azure SQL<br/>profiles, jobs, applications)]
+    Blob[(Private Blob Storage<br/>original resumes)]
+    DocAI[Azure AI Document Intelligence<br/>prebuilt-layout]
+    GH[Greenhouse boards]
+    Remotive[Remotive API]
+
+    Candidate -->|sign in| Auth
+    Candidate -->|same-origin /api| SWA
+    Auth -->|trusted client principal| API
+    SWA -->|linked backend| API
+    API -->|managed identity| SQL
+    API -->|managed identity| Blob
+    API -->|managed identity| DocAI
+    API -->|job discovery| GH
+    API -->|job discovery| Remotive
+    Blob -->|resume bytes| DocAI
 ```
 
 ## End-to-end flows
@@ -53,6 +55,44 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 3. **Simple Apply** creates a SQL `review` application snapshot before opening the employer form in a new tab.
 4. The candidate reviews and completes employer questions, consent, CAPTCHA, and final submission.
 5. The candidate confirms submission in ApplyPilot, which records timestamps and advances through submitted, interview, offer, rejected, or failed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered
+    Discovered --> Review: candidate selects job
+    Review --> EmployerForm: open supported employer flow
+    EmployerForm --> Review: unresolved question or consent
+    EmployerForm --> Submitted: employer confirms receipt
+    Submitted --> Interview
+    Submitted --> Rejected
+    Interview --> Offer
+    Interview --> Rejected
+    Review --> Failed: job closed or provider error
+```
+
+### Submission integration boundary
+
+```mermaid
+flowchart TD
+    Click[Candidate selects Apply]
+    Provider{Provider supports<br/>authorized submission?}
+    Fields{All required fields,<br/>consents, and resume available?}
+    Submit[Submit through provider API]
+    Confirm{Employer confirms receipt?}
+    Track[Persist submitted status]
+    Review[Keep in review and show<br/>unresolved requirements]
+
+    Click --> Provider
+    Provider -->|yes| Fields
+    Provider -->|no| Review
+    Fields -->|yes| Submit
+    Fields -->|no| Review
+    Submit --> Confirm
+    Confirm -->|yes| Track
+    Confirm -->|no| Review
+```
+
+The public Greenhouse feed exposes application questions, but submission requires a private API key issued by each hiring company. Remotive provides discovery and requires consumers to link back to its listing. ApplyPilot must not mark either source submitted without an employer receipt. A future user-controlled Playwright runner can prefill supported hosted forms, but it must pause for missing required questions, consent, CAPTCHA, and the final user-authorized submit action.
 
 ## Azure resources and security
 

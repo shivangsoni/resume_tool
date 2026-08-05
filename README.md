@@ -15,6 +15,9 @@ ARCHITECTURE.md  End-to-end design, trust boundaries, data flows, and limitation
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design.
+Architecture and lifecycle diagrams use Mermaid so they render in GitHub and compatible IDE previews.
+
+Current job sources do not provide applicant-authorized one-click submission: Greenhouse requires a private API key from each hiring company, and Remotive provides discovery/link-back only. The UI therefore must not record a submission until an employer confirms receipt. See the submission integration boundary in the architecture document.
 
 ## Local development
 
