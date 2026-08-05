@@ -12,6 +12,10 @@ param location string = resourceGroup().location
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
 
+@description('Azure AI Document Intelligence pricing tier. Use F0 for development or S0 when F0 is unavailable.')
+@allowed(['F0', 'S0'])
+param documentIntelligenceSku string = 'F0'
+
 @description('Name of the existing Azure SQL logical server in this resource group.')
 param sqlServerName string
 
@@ -28,6 +32,16 @@ param tags object = {
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, appName)
 var safeBase = toLower(replace(appName, '-', ''))
 var keyVaultName = take('${safeBase}vault${suffix}', 24)
+
+module documentIntelligence 'modules/document-intelligence.bicep' = {
+  name: 'documentIntelligence'
+  params: {
+    name: take('${safeBase}-docs-${suffix}', 64)
+    location: location
+    sku: documentIntelligenceSku
+    tags: tags
+  }
+}
 
 module frontend 'modules/frontend.bicep' = {
   name: 'frontend'
@@ -61,7 +75,16 @@ module backend 'modules/backend.bicep' = {
     sqlServerFqdn: database.outputs.serverFqdn
     sqlDatabaseName: database.outputs.name
     greenhouseBoards: 'stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb'
+    documentIntelligenceEndpoint: documentIntelligence.outputs.endpoint
     tags: tags
+  }
+}
+
+module documentIntelligenceAccess 'modules/document-intelligence-access.bicep' = {
+  name: 'documentIntelligenceAccess'
+  params: {
+    accountResourceId: documentIntelligence.outputs.id
+    functionPrincipalId: backend.outputs.principalId
   }
 }
 
@@ -92,3 +115,4 @@ output backendName string = backend.outputs.name
 output backendUrl string = backend.outputs.url
 output sqlDatabase string = database.outputs.name
 output keyVaultName string = keyVault.outputs.name
+output documentIntelligenceName string = documentIntelligence.outputs.name

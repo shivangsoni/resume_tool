@@ -73,6 +73,7 @@ export default function App() {
   const [resumeDocument, setResumeDocument] = useState<{
     name: string;
     size: number;
+    extractionStatus: "succeeded" | "failed";
   } | null>(null);
   const notify = (message: string) => {
     setToast(message);
@@ -334,8 +335,18 @@ export default function App() {
                 setResumeDocument({
                   name: result.document.FileName,
                   size: result.document.SizeBytes,
+                  extractionStatus: result.extractionStatus,
                 });
-                notify("Résumé uploaded securely");
+                if (result.profile) {
+                  const normalized = { ...emptyProfile, ...result.profile };
+                  setProfile(normalized);
+                  saveProfile(normalized);
+                }
+                notify(
+                  result.extractionStatus === "succeeded"
+                    ? "Resume uploaded; detected details added to blank profile fields"
+                    : "Resume uploaded securely, but automatic extraction needs retrying",
+                );
               } catch (error) {
                 notify(
                   error instanceof Error ? error.message : "Upload failed",
@@ -767,7 +778,11 @@ function Resume({
   document,
   upload,
 }: {
-  document: { name: string; size: number } | null;
+  document: {
+    name: string;
+    size: number;
+    extractionStatus: "succeeded" | "failed";
+  } | null;
   upload: (file: File) => Promise<void>;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -783,8 +798,15 @@ function Resume({
         <p>
           {document
             ? `${(document.size / 1024).toFixed(0)} KB · Stored privately in Azure`
-            : "PDF or DOCX, up to 5 MB"}
+            : "PDF or DOCX, up to 4 MB"}
         </p>
+        {document && (
+          <p className={`extraction-status ${document.extractionStatus}`}>
+            {document.extractionStatus === "succeeded"
+              ? "Details extracted. Review your profile before applying."
+              : "The file is safe in Blob Storage, but details were not extracted."}
+          </p>
+        )}
         <label className="apply">
           {uploading
             ? "Uploading…"

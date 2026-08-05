@@ -58,6 +58,15 @@ export async function saveProfile(principal, profile) {
   return getProfile(principal);
 }
 
+export async function mergeProfileSuggestions(principal, suggestions) {
+  const current = await getProfile(principal);
+  const profile = { ...(current.profile || {}) };
+  for (const [key, value] of Object.entries(suggestions)) {
+    if (typeof value === "string" && value.trim() && !String(profile[key] || "").trim()) profile[key] = value.trim();
+  }
+  return saveProfile(principal, profile);
+}
+
 const mapApplication = (row) => ({ id: row.Id, jobId: row.JobId, jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
 
 export async function listApplications(principal) {
@@ -111,10 +120,12 @@ export async function saveDocument(principal, document) {
     await new sql.Request(transaction).input("userId", sql.UniqueIdentifier, userId).query("UPDATE dbo.Documents SET IsPrimary=0 WHERE UserId=@userId AND DocumentType='resume'");
     const result = await new sql.Request(transaction).input("userId", sql.UniqueIdentifier, userId)
       .input("fileName", sql.NVarChar(260), document.fileName).input("contentType", sql.NVarChar(100), document.contentType)
-      .input("blobName", sql.NVarChar(500), document.blobName).input("size", sql.BigInt, document.size).query(`
-        INSERT dbo.Documents (UserId,DocumentType,FileName,ContentType,BlobName,SizeBytes,IsPrimary)
-        OUTPUT inserted.Id,inserted.FileName,inserted.ContentType,inserted.SizeBytes,inserted.CreatedAt
-        VALUES (@userId,'resume',@fileName,@contentType,@blobName,@size,1);
+      .input("blobName", sql.NVarChar(500), document.blobName).input("size", sql.BigInt, document.size)
+      .input("extractionStatus", sql.VarChar(30), document.extractionStatus)
+      .input("extractionJson", sql.NVarChar(sql.MAX), document.extraction ? JSON.stringify(document.extraction) : null).query(`
+        INSERT dbo.Documents (UserId,DocumentType,FileName,ContentType,BlobName,SizeBytes,IsPrimary,ExtractionStatus,ExtractionJson,ExtractedAt)
+        OUTPUT inserted.Id,inserted.FileName,inserted.ContentType,inserted.SizeBytes,inserted.ExtractionStatus,inserted.ExtractedAt,inserted.CreatedAt
+        VALUES (@userId,'resume',@fileName,@contentType,@blobName,@size,1,@extractionStatus,@extractionJson,CASE WHEN @extractionStatus='succeeded' THEN SYSUTCDATETIME() ELSE NULL END);
       `);
     await transaction.commit();
     return result.recordset[0];

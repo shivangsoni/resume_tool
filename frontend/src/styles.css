@@ -955,6 +955,18 @@ select {
   font-size: 8px;
   color: #98a2b3;
 }
+
+.extraction-status {
+  font-weight: 650;
+}
+
+.extraction-status.succeeded {
+  color: #087a55;
+}
+
+.extraction-status.failed {
+  color: #a14b00;
+}
 .success-pill svg {
   width: 11px;
 }

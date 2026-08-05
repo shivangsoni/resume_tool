@@ -66,6 +66,10 @@ export async function uploadResume(file: File) {
       FileName: string;
       SizeBytes: number;
       CreatedAt: string;
+      ExtractionStatus: "succeeded" | "failed";
     };
+    profile?: Profile;
+    suggestions: Partial<Profile>;
+    extractionStatus: "succeeded" | "failed";
   };
 }

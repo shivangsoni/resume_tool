@@ -11,7 +11,10 @@ frontend/   React, TypeScript, Vite, frontend tests and Static Web Apps config
 backend/    Azure Functions Node.js API, normalization logic and backend tests
 infra/      Bicep templates for independently deployable Azure resources
 db/         Forward-only Azure SQL schema migrations and identity bootstrap
+ARCHITECTURE.md  End-to-end design, trust boundaries, data flows, and limitations
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design.
 
 ## Local development
 
@@ -47,7 +50,7 @@ Last verified: August 5, 2026
 | Subscription | Visual Studio Enterprise Subscription (`b5f1fa5f-c39f-4d7d-866c-57836fe7382f`) |
 | Resource group | `apply` |
 | Application region | `centralus` |
-| Infrastructure deployment | `applypilot-workflow-20260805-082546` |
+| Infrastructure deployment | `applypilot-resume-20260805-084454` |
 | Frontend | https://blue-water-0d76ed710.7.azurestaticapps.net |
 | Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Standard) |
 | Backend route | `https://blue-water-0d76ed710.7.azurestaticapps.net/api` (linked Function backend) |
@@ -55,6 +58,7 @@ Last verified: August 5, 2026
 | SQL logical server | `simplyapply.database.windows.net` |
 | SQL database | `applypilot` (Basic) |
 | Key Vault | `applypilotcentralvaultkh` |
+| Document Intelligence | `applypilotcentral-docs-khaah5ti4wzag` (`FormRecognizer`, F0) |
 
 Verified production checks:
 
@@ -63,15 +67,16 @@ Verified production checks:
 - `/api/health` returns `status: ok` with Azure SQL connected.
 - `/api/jobs` returns current Greenhouse and Remotive listings.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
-- Database migrations `001_initial` through `005_resume_documents` are applied.
+- Database migrations `001_initial` through `006_resume_extraction` are applied.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
 - Resumes are held in a private Blob container and accessed by the Function managed identity.
+- Resume extraction uses Document Intelligence through managed identity; detected values fill blank profile fields only.
 
 ### Application lifecycle
 
 1. Sign in with Microsoft through Static Web Apps authentication.
-2. Complete profile/preferences and upload a PDF or DOCX resume (maximum 5 MB).
-3. Choose **Simple Apply** on a live job. ApplyPilot saves an `in_progress` record and opens the employer's source form.
+2. Upload a PDF or DOCX resume (maximum 4 MB on the F0 tier). ApplyPilot extracts reusable details into blank profile fields for review.
+3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record and opens the employer's source form.
 4. Review and complete the employer form yourself.
 5. Return to **Applications** and choose **Confirm submitted** only after the employer accepts it.
 6. Track subsequent `interview`, `offer`, or `rejected` states in SQL.
@@ -147,6 +152,7 @@ $frontendUrl = $deployment.properties.outputs.frontendUrl.value
 $backendName = $deployment.properties.outputs.backendName.value
 $backendUrl = $deployment.properties.outputs.backendUrl.value
 $sqlDatabase = $deployment.properties.outputs.sqlDatabase.value
+$documentIntelligenceName = $deployment.properties.outputs.documentIntelligenceName.value
 
 [PSCustomObject]@{
   FrontendName = $frontendName
@@ -154,6 +160,7 @@ $sqlDatabase = $deployment.properties.outputs.sqlDatabase.value
   BackendName = $backendName
   BackendUrl = $backendUrl
   SqlDatabase = $sqlDatabase
+  DocumentIntelligence = $documentIntelligenceName
 } | Format-List
 ```
 
@@ -177,6 +184,7 @@ sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/002_job_search.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/003_job_sync_procedure.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/004_application_workflow.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/005_resume_documents.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/006_resume_extraction.sql
 ```
 
 Next, open `db/bootstrap/001_function_identity.sql`, replace `APPLY_FUNCTION_APP_NAME` with the value of `$backendName`, and execute it:
@@ -262,8 +270,11 @@ az functionapp show --resource-group $resourceGroup --name $backendName `
   --query '{name:name,state:state,host:defaultHostName,runtime:siteConfig.linuxFxVersion}' --output table
 
 az functionapp config appsettings list --resource-group $resourceGroup --name $backendName `
-  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS' || name=='AZURE_STORAGE_ACCOUNT' || name=='RESUME_CONTAINER'].{name:name,value:value}" `
+  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS' || name=='AZURE_STORAGE_ACCOUNT' || name=='RESUME_CONTAINER' || name=='DOCUMENT_INTELLIGENCE_ENDPOINT'].{name:name,value:value}" `
   --output table
+
+az cognitiveservices account show --resource-group $resourceGroup --name $documentIntelligenceName `
+  --query '{name:name,kind:kind,sku:sku.name,endpoint:properties.endpoint,localAuthDisabled:properties.disableLocalAuth}' --output table
 
 Invoke-RestMethod "$frontendUrl/api/health"
 Invoke-RestMethod "$frontendUrl/api/jobs?limit=3"
@@ -282,6 +293,7 @@ Provisioning resources in Azure Portal is not enough; you must complete both cod
 - **Function returns 500/503:** stream logs with `az webapp log tail --resource-group $resourceGroup --name $backendName`. Verify SQL migrations and the managed-identity database user.
 - **Profile/application API returns 401:** sign in from the app first. This is expected for anonymous requests. Do not add a client-generated identity header.
 - **Resume upload fails:** confirm the private `resumes` container exists and the Function identity has Storage Blob Data Contributor; allow several minutes for a new role assignment to propagate.
+- **Resume uploads but extraction fails:** confirm `DOCUMENT_INTELLIGENCE_ENDPOINT`, the Cognitive Services User role assignment, and service quota. The Blob upload is retained.
 - **Portal resource blade itself fails:** confirm the selected subscription with `az account show`, then inspect resources through CLI using `az resource list --resource-group apply --output table`. Portal UI failure does not necessarily mean the deployed endpoints are down.
 - **Deployment status:** inspect it with `az deployment group show --resource-group $resourceGroup --name $deploymentName --output table` and `az deployment operation group list --resource-group $resourceGroup --name $deploymentName --output table`.
 
@@ -289,4 +301,4 @@ The frontend and backend can be redeployed independently. See [docs/JOB_SOURCES.
 
 ## Privacy and security
 
-Profile and application data are scoped to the Microsoft-authenticated user and stored in Azure SQL. Resume files are stored in a private Blob container. The browser keeps only non-sensitive display preferences as a fallback. Never enter passwords, Social Security numbers, government IDs, or payment information, and never upload those values as screening answers.
+Profile and application data are scoped to the Microsoft-authenticated user and stored in Azure SQL. Resume files are stored in a private Blob container; extracted fields and status are stored in SQL. Existing profile fields are never overwritten by extraction. The browser keeps only non-sensitive display preferences as a fallback. Never enter passwords, Social Security numbers, government IDs, or payment information, and never upload those values as screening answers.

@@ -6,7 +6,10 @@
     "SQL_CONNECTION_STRING": "Server=localhost,1433;Database=applypilot;User Id=sa;Password=replace-me;Encrypt=false;TrustServerCertificate=true;",
     "AZURE_SQL_SERVER": "",
     "AZURE_SQL_DATABASE": "",
-    "GREENHOUSE_BOARDS": "stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb"
+    "GREENHOUSE_BOARDS": "stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb",
+    "AZURE_STORAGE_ACCOUNT": "",
+    "RESUME_CONTAINER": "resumes",
+    "DOCUMENT_INTELLIGENCE_ENDPOINT": "https://<document-intelligence-name>.cognitiveservices.azure.com/"
   },
   "Host": {
     "CORS": "http://localhost:5173",
