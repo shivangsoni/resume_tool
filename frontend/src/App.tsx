@@ -179,9 +179,10 @@ export default function App() {
   const { page: safePage, pageCount, jobs: pagedJobs } = pagination;
   const job = pagedJobs.find((j) => j.id === selected) || pagedJobs[0];
   if (!authReady) return <AuthLoading />;
+  if (routePath === "/") return <LandingPage signedIn={Boolean(currentUser)} />;
   if (routePath === "/logged-out") return <LoggedOutPage signedIn={Boolean(currentUser)} />;
   if (!currentUser && routePath === "/login") return <AuthPage />;
-  if (!currentUser) return <LandingPage />;
+  if (!currentUser) return <LandingPage signedIn={false} />;
   return (
     <div className="sa-shell">
       <aside className="sa-side">
@@ -1086,11 +1087,11 @@ function AuthLoading() {
   return <main className="public-shell"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><section className="public-centered"><div className="landing-orb"><WandSparkles /></div><h1>Preparing your workspace…</h1><p>Checking your secure session.</p></section></main>;
 }
 
-function LandingPage() {
+function LandingPage({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="public-shell">
-      <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions"><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></div><small>Microsoft, Google, and GitHub delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
+      <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
+      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Secure Microsoft delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
       <section className="landing-features" id="features"><article><Search /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><FileText /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
     </main>
   );

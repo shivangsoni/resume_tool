@@ -21,9 +21,13 @@ sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/005_re
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/006_resume_extraction.sql
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/007_inbound_mailbox.sql
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/008_submission_queue.sql
+sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/009_application_requirements.sql
+sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/010_identity_aliases.sql
 ```
 
 Migration 004 persists each job snapshot and its review/submission state. Migration 005 records metadata for resumes stored in the private Azure Blob container; resume file contents are not stored in SQL.
 Migration 006 records Document Intelligence extraction status and structured output. Profile suggestions fill blank fields only.
 Migration 007 creates one deterministic alias per authenticated user and stores deduplicated, text-only Postmark inbound messages.
 Migration 008 adds queued/needs-action states, provider receipt metadata, and an immutable submission-attempt audit table.
+Migration 009 stores employer-specific application questions and their review answers.
+Migration 010 maps changing authentication subjects to a stable user selected by verified email and consolidates existing résumé/application records.

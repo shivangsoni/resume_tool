@@ -68,6 +68,8 @@ The browser worker is first created with a public bootstrap image. After Azure a
 
 Database migrations are split on `GO` batch separators by `backend/scripts/migrate.js`. When a migration adds a column and then references it in a constraint, keep those statements in separate batches so Azure SQL compiles the constraint after the column exists.
 
+Migration 010 maps changing provider subjects to a canonical user by trusted sign-in email and consolidates résumé/application ownership for duplicate identities. The public `/` route always renders the landing page; authenticated visitors receive a dashboard call to action rather than being silently redirected away from the landing experience.
+
 The SQL grant step reads the browser worker's managed-identity principal ID from Azure and creates or repairs its contained database user with an explicit SID. This avoids requiring the GitHub deployment identity to resolve service principals through Microsoft Graph and keeps the database user valid if the Container App is recreated.
 
 The GitHub SQL principal also requires `ALTER ANY USER` and `ALTER ANY ROLE`, provisioned by `db/bootstrap/002_github_identity.sql`, to create or repair that contained worker user and its fixed-role memberships. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
@@ -113,7 +115,7 @@ Verified production checks:
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - The persistent top navigation exposes the Résumé page at every viewport width. It lists current and past PDF/DOCX uploads, previews PDFs with React PDF, downloads DOCX files, and removes individual documents.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
-- Database migrations `001_initial` through `008_submission_queue` are applied by CI/CD before backend publication.
+- Database migrations `001_initial` through `010_identity_aliases` are applied by CI/CD before backend publication.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
 - Resumes are held in a private Blob container and accessed by the Function managed identity.
 - Resume extraction uses Document Intelligence through managed identity, but extracted values remain document metadata and never update the profile automatically.
@@ -291,6 +293,8 @@ sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/005_resume_document
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/006_resume_extraction.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/007_inbound_mailbox.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/008_submission_queue.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/009_application_requirements.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/010_identity_aliases.sql
 ```
 
 Next, open `db/bootstrap/001_function_identity.sql`, replace `APPLY_FUNCTION_APP_NAME` with the value of `$backendName`, and execute it:

@@ -28,12 +28,20 @@ export async function ensureUser(principal) {
     .input("subject", sql.NVarChar(200), principal.subject)
     .input("email", sql.NVarChar(320), principal.email)
     .query(`
-      MERGE dbo.Users WITH (HOLDLOCK) AS target
-      USING (SELECT @subject AS ExternalSubject, @email AS Email) AS incoming
-      ON target.ExternalSubject = incoming.ExternalSubject
-      WHEN MATCHED THEN UPDATE SET Email = COALESCE(incoming.Email, target.Email), UpdatedAt = SYSUTCDATETIME()
-      WHEN NOT MATCHED THEN INSERT (ExternalSubject, Email) VALUES (incoming.ExternalSubject, incoming.Email)
-      OUTPUT inserted.Id;
+      SET XACT_ABORT ON;
+      BEGIN TRANSACTION;
+      DECLARE @userId uniqueidentifier=(SELECT UserId FROM dbo.UserIdentities WITH (UPDLOCK,HOLDLOCK) WHERE ExternalSubject=@subject);
+      IF @userId IS NULL AND @email IS NOT NULL
+        SELECT TOP (1) @userId=u.Id FROM dbo.Users u WITH (UPDLOCK,HOLDLOCK) WHERE LOWER(u.Email)=LOWER(@email) ORDER BY u.UpdatedAt DESC;
+      IF @userId IS NULL BEGIN
+        SET @userId=NEWID();
+        INSERT dbo.Users (Id,ExternalSubject,Email) VALUES (@userId,@subject,@email);
+      END
+      ELSE UPDATE dbo.Users SET Email=COALESCE(@email,Email),UpdatedAt=SYSUTCDATETIME() WHERE Id=@userId;
+      IF NOT EXISTS (SELECT 1 FROM dbo.UserIdentities WHERE ExternalSubject=@subject)
+        INSERT dbo.UserIdentities (ExternalSubject,UserId) VALUES (@subject,@userId);
+      COMMIT;
+      SELECT @userId Id;
     `);
   return result.recordset[0].Id;
 }
