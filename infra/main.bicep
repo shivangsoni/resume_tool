@@ -113,7 +113,7 @@ module backend 'modules/backend.bicep' = {
 module browserWorker 'modules/browser-worker.bicep' = {
   name: 'browserWorker'
   params: {
-    name: '${appName}-browser-${suffix}'
+    name: take('${appName}-browser-${suffix}', 32)
     location: location
     serviceBusNamespace: serviceBus.outputs.namespace
     queueName: serviceBus.outputs.queueName
