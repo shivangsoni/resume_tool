@@ -1,20 +1,39 @@
-# Applymate
+# ApplyPilot
 
-A local-first React workspace for maintaining reusable job-application data and tracking roles.
+ApplyPilot is a React job-matching dashboard backed by an Azure Functions service that retrieves current remote job listings.
 
-## Run locally
+## Repository structure
 
-```powershell
-npm install
-npm run dev
+```text
+frontend/   React, TypeScript, Vite, frontend tests and Static Web Apps config
+backend/    Azure Functions Node.js API, normalization logic and backend tests
+infra/      Bicep templates for independently deployable Azure resources
 ```
 
-Use `npm run build`, `npm run lint`, and `npm test` before deployment.
+## Local development
 
-## Privacy and security
+```powershell
+npm run install:all
+npm run dev:backend
+npm run dev:frontend
+```
 
-The current MVP stores profile data in this browser's local storage. Do not enter passwords, Social Security numbers, government IDs, or payment details. The email connection is intentionally disabled until a server-side provider integration and destination verification are configured.
+Copy `backend/local.settings.example.json` to `backend/local.settings.json` for local Functions development. Point `frontend/.env` at `http://localhost:7071/api`.
 
-## Azure deployment
+## Validation
 
-Create an Azure Static Web App connected to the repository with app location `/`, output location `dist`, and build command `npm run build`. Set `VITE_API_BASE_URL=/api`. Follow [PLAN.md](./PLAN.md) before adding cloud storage or forwarding: use managed identity, Key Vault, authentication, PII-safe logs, and budget alerts.
+```powershell
+npm run lint
+npm test
+npm run build
+```
+
+## Deployment
+
+Provision Azure resources with [infra/README.md](infra/README.md). The frontend and backend have separate build and deployment commands, allowing either service to be released without redeploying the other.
+
+The backend uses Remotive's public job feed, caches results for six hours, and links every listing back to its original source. Do not remove the source attribution.
+
+## Privacy
+
+The current profile feature uses browser local storage. Never enter passwords, Social Security numbers, government IDs, or payment information.

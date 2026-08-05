@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -38,6 +38,8 @@ type Job = {
   status: "ready" | "applied" | "failed";
   summary: string;
   skills: string[];
+  sourceUrl?: string;
+  logoUrl?: string;
 };
 
 const jobs: Job[] = [
@@ -123,17 +125,38 @@ export default function App() {
   const [dismissed, setDismissed] = useState<number[]>([]);
   const [profile, setProfile] = useState(loadProfile);
   const [toast, setToast] = useState("");
+  const [liveJobs, setLiveJobs] = useState<Job[]>(jobs);
+  const [feedState, setFeedState] = useState<"loading" | "live" | "fallback">("loading");
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${import.meta.env.VITE_API_BASE_URL || "/api"}/jobs?limit=50`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Job API returned ${response.status}`);
+        return response.json();
+      })
+      .then((result: { jobs?: Job[] }) => {
+        if (result.jobs?.length) {
+          setLiveJobs(result.jobs);
+          setSelected(result.jobs[0].id);
+          setFeedState("live");
+        } else setFeedState("fallback");
+      })
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") setFeedState("fallback");
+      });
+    return () => controller.abort();
+  }, []);
   const visible = useMemo(
     () =>
-      jobs.filter(
+      liveJobs.filter(
         (j) =>
           !dismissed.includes(j.id) &&
           (status === "all" || j.status === status) &&
           (j.title + j.company).toLowerCase().includes(query.toLowerCase()),
       ),
-    [dismissed, status, query],
+    [dismissed, status, query, liveJobs],
   );
-  const job = jobs.find((j) => j.id === selected) || visible[0];
+  const job = liveJobs.find((j) => j.id === selected) || visible[0];
   const notify = (s: string) => {
     setToast(s);
     setTimeout(() => setToast(""), 2200);
@@ -234,7 +257,8 @@ export default function App() {
             setQuery={setQuery}
             status={status}
             setStatus={setStatus}
-            auto={auto}
+          auto={auto}
+          feedState={feedState}
             setAuto={setAuto}
             dismiss={(id) => {
               setDismissed([...dismissed, id]);
@@ -301,6 +325,7 @@ function Dashboard(p: {
   status: "all" | "ready" | "applied" | "failed";
   setStatus: (s: "all" | "ready" | "applied" | "failed") => void;
   auto: boolean;
+  feedState: "loading" | "live" | "fallback";
   setAuto: (b: boolean) => void;
   dismiss: (n: number) => void;
   apply: (j: Job) => void;
@@ -310,7 +335,7 @@ function Dashboard(p: {
       <section className="dash-top">
         <div>
           <h1>Job Matches</h1>
-          <p>AI-matched opportunities based on your résumé and preferences.</p>
+          <p>AI-matched opportunities based on your résumé and preferences. <span className={`feed ${p.feedState}`}>{p.feedState === "live" ? "Live data" : p.feedState === "loading" ? "Loading live jobs…" : "Demo data"}</span></p>
         </div>
         <div className="auto-box">
           <div className="pulse">
@@ -449,7 +474,7 @@ function JobRow({
 }) {
   return (
     <button className={`job-row ${active ? "active" : ""}`} onClick={click}>
-      <span className="job-logo">{j.logo}</span>
+      <span className="job-logo">{j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}</span>
       <div className="job-main">
         <div>
           <b>{j.title}</b>
@@ -489,7 +514,7 @@ function JobDetail({
   return (
     <section className="job-detail">
       <div className="detail-top">
-        <span className="big-logo">{job.logo}</span>
+        <span className="big-logo">{job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}</span>
         <div>
           <h2>{job.title}</h2>
           <p>
@@ -540,6 +565,7 @@ function JobDetail({
           <WandSparkles /> Simple Apply
         </button>
       </div>
+      {job.sourceUrl && <a className="source-link" href={job.sourceUrl} target="_blank" rel="noreferrer">View original listing on Remotive</a>}
       <div className="safe-note">
         <Check /> You’ll review all answers before submission
       </div>
