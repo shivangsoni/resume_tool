@@ -88,7 +88,27 @@ export async function uploadResume(file: File) {
 
 export const getResumes = () => request<{ documents: ResumeDocument[] }>("/resumes");
 export const getResumeContentUrl = (id: string) => `${API}/resumes/${encodeURIComponent(id)}/content`;
+export async function getResumeBlob(id: string) {
+  const response = await fetch(getResumeContentUrl(id), { credentials: "same-origin", cache: "no-store" });
+  if (response.status === 401) throw new Error("AUTH_REQUIRED");
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Resume could not be opened (${response.status})`);
+  }
+  return response.blob();
+}
+export const renameResume = (id: string, fileName: string) =>
+  request<{ document: ResumeDocument }>(`/resumes/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ fileName }),
+  });
 export const deleteResume = (id: string) => request<void>(`/resumes/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+export const submitApplication = (id: string) =>
+  request<{ application: Application; queue: { accepted: boolean } }>(`/applications/${encodeURIComponent(id)}/submit`, {
+    method: "POST",
+    body: "{}",
+  });
 
 export const getMailbox = (offset = 0) =>
   request<{ address: string | null; messages: MailMessage[]; total: number }>(`/mailbox?limit=25&offset=${offset}`);

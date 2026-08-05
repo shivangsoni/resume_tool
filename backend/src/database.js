@@ -243,6 +243,21 @@ export async function getResumeDocument(principal, id) {
   return result.recordset[0] || null;
 }
 
+export async function renameResumeDocument(principal, id, fileName) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request()
+    .input("userId", sql.UniqueIdentifier, userId)
+    .input("id", sql.UniqueIdentifier, id)
+    .input("fileName", sql.NVarChar(260), fileName)
+    .query(`
+      UPDATE dbo.Documents SET FileName=@fileName
+      OUTPUT inserted.Id,inserted.FileName,inserted.ContentType,inserted.SizeBytes,inserted.IsPrimary,inserted.ExtractionStatus,inserted.CreatedAt
+      WHERE Id=@id AND UserId=@userId AND DocumentType='resume';
+    `);
+  return result.recordset.length ? mapDocument(result.recordset[0]) : null;
+}
+
 export async function deleteResumeDocument(principal, id) {
   const userId = await ensureUser(principal);
   const db = await pool();

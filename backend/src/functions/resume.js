@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { DefaultAzureCredential } from "@azure/identity";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { deleteResumeDocument, getResumeDocument, listResumeDocuments, saveDocument } from "../database.js";
+import { deleteResumeDocument, getResumeDocument, listResumeDocuments, renameResumeDocument, saveDocument } from "../database.js";
 import { analyzeResume } from "../document-intelligence.js";
 
 const storage = () => {
@@ -72,10 +72,25 @@ app.http("resumeContent", {
 });
 
 app.http("deleteResume", {
-  methods: ["DELETE"], authLevel: "anonymous", route: "resumes/{id}",
+  methods: ["DELETE", "PATCH"], authLevel: "anonymous", route: "resumes/{id}",
   handler: async (request, context) => {
     const principal = getPrincipal(request); if (!principal) return unauthorized();
     try {
+      if (request.method === "PATCH") {
+        const body = await request.json();
+        const fileName = String(body?.fileName || "").trim();
+        if (!fileName || fileName.length > 260 || /[\\/:*?"<>|\r\n]/.test(fileName)) {
+          return { status: 400, jsonBody: { error: "Enter a valid file name up to 260 characters." } };
+        }
+        const current = await getResumeDocument(principal, request.params.id);
+        if (!current) return { status: 404, jsonBody: { error: "Resume not found." } };
+        const currentExtension = current.FileName.split(".").pop()?.toLowerCase();
+        const nextExtension = fileName.split(".").pop()?.toLowerCase();
+        if (currentExtension !== nextExtension) {
+          return { status: 400, jsonBody: { error: `Keep the .${currentExtension} file extension when renaming.` } };
+        }
+        return { jsonBody: { document: await renameResumeDocument(principal, request.params.id, fileName) } };
+      }
       const blobName = await deleteResumeDocument(principal, request.params.id);
       if (!blobName) return { status: 404, jsonBody: { error: "Résumé not found." } };
       await storage().deleteBlob(blobName, { deleteSnapshots: "include" }).catch((error) => context.warn("Orphaned resume blob cleanup failed", error));

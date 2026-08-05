@@ -8,9 +8,13 @@ import {
   ChevronRight,
   FileText,
   CreditCard,
+  Download,
   LayoutDashboard,
   MapPin,
   Mail,
+  Minus,
+  Pencil,
+  Plus,
   Search,
   Settings,
   SlidersHorizontal,
@@ -26,18 +30,20 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
 import {
   createApplication,
+  submitApplication,
   getApplications,
   getAllJobs,
   getCurrentUser,
   getMailbox,
   getRemoteProfile,
   getResumes,
-  getResumeContentUrl,
+  getResumeBlob,
   putRemoteProfile,
   markMailboxMessageRead,
   updateApplication,
   uploadResume,
   deleteResume,
+  renameResume,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
@@ -330,14 +336,15 @@ export default function App() {
               }
               try {
                 const result = await createApplication(j, { ...profile });
+                const queued = await submitApplication(result.application.id);
                 setApplications((items) => [
-                  result.application,
-                  ...items.filter((item) => item.id !== result.application.id),
+                  queued.application,
+                  ...items.filter((item) => item.id !== queued.application.id),
                 ]);
                 notify(
                   result.notification?.sent
-                    ? "Application queued. A confirmation was emailed to your sign-in address."
-                    : "Application queued using your saved profile. Email delivery is unavailable for this account.",
+                    ? "Application queued for submission. A confirmation was emailed to your sign-in address."
+                    : "Application queued for submission using your saved profile.",
                 );
               } catch (error) {
                 notify(
@@ -400,6 +407,11 @@ export default function App() {
               } catch (error) {
                 notify(error instanceof Error ? error.message : "Résumé could not be removed");
               }
+            }}
+            rename={async (id, fileName) => {
+              const result = await renameResume(id, fileName);
+              setResumeDocuments((items) => items.map((item) => item.id === id ? result.document : item));
+              notify("Resume renamed");
             }}
           />
         )}
@@ -511,7 +523,7 @@ function Dashboard(p: {
   feedError: string;
   retry: () => void;
   dismiss: (n: number) => void;
-  apply: (j: Job) => void;
+  apply: (j: Job) => Promise<void>;
 }) {
   return (
     <div className="dash">
@@ -729,8 +741,9 @@ function JobDetail({
 }: {
   job: Job;
   dismiss: (n: number) => void;
-  apply: (j: Job) => void;
+  apply: (j: Job) => Promise<void>;
 }) {
+  const [applying, setApplying] = useState(false);
   return (
     <section className="job-detail">
       <div className="detail-top">
@@ -783,8 +796,11 @@ function JobDetail({
         <button className="not" onClick={() => dismiss(job.id)}>
           Not interested
         </button>
-        <button className="apply" onClick={() => apply(job)}>
-          <WandSparkles /> Simple Apply
+        <button className="apply" disabled={applying || job.status !== "ready"} onClick={async () => {
+          setApplying(true);
+          try { await apply(job); } finally { setApplying(false); }
+        }}>
+          <WandSparkles /> {applying ? "Queuing..." : job.status === "ready" ? "Simple Apply" : "Already queued"}
         </button>
       </div>
       {job.sourceUrl && (
@@ -875,67 +891,113 @@ function Resume({
   documents,
   upload,
   remove,
+  rename,
 }: {
   documents: ResumeDocument[];
   upload: (file: File) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  rename: (id: string, fileName: string) => Promise<void>;
 }) {
   const [uploading, setUploading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [previewError, setPreviewError] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [busy, setBusy] = useState(false);
   const selected = documents.find((item) => item.id === selectedId) || documents[0] || null;
+
+  useEffect(() => {
+    let objectUrl = "";
+    let cancelled = false;
+    if (!selected || selected.contentType !== "application/pdf") return;
+    getResumeBlob(selected.id).then((blob) => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setPageCount(0);
+      setPreviewError("");
+      setPdfUrl(objectUrl);
+    }).catch((error: Error) => { if (!cancelled) setPreviewError(error.message); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [selected]);
+
+  const download = async () => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const blob = await getResumeBlob(selected.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = selected.fileName;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally { setBusy(false); }
+  };
+
+  const renameSelected = async () => {
+    if (!selected) return;
+    const fileName = prompt("Rename resume", selected.fileName)?.trim();
+    if (!fileName || fileName === selected.fileName) return;
+    setBusy(true);
+    try { await rename(selected.id, fileName); } finally { setBusy(false); }
+  };
+
   return (
     <div className="basic-page">
       <h1>Résumés</h1>
-      <p>Upload and review résumé versions. Uploading never changes your profile automatically.</p>
-      <div className="upload-card">
-        <span>
-          <Upload />
-        </span>
-        <h2>Upload another résumé</h2>
-        <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
-        <label className="apply">
-          {uploading ? "Uploading…" : "Choose résumé"}
-          <input
-            type="file"
-            accept=".pdf,.docx"
-            hidden
-            disabled={uploading}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
-              setUploading(true);
-              try {
-                await upload(file);
-              } finally {
-                setUploading(false);
-                event.target.value = "";
-              }
-            }}
-          />
-        </label>
-      </div>
+      <p>Upload, select, rename, download, and review résumé versions. Uploading never changes your profile automatically.</p>
       <div className="resume-library">
-        <section className="resume-history simple-card">
-          <h2>Uploaded résumés</h2>
-          {documents.length === 0 && <p>No résumés uploaded yet.</p>}
-          {documents.map((item) => (
-            <article className={selected?.id === item.id ? "selected" : ""} key={item.id}>
-              <button className="resume-select" onClick={() => { setSelectedId(item.id); setPageCount(0); }}>
-                <FileText />
-                <span><b>{item.fileName}</b><small>{(item.sizeBytes / 1024).toFixed(0)} KB · {new Date(item.createdAt).toLocaleDateString()} {item.isPrimary ? "· Primary" : ""}</small></span>
-              </button>
-              <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Trash2 /></button>
-            </article>
-          ))}
+        <section className="resume-left">
+          <div className="upload-card simple-card">
+            <span><Upload /></span>
+            <h2>Upload another résumé</h2>
+            <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
+            <label className="apply">
+              {uploading ? "Uploading…" : "Choose résumé"}
+              <input type="file" accept=".pdf,.docx" hidden disabled={uploading} onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                setUploading(true);
+                try { await upload(file); } finally { setUploading(false); event.target.value = ""; }
+              }} />
+            </label>
+          </div>
+          <div className="resume-history simple-card">
+            <h2>Previously uploaded</h2>
+            {documents.length === 0 && <p>No résumés uploaded yet.</p>}
+            {documents.map((item) => (
+              <article className={selected?.id === item.id ? "selected" : ""} key={item.id}>
+                <button className="resume-select" onClick={() => { setSelectedId(item.id); setPdfUrl(""); setPreviewError(""); setPageCount(0); setZoom(1); }}>
+                  <FileText />
+                  <span><b>{item.fileName}</b><small>{(item.sizeBytes / 1024).toFixed(0)} KB · {new Date(item.createdAt).toLocaleDateString()} {item.isPrimary ? "· Primary" : ""}</small></span>
+                </button>
+                <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Trash2 /></button>
+              </article>
+            ))}
+          </div>
         </section>
         <section className="resume-preview simple-card">
-          <h2>{selected ? selected.fileName : "Preview"}</h2>
+          <div className="resume-preview-toolbar">
+            <h2>{selected ? selected.fileName : "Preview"}</h2>
+            {selected && <div>
+              <button disabled={busy} onClick={() => void renameSelected()}><Pencil /> Rename</button>
+              <button disabled={busy} onClick={() => void download()}><Download /> Download</button>
+              {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Minus /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Plus /></button></>}
+            </div>}
+          </div>
           {!selected ? <p>Select an uploaded PDF to preview it.</p> : selected.contentType !== "application/pdf" ? (
-            <div className="resume-preview-empty"><FileText /><p>DOCX preview is not available in the browser.</p><a className="apply" href={getResumeContentUrl(selected.id)} download={selected.fileName}>Download DOCX</a></div>
+            <div className="resume-preview-empty"><FileText /><p>DOCX preview is not available in the browser.</p><button className="apply" onClick={() => void download()}>Download DOCX</button></div>
+          ) : previewError ? (
+            <div className="resume-preview-empty"><FileText /><p>{previewError}</p></div>
+          ) : !pdfUrl ? (
+            <div className="resume-preview-empty"><FileText /><p>Loading PDF…</p></div>
           ) : (
-            <PdfDocument key={selected.id} file={getResumeContentUrl(selected.id)} loading="Loading PDF…" error="PDF preview could not be loaded." onLoadSuccess={({ numPages }) => setPageCount(numPages)}>
-              {Array.from({ length: pageCount }, (_, index) => <PdfPage key={index + 1} pageNumber={index + 1} renderAnnotationLayer renderTextLayer />)}
+            <PdfDocument key={pdfUrl} file={pdfUrl} loading="Loading PDF…" error="PDF preview could not be loaded." onLoadSuccess={({ numPages }) => setPageCount(numPages)}>
+              {Array.from({ length: pageCount }, (_, index) => <PdfPage key={index + 1} pageNumber={index + 1} scale={zoom} renderAnnotationLayer renderTextLayer />)}
             </PdfDocument>
           )}
         </section>

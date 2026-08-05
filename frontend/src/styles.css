@@ -982,11 +982,12 @@ select {
 }
 .resume-library {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 1fr) minmax(0, 1fr);
   gap: 20px;
   margin-top: 20px;
   align-items: start;
 }
+.resume-left { display: grid; gap: 20px; }
 .resume-history,
 .resume-preview { padding: 20px; }
 .resume-history article {
@@ -1015,9 +1016,36 @@ select {
 .resume-select small { color: #667085; margin-top: 4px; }
 .resume-delete { border: 0; background: transparent; color: #d92d20; padding: 10px; }
 .resume-delete svg { width: 18px; }
-.resume-preview { overflow: auto; }
+.resume-preview { overflow: auto; min-height: 680px; max-height: calc(100vh - 180px); }
+.resume-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: -20px;
+  z-index: 4;
+  padding: 14px 0;
+  background: white;
+  border-bottom: 1px solid #eaecf0;
+}
+.resume-preview-toolbar h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-preview-toolbar > div { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.resume-preview-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d0d5dd;
+  background: white;
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: #344054;
+}
+.resume-preview-toolbar button svg { width: 15px; height: 15px; }
+.resume-preview-toolbar span { min-width: 42px; text-align: center; font-size: 11px; color: #475467; }
 .resume-preview .react-pdf__Page { margin: 14px auto; box-shadow: 0 2px 12px rgb(16 24 40 / 12%); }
-.resume-preview .react-pdf__Page canvas { max-width: 100%; height: auto !important; }
+.resume-preview .react-pdf__Document { width: max-content; min-width: 100%; }
+.resume-preview .react-pdf__Page canvas { max-width: none; height: auto !important; }
 .resume-preview-empty {
   min-height: 280px;
   display: grid;
@@ -1031,7 +1059,7 @@ select {
 }
 .upload-card {
   text-align: center;
-  padding: 65px;
+  padding: 38px 24px;
 }
 .upload-card > span {
   width: 55px;
