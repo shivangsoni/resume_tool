@@ -134,7 +134,7 @@ Official write APIs exist for Greenhouse, Lever, and SmartRecruiters, but requir
 
 ### Authentication providers
 
-Microsoft and Google delegated sign-in are configured at `/.auth/login/aad` and `/.auth/login/google`. Both use custom provider registrations because Static Web Apps disables every preconfigured provider as soon as one custom registration is configured. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+Microsoft delegated sign-in is configured at `/.auth/login/aad`. Other provider buttons remain unavailable until both their provider registration and required Static Web Apps settings are deployed; incomplete providers must not be included in `staticwebapp.config.json` because one invalid custom provider can disable the platform auth routes. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
 
 Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations. The custom Entra provider uses the tenant-specific v2 issuer so Static Web Apps can validate the callback token issuer.
 
@@ -146,7 +146,7 @@ https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
 ```
 
-Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; GitHub uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. To configure GitHub auth, set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in your Static Web App configuration and register the callback URL exactly. Static Web Apps custom authentication is Standard-tier only. Verify every redirect chain after any auth configuration change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
+Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; the latter references the Key Vault secret `azure-client-secret` because Key Vault secret names allow letters, digits, and hyphens, not underscores. Static Web Apps custom authentication is Standard-tier only. Verify every enabled provider redirect chain after any auth configuration change. The production verification script requires the Microsoft login route to return a redirect rather than `404`.
 
 Required external inputs:
 

@@ -19,7 +19,7 @@ param staticWebAppSku string = 'Free'
 param azureClientId string = ''
 
 @description('Name of the Key Vault secret that stores the Azure AD client secret.')
-param azureClientSecretName string = 'AZURE_CLIENT_SECRET'
+param azureClientSecretName string = 'azure-client-secret'
 
 @description('Optional Azure AD client secret value used to populate the Key Vault secret if it does not already exist.')
 @secure()

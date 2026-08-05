@@ -1061,14 +1061,16 @@ function AuthPage() {
           <span className="microsoft-mark"><i /><i /><i /><i /></span>
           Continue with Microsoft
         </a>
-        <a className="provider-button" href="/.auth/login/google?post_login_redirect_uri=/dashboard">
+        <button className="provider-button" disabled title="Google OAuth registration is not configured in Azure yet">
           <span className="provider-letter google">G</span>
           Continue with Google
-        </a>
-        <a className="provider-button github" href="/.auth/login/github?post_login_redirect_uri=/dashboard">
+          <small>Provider setup required</small>
+        </button>
+        <button className="provider-button github" disabled title="GitHub OAuth registration is not configured in Azure yet">
           <span className="provider-letter github">GH</span>
           Continue with GitHub
-        </a>
+          <small>Provider setup required</small>
+        </button>
         <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
           <span className="provider-letter facebook">f</span>
           Continue with Facebook

@@ -18,4 +18,9 @@ jq -e '.jobs | length == 10' <<<"$jobs" >/dev/null
 curl --fail --silent --show-error "$base_url/" >/dev/null
 curl --fail --silent --show-error "$base_url/login" >/dev/null
 curl --fail --silent --show-error "$base_url/logged-out" >/dev/null
+aad_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$base_url/.auth/login/aad?post_login_redirect_uri=/dashboard")"
+case "$aad_status" in
+  301|302|303|307|308) ;;
+  *) echo "Microsoft login route returned HTTP $aad_status" >&2; exit 1 ;;
+esac
 echo "Production verification passed."
