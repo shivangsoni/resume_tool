@@ -262,6 +262,7 @@ export default function App() {
             <button className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")}><Mail /> Email Inbox</button>
             <button className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</button>
             <button className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</button>
+            <button className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")}><FileText /> Résumé</button>
             <button className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</button>
             <button className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</button>
           </nav>

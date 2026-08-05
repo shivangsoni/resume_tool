@@ -97,6 +97,7 @@ Verified production checks:
 - Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
 - The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
+- The persistent top navigation exposes the Résumé page so signed-in users can upload or replace a PDF/DOCX and review extracted profile fields at any viewport width.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
 - Database migrations `001_initial` through `008_submission_queue` are applied by CI/CD before backend publication.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
@@ -116,6 +117,8 @@ Verified production checks:
 8. Track employer-confirmed `interview`, `offer`, or `rejected` states when a supported channel supplies those events.
 
 Employer submission configuration is server-side only: `EMPLOYER_SUBMISSION_ENDPOINT` selects an authorized integration, `EMPLOYER_SUBMISSION_SOURCES` allowlists sources, and `EMPLOYER_SUBMISSION_TOKEN` must be supplied through a Key Vault reference or protected Function setting. With no provider configured, the durable queue remains operational but safely reports `needs_action` instead of fabricating a submission.
+
+Official write APIs exist for Greenhouse, Lever, and SmartRecruiters, but require employer-issued API keys or partner OAuth permissions. They cannot be called with an applicant's ordinary account. Workday and unsupported hosted forms require an isolated Playwright integration for broad coverage. The planned browser worker must pause for CAPTCHA, consent, authentication challenges, and unknown required answers; it must never report success without the employer's confirmation page or receipt identifier. See [ARCHITECTURE.md](ARCHITECTURE.md#provider-api-and-browser-automation-routing).
 
 ### Authentication providers
 

@@ -149,6 +149,35 @@ The public Greenhouse feed exposes application questions, but submission require
 
 The submission endpoint is intentionally not a generic browser-automation proxy. Provider endpoints and credentials are server-side configuration, sources must be allowlisted, and the application ID is used as the provider idempotency key. A `2xx` response without a receipt is treated as `needs_action`, not success.
 
+### Provider API and browser-automation routing
+
+```mermaid
+flowchart TD
+    Worker[Service Bus submission worker]
+    Detect{Supported ATS?}
+    Credential{Employer or partner<br/>credential configured?}
+    API[Official ATS submission API]
+    Browser[Isolated Playwright<br/>Container Apps job]
+    Human{CAPTCHA, consent, login,<br/>or unknown answer?}
+    Pause[needs_action<br/>candidate checkpoint]
+    Receipt{Verifiable receipt?}
+    Submitted[submitted]
+
+    Worker --> Detect
+    Detect -->|Greenhouse, Lever, SmartRecruiters| Credential
+    Credential -->|yes| API
+    Credential -->|no| Browser
+    Detect -->|Workday or hosted form| Browser
+    Browser --> Human
+    Human -->|yes| Pause
+    Human -->|no| Receipt
+    API --> Receipt
+    Receipt -->|yes| Submitted
+    Receipt -->|no| Pause
+```
+
+Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can submit applications, but their write endpoints require a key or OAuth scope issued to the hiring company or an approved integration partner. They are not universal applicant credentials. Workday does not publish an equivalent general-purpose candidate submission API. ApplyPilot therefore prefers official APIs when an authorized employer credential exists and otherwise routes supported hosted forms to an isolated Playwright worker. Browser automation must stop before CAPTCHA circumvention, new consent, account recovery, or unanswered screening questions and resume only after candidate action.
+
 ## Azure resources and security
 
 | Component | Purpose | Security boundary |
