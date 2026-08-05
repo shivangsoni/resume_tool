@@ -95,7 +95,7 @@ Verified production checks:
 
 ### Authentication providers
 
-Microsoft delegated sign-in is active at `/.auth/login/aad`. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+Microsoft delegated sign-in is active at `/.auth/login/aad` through a custom Entra registration. Google remains disabled until its OAuth client allowlists the exact callback URI and its exposed secret has been rotated. Static Web Apps disables every preconfigured provider as soon as one custom registration is configured, so Microsoft must remain in the custom configuration when Google is added. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
 
 Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until both providers are configured and tested. Register these callbacks with the providers:
 
@@ -104,7 +104,7 @@ https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
 ```
 
-Store client IDs and secrets in Static Web Apps application settings or Key Vault—never in this repository or the frontend bundle. Static Web Apps custom authentication is Standard-tier only, and adding any custom provider disables all preconfigured providers. Therefore Microsoft must also be migrated to a custom registration in the same release when Google/Facebook are enabled. Follow the official custom-authentication configuration and verify `/.auth/login/<provider>` returns a provider redirect before enabling its button.
+Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google will use `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` after activation. Static Web Apps custom authentication is Standard-tier only. Verify both redirect chains after every authentication change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
 
 Required external inputs:
 
@@ -113,6 +113,8 @@ Required external inputs:
 - Microsoft Entra application client ID/secret if switching from the current preconfigured Microsoft provider to a multi-provider custom configuration.
 
 ### Email and mailbox behavior
+
+Postmark test mode permits inbound processing from any domain, but limits the account to 100 processed messages. Apply for Postmark approval before production volume requires more than that. ApplyPilot continues using Azure Communication Services rather than Postmark for outbound queue confirmations.
 
 Azure Communication Services Email provides outbound delivery only. The deployed Azure-managed domain sends queue confirmations from its fixed `donotreply@...azurecomm.net` address; Azure-managed sender usernames cannot be personalized. The Function uses managed identity with the Communication and Email Service Owner role, so no email connection string is stored in the app.
 

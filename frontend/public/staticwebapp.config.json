@@ -5,6 +5,17 @@
     { "route": "/api/resume*", "allowedRoles": ["authenticated"] },
     { "route": "/api/mailbox*", "allowedRoles": ["authenticated"] }
   ],
+  "auth": {
+    "identityProviders": {
+      "azureActiveDirectory": {
+        "registration": {
+          "openIdIssuer": "https://login.microsoftonline.com/common/v2.0",
+          "clientIdSettingName": "AZURE_CLIENT_ID",
+          "clientSecretSettingName": "AZURE_CLIENT_SECRET"
+        }
+      }
+    }
+  },
   "navigationFallback": { "rewrite": "/index.html", "exclude": ["/assets/*.{css,js,png,jpg,svg}", "/api/*", "/.auth/*"] },
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",
