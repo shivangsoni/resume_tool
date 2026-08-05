@@ -27,6 +27,7 @@ param tags object = {
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, appName)
 var safeBase = toLower(replace(appName, '-', ''))
+var keyVaultName = take('${safeBase}vault${suffix}', 24)
 
 module frontend 'modules/frontend.bicep' = {
   name: 'frontend'
@@ -68,7 +69,7 @@ module backend 'modules/backend.bicep' = {
 module keyVault 'modules/keyvault.bicep' = {
   name: 'keyVault'
   params: {
-    name: '${appName}-vault-${suffix}'
+    name: keyVaultName
     location: location
     functionPrincipalId: backend.outputs.principalId
     tags: tags
