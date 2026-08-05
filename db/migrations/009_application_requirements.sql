@@ -2,6 +2,8 @@ SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 
 ALTER TABLE dbo.Applications ADD RequiredQuestionsJson nvarchar(max) NULL;
+GO
+
 ALTER TABLE dbo.Applications ADD CONSTRAINT CK_Applications_RequiredQuestionsJson
   CHECK (RequiredQuestionsJson IS NULL OR ISJSON(RequiredQuestionsJson) = 1);
 

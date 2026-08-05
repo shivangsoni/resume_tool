@@ -52,7 +52,9 @@ The deployment job uses a GitHub environment named `production`, which GitHub cr
 | `AZURE_TENANT_ID` | `80fa3d36-87ac-489f-890a-6f0b55870bc5` |
 | `AZURE_SUBSCRIPTION_ID` | `b5f1fa5f-c39f-4d7d-866c-57836fe7382f` |
 
-These values are not credentials and are safe to track. GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
+These values are not credentials and are safe to track. This `AZURE_CLIENT_ID` is used by GitHub Actions for Azure login via OIDC and is separate from the custom Azure AD application used by Static Web Apps auth. The SWA auth app ID is configured through `infra/dev.bicepparam` as `azureClientId` and should be the Microsoft login client ID `35bf98bd-ec76-42b8-8fd5-db32455d2b00`.
+
+GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
 
@@ -63,6 +65,8 @@ The workflow is active after it is pushed to `main`. Production protection rules
 ## Complete Azure deployment
 
 The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. Keep this order to avoid an identity/registry dependency cycle on first deployment.
+
+Database migrations are split on `GO` batch separators by `backend/scripts/migrate.js`. When a migration adds a column and then references it in a constraint, keep those statements in separate batches so Azure SQL compiles the constraint after the column exists.
 
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 
