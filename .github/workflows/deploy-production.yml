@@ -23,6 +23,9 @@ env:
   SQL_SERVER: simplyapply
   SQL_DATABASE: applypilot
   FRONTEND_URL: https://blue-water-0d76ed710.7.azurestaticapps.net
+  AZURE_CLIENT_ID: f7743fa2-90ca-4580-a292-012e5ccac741
+  AZURE_TENANT_ID: 80fa3d36-87ac-489f-890a-6f0b55870bc5
+  AZURE_SUBSCRIPTION_ID: b5f1fa5f-c39f-4d7d-866c-57836fe7382f
 
 jobs:
   deploy:
@@ -42,9 +45,9 @@ jobs:
       - name: Sign in to Azure with OIDC
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy Azure infrastructure
         run: >-

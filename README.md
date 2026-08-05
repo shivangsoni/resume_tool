@@ -44,19 +44,19 @@ npm run build --prefix frontend
 
 GitHub Actions now validates every pull request and every push to `main` with [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It installs locked dependencies, runs frontend lint/tests/build, runs backend tests, and compiles the Bicep template. A successful `main` run triggers [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml), which deploys Bicep, applies pending SQL migrations, publishes the Function package and frontend independently, and smoke-tests production. The production workflow can also be started manually from **Actions → Deploy production → Run workflow**.
 
-Create a GitHub environment named `production` under **Repository Settings → Environments**. Restrict its deployment branch to `main`, optionally add required reviewers, and add these environment secrets:
+The deployment job uses a GitHub environment named `production`, which GitHub creates when the workflow first runs. Under **Repository Settings → Environments**, restrict its deployment branch to `main` and optionally add required reviewers. Azure login uses these non-secret identifiers from the workflow:
 
-| Secret | Value |
+| Identifier | Value |
 | --- | --- |
 | `AZURE_CLIENT_ID` | `f7743fa2-90ca-4580-a292-012e5ccac741` |
 | `AZURE_TENANT_ID` | `80fa3d36-87ac-489f-890a-6f0b55870bc5` |
 | `AZURE_SUBSCRIPTION_ID` | `b5f1fa5f-c39f-4d7d-866c-57836fe7382f` |
 
-These values identify the deployment application and are not an Azure client secret. GitHub authenticates with short-lived OpenID Connect tokens. The Azure application `applypilot-github-deploy` already has a federated credential for `repo:shivangsoni/resume_tool:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
+These values are not credentials and are safe to track. GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` already has a federated credential for `repo:shivangsoni/resume_tool:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
 
-GitHub repository settings cannot be changed from this workstation until GitHub authentication is restored. After adding the three environment secrets, push `main`; CI/CD will not exist on GitHub until the workflow commit reaches the remote repository.
+The workflow is active after it is pushed to `main`. Production protection rules are optional but recommended before additional collaborators receive write access.
 
 ## Complete Azure deployment
 
