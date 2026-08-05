@@ -62,6 +62,8 @@ The workflow is active after it is pushed to `main`. Production protection rules
 
 ## Complete Azure deployment
 
+The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. Keep this order to avoid an identity/registry dependency cycle on first deployment.
+
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 
 ### Current development deployment

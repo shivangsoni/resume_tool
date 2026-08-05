@@ -53,10 +53,6 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
-      registries: [{
-        server: registry.properties.loginServer
-        identity: 'system'
-      }]
     }
     template: {
       containers: [{

@@ -113,6 +113,7 @@ jobs:
       - name: Build and deploy Playwright browser worker
         run: |
           az acr build --registry "$BROWSER_REGISTRY" --image "applypilot-browser:${GITHUB_SHA}" worker
+          az containerapp registry set --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --server "${BROWSER_REGISTRY}.azurecr.io" --identity system
           az containerapp update --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --image "${BROWSER_REGISTRY}.azurecr.io/applypilot-browser:${GITHUB_SHA}" --command npm start
 
       - name: Build frontend
