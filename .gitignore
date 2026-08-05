@@ -10,3 +10,4 @@ vite.config.d.ts
 .azure/
 .swa/
 *.zip
+/infra/main.json

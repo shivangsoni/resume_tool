@@ -44,6 +44,7 @@ Install these tools and confirm they work:
 az --version
 node --version
 npm --version
+winget install --id Microsoft.Sqlcmd --exact --silent --accept-package-agreements --accept-source-agreements
 ```
 
 Azure CLI installation instructions: https://learn.microsoft.com/cli/azure/install-azure-cli-windows
@@ -148,10 +149,7 @@ The ZIP must contain `host.json` at its root and must not contain `local.setting
 npm ci --prefix backend --omit=dev --workspaces=false
 
 Push-Location backend
-Compress-Archive `
-  -Path host.json,package.json,package-lock.json,src,node_modules `
-  -DestinationPath ..\backend.zip `
-  -Force
+tar.exe -a -c -f ..\backend.zip host.json package.json package-lock.json src node_modules
 Pop-Location
 
 az functionapp deployment source config-zip `
