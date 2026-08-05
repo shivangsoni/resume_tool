@@ -99,7 +99,7 @@ export async function refreshQueuedApplications(principal, profile) {
   return refreshed;
 }
 
-const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, submissionProvider: row.SubmissionProvider, providerReceiptId: row.ProviderReceiptId, lastSubmissionError: row.LastSubmissionError, submissionQueuedAt: row.SubmissionQueuedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
+const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, requiredQuestions: row.RequiredQuestionsJson ? JSON.parse(row.RequiredQuestionsJson) : [], notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, submissionProvider: row.SubmissionProvider, providerReceiptId: row.ProviderReceiptId, lastSubmissionError: row.LastSubmissionError, submissionQueuedAt: row.SubmissionQueuedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
 
 export async function listApplications(principal) {
   const userId = await ensureUser(principal);
@@ -152,6 +152,23 @@ export async function queueApplicationSubmission(principal, id) {
     WHERE Id=@id AND UserId=@userId AND Status IN ('review','needs_action','failed','queued');
   `);
   return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const current = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
+    .query("SELECT AnswersJson,RequiredQuestionsJson FROM dbo.Applications WHERE Id=@id AND UserId=@userId");
+  if (!current.recordset.length) return null;
+  const answers = { ...(current.recordset[0].AnswersJson ? JSON.parse(current.recordset[0].AnswersJson) : {}), ...suppliedAnswers };
+  const questions = (current.recordset[0].RequiredQuestionsJson ? JSON.parse(current.recordset[0].RequiredQuestionsJson) : [])
+    .filter((question) => !String(answers[question.key] ?? "").trim());
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
+    .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers)).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions)).query(`
+      UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status='review',LastSubmissionError=NULL,UpdatedAt=SYSUTCDATETIME()
+      OUTPUT inserted.* WHERE Id=@id AND UserId=@userId;
+    `);
+  return mapApplication(result.recordset[0]);
 }
 
 export async function claimApplicationForSubmission(id) {

@@ -109,6 +109,11 @@ export const submitApplication = (id: string) =>
     method: "POST",
     body: "{}",
   });
+export const answerApplicationQuestions = (id: string, answers: Record<string, string>) =>
+  request<{ application: Application }>(`/applications/${encodeURIComponent(id)}/answers`, {
+    method: "POST",
+    body: JSON.stringify({ answers }),
+  });
 
 export const getMailbox = (offset = 0) =>
   request<{ address: string | null; messages: MailMessage[]; total: number }>(`/mailbox?limit=25&offset=${offset}`);

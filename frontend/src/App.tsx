@@ -31,6 +31,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
 import {
+  answerApplicationQuestions,
   createApplication,
   submitApplication,
   getApplications,
@@ -374,6 +375,13 @@ export default function App() {
                   error instanceof Error ? error.message : "Update failed",
                 );
               }
+            }}
+            resolve={async (id, answers) => {
+              try {
+                const result = await answerApplicationQuestions(id, answers);
+                setApplications((items) => items.map((item) => item.id === id ? result.application : item));
+                notify("Answers saved. Application queued again.");
+              } catch (error) { notify(error instanceof Error ? error.message : "Answers could not be saved"); }
             }}
           />
         )}
@@ -824,9 +832,11 @@ function JobDetail({
 function Applications({
   applications,
   update,
+  resolve,
 }: {
   applications: Application[];
   update: (id: string, status: Application["status"]) => Promise<void>;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
 }) {
   return (
     <div className="basic-page">
@@ -882,11 +892,28 @@ function Applications({
                 {new Date(application.updatedAt).toLocaleDateString()}
               </time>
             </div>
+            {application.status === "needs_action" && <ApplicationQuestions application={application} resolve={resolve} />}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function ApplicationQuestions({ application, resolve }: { application: Application; resolve: (id: string, answers: Record<string, string>) => Promise<void> }) {
+  const questions = application.requiredQuestions || [];
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  if (!questions.length) return <div className="action-required"><b>Action required</b><p>{application.lastSubmissionError || "The employer application needs manual review."}</p><div className="action-required-buttons"><button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button><a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a></div></div>;
+  const blocking = questions.some((question) => question.type === "blocking");
+  return <form className="action-required" onSubmit={async (event) => { event.preventDefault(); if (blocking) return; setSaving(true); try { await resolve(application.id, answers); } finally { setSaving(false); } }}>
+    <b>Additional employer questions</b>
+    <p>{application.lastSubmissionError}</p>
+    {questions.map((question) => <label key={question.key}>{question.label}
+      {question.type === "blocking" ? <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a> : question.type === "select" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option>{question.options?.map((option) => <option key={option}>{option}</option>)}</select> : question.type === "checkbox" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option><option value="yes">Yes</option><option value="no">No</option></select> : question.type === "textarea" ? <textarea required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} /> : <input required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} />}
+    </label>)}
+    {!blocking && <button className="apply" disabled={saving}>{saving ? "Saving…" : "Save answers and retry"}</button>}
+  </form>;
 }
 function Resume({
   documents,

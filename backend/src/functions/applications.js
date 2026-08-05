@@ -1,6 +1,6 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { createApplication, listApplications, queueApplicationSubmission, updateApplication } from "../database.js";
+import { createApplication, listApplications, queueApplicationSubmission, saveApplicationAnswers, updateApplication } from "../database.js";
 import { sendApplicationQueuedEmail } from "../notifications.js";
 import { enqueueApplicationSubmission } from "../submission-queue.js";
 
@@ -45,5 +45,22 @@ app.http("application", {
       const application = await updateApplication(principal, request.params.id, await request.json());
       return application ? { jsonBody: { application } } : { status: 404, jsonBody: { error: "Application not found." } };
     } catch (error) { context.error("Application update failed", error); return { status: 400, jsonBody: { error: error instanceof Error ? error.message : "Update failed." } }; }
+  },
+});
+
+app.http("applicationAnswers", {
+  methods: ["POST"], authLevel: "anonymous", route: "applications/{id}/answers",
+  handler: async (request, context) => {
+    const principal = getPrincipal(request); if (!principal) return unauthorized();
+    try {
+      const body = await request.json();
+      const answers = body?.answers && typeof body.answers === "object" ? body.answers : {};
+      if (Object.values(answers).some((value) => typeof value !== "string" || value.length > 4000)) return { status: 400, jsonBody: { error: "Invalid screening answers." } };
+      const saved = await saveApplicationAnswers(principal, request.params.id, answers);
+      if (!saved) return { status: 404, jsonBody: { error: "Application not found." } };
+      const application = await queueApplicationSubmission(principal, saved.id);
+      await enqueueApplicationSubmission(application);
+      return { status: 202, jsonBody: { application } };
+    } catch (error) { context.error("Application answers failed", error); return { status: 500, jsonBody: { error: "Answers could not be saved and queued." } }; }
   },
 });

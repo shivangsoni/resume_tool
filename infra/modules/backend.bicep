@@ -121,4 +121,5 @@ output name string = functionApp.name
 output hostname string = functionApp.properties.defaultHostName
 output url string = 'https://${functionApp.properties.defaultHostName}'
 output principalId string = functionApp.identity.principalId
+output storageAccountName string = storage.name
 output id string = functionApp.id

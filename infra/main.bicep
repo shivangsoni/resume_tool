@@ -110,6 +110,20 @@ module backend 'modules/backend.bicep' = {
   }
 }
 
+module browserWorker 'modules/browser-worker.bicep' = {
+  name: 'browserWorker'
+  params: {
+    name: '${appName}-browser-${suffix}'
+    location: location
+    serviceBusNamespace: serviceBus.outputs.namespace
+    queueName: serviceBus.outputs.queueName
+    sqlServerFqdn: database.outputs.serverFqdn
+    sqlDatabaseName: database.outputs.name
+    storageAccountName: backend.outputs.storageAccountName
+    tags: tags
+  }
+}
+
 module serviceBusAccess 'modules/service-bus-access.bicep' = {
   name: 'serviceBusAccess'
   params: {
@@ -167,3 +181,5 @@ output emailServiceName string = email.outputs.emailServiceName
 output emailSenderAddress string = email.outputs.senderAddress
 output serviceBusNamespace string = serviceBus.outputs.namespace
 output applicationSubmissionQueue string = serviceBus.outputs.queueName
+output browserWorkerName string = browserWorker.outputs.workerName
+output browserRegistryName string = browserWorker.outputs.registryName

@@ -23,6 +23,8 @@ env:
   SQL_SERVER: simplyapply
   SQL_DATABASE: applypilot
   FRONTEND_URL: https://blue-water-0d76ed710.7.azurestaticapps.net
+  BROWSER_WORKER: applypilotcentral-browser-khaah5ti4wzag
+  BROWSER_REGISTRY: applypilotcentralbrowserkhaah5ti4wzag
   AZURE_CLIENT_ID: f7743fa2-90ca-4580-a292-012e5ccac741
   AZURE_TENANT_ID: 80fa3d36-87ac-489f-890a-6f0b55870bc5
   AZURE_SUBSCRIPTION_ID: b5f1fa5f-c39f-4d7d-866c-57836fe7382f
@@ -75,6 +77,13 @@ jobs:
           AZURE_SQL_DATABASE: applypilot
         run: npm run migrate --prefix backend
 
+      - name: Grant browser worker database access
+        env:
+          AZURE_SQL_SERVER: simplyapply.database.windows.net
+          AZURE_SQL_DATABASE: applypilot
+          WORKER_IDENTITY_NAME: ${{ env.BROWSER_WORKER }}
+        run: npm run grant-worker --prefix backend
+
       - name: Remove temporary SQL firewall rule
         if: always() && steps.sql_firewall.outputs.rule_name != ''
         run: az sql server firewall-rule delete --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER" --name "${{ steps.sql_firewall.outputs.rule_name }}"
@@ -95,6 +104,11 @@ jobs:
           az functionapp restart --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP"
           function_resource="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNCTION_APP}"
           az rest --method post --uri "https://management.azure.com${function_resource}/syncfunctiontriggers?api-version=2023-12-01"
+
+      - name: Build and deploy Playwright browser worker
+        run: |
+          az acr build --registry "$BROWSER_REGISTRY" --image "applypilot-browser:${GITHUB_SHA}" worker
+          az containerapp update --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --image "${BROWSER_REGISTRY}.azurecr.io/applypilot-browser:${GITHUB_SHA}" --command npm start
 
       - name: Build frontend
         env:

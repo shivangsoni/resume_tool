@@ -17,8 +17,8 @@ flowchart LR
     Remotive[Remotive API]
     Email[Azure Communication Services Email<br/>outbound notifications]
     Bus[Azure Service Bus<br/>application-submissions queue + DLQ]
-    Worker[Queue-triggered Function<br/>submission orchestrator]
-    Provider[Authorized employer<br/>submission provider]
+    Worker[Azure Container App<br/>isolated Playwright worker]
+    Employer[Employer-hosted<br/>application form]
 
     Candidate -->|sign in| Auth
     Candidate -->|same-origin /api| SWA
@@ -31,9 +31,9 @@ flowchart LR
     API -->|job discovery| Remotive
     API -->|managed identity| Email
     API -->|enqueue with managed identity| Bus
-    Bus -->|queue trigger| Worker
-    Worker -->|authorized API only| Provider
-    Provider -->|verifiable receipt| Worker
+    Bus -->|managed-identity consumer| Worker
+    Worker -->|fill and submit| Employer
+    Employer -->|confirmation page| Worker
     Worker -->|attempt and receipt| SQL
     Blob -->|resume bytes| DocAI
 ```
@@ -100,8 +100,8 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 2. The browser queries `/api/jobs`, filters results, and displays source provenance and direct employer URLs.
 3. **Simple Apply** creates a SQL `review` record containing the job and saved profile answers without navigating away from ApplyPilot.
 4. `POST /api/applications/{id}/submit` verifies ownership, changes the record to `queued`, and sends an idempotent message to Azure Service Bus.
-5. The queue-triggered Function loads the authoritative application snapshot and selects an explicitly configured provider adapter.
-6. Unsupported providers or missing requirements move the application to `needs_action`; they are never represented as submitted.
+5. The isolated Playwright container loads the authoritative application, profile, and primary résumé using managed identities.
+6. Missing required questions, CAPTCHA, login, consent, or an unrecognized employer step moves the application to `needs_action` with structured questions; it is never represented as submitted.
 7. Transient provider errors are retried by Service Bus up to five deliveries, then retained in the dead-letter queue for investigation.
 8. Only a non-empty employer receipt advances the record to `submitted`; every attempt and receipt is audited in SQL.
 9. Only an explicit profile save refreshes blank answers on review applications; résumé uploads remain isolated from profile and application data.
@@ -123,14 +123,14 @@ stateDiagram-v2
     Review --> Failed: job closed or provider error
 ```
 
-### Submission integration boundary
+### Browser submission and candidate checkpoint
 
 ```mermaid
 flowchart TD
     Click[Candidate selects Apply]
-    Provider{Provider supports<br/>authorized submission?}
+    Provider{Hosted form is<br/>supported?}
     Fields{All required fields,<br/>consents, and resume available?}
-    Submit[Submit through provider API]
+    Submit[Submit through isolated browser]
     Confirm{Employer confirms receipt?}
     Track[Persist submitted status]
     Review[Keep in review and show<br/>unresolved requirements]
@@ -145,9 +145,9 @@ flowchart TD
     Confirm -->|no| Review
 ```
 
-The public Greenhouse feed exposes application questions, but submission requires a private API key issued by each hiring company. Remotive provides discovery and requires consumers to link back to its listing. ApplyPilot must not mark either source submitted without an employer receipt. A future user-controlled Playwright runner can prefill supported hosted forms, but it must pause for missing required questions, consent, CAPTCHA, and the final user-authorized submit action.
+The public Greenhouse feed exposes application questions, but its write API requires a private key issued by each hiring company. ApplyPilot therefore uses the employer-hosted application form through its first-party Playwright worker when no authorized write API exists. It pauses for missing required questions, consent, CAPTCHA, login, and unrecognized steps. A confirmation page is required before the application is marked submitted.
 
-The submission endpoint is intentionally not a generic browser-automation proxy. Provider endpoints and credentials are server-side configuration, sources must be allowlisted, and the application ID is used as the provider idempotency key. A `2xx` response without a receipt is treated as `needs_action`, not success.
+The worker is not a generic browser-automation proxy. It accepts only application IDs from the private Service Bus queue, retrieves server-owned URLs and user-scoped records from SQL, and runs at one application per replica. CAPTCHA bypass, account recovery, and invented answers are prohibited.
 
 ### Provider API and browser-automation routing
 
@@ -188,7 +188,8 @@ Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can s
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |
 | Communication Services Email | Outbound application queue notifications | Azure-managed domain; managed-identity sender role; no inbound mailbox |
-| Azure Service Bus Basic | Durable application submission queue, retries, and dead-letter retention | Local/SAS auth disabled; Function identity has sender and receiver roles |
+| Azure Service Bus Basic | Durable application submission queue and dead-letter retention | Local/SAS auth disabled; Function sends and browser worker receives with managed identities |
+| Azure Container Apps | Scale-to-zero Playwright browser worker | Isolated Chromium container; managed identity for queue, SQL, Blob, and ACR |
 | Application Insights | Runtime diagnostics | 30-day retention configured by Bicep |
 | Key Vault | Future application secrets | Function identity access; no resume or profile payloads stored here |
 
@@ -198,7 +199,8 @@ Traffic uses HTTPS/TLS and Azure-managed services encrypt stored data. No storag
 
 - `frontend/` builds and deploys independently to Static Web Apps.
 - `backend/` packages and deploys independently to Azure Functions.
-- `infra/` provisions resources, identities, RBAC, settings, and the linked backend with Bicep.
+- `worker/` builds the isolated Playwright submission container.
+- `infra/` provisions resources, identities, RBAC, settings, Container Apps, ACR, and the linked backend with Bicep.
 - `db/` contains forward-only migrations and the managed-identity bootstrap.
 
 Infrastructure deployment precedes backend deployment when a service or setting is added. Database migrations run in filename order before code that depends on their columns is released.

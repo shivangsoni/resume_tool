@@ -969,6 +969,22 @@ select {
   font-size: 8px;
   color: #98a2b3;
 }
+.action-required {
+  grid-column: 1 / -1;
+  margin: 10px 20px 18px;
+  padding: 16px;
+  border: 1px solid #f7b4ad;
+  border-radius: 9px;
+  background: #fff6f5;
+  display: grid;
+  gap: 10px;
+}
+.action-required p { margin: 0; color: #8a332b; font-size: 11px; }
+.action-required label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 600; }
+.action-required input,.action-required select,.action-required textarea { width: 100%; border: 1px solid #d0d5dd; border-radius: 7px; padding: 9px 10px; background: white; }
+.action-required textarea { min-height: 80px; resize: vertical; }
+.action-required .apply { width: max-content; }
+.action-required-buttons { display: flex; align-items: center; gap: 14px; }
 
 .extraction-status {
   font-weight: 650;
