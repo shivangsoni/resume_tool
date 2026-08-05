@@ -75,6 +75,7 @@ Verified production checks:
 - Upstream HTML and encoded Greenhouse markup are normalized into readable plain-text job summaries before rendering.
 - Location text filtering is case-insensitive and combines with every other job filter.
 - Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
+- The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
 - Database migrations `001_initial` through `006_resume_extraction` are applied.
@@ -89,6 +90,25 @@ Verified production checks:
 3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` queue record with the complete saved profile snapshot and stays inside the portal.
 4. The application remains visibly queued until an authorized provider integration returns an employer receipt. A queue record is never represented as a submission.
 5. Track employer-confirmed `submitted`, `interview`, `offer`, or `rejected` states in SQL when a supported channel supplies those events.
+
+### Authentication providers
+
+Microsoft delegated sign-in is active at `/.auth/login/aad`. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+
+Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until both providers are configured and tested. Register these callbacks with the providers:
+
+```text
+https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
+https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
+```
+
+Store client IDs and secrets in Static Web Apps application settings or Key Vault—never in this repository or the frontend bundle. Static Web Apps custom authentication is Standard-tier only, and adding any custom provider disables all preconfigured providers. Therefore Microsoft must also be migrated to a custom registration in the same release when Google/Facebook are enabled. Follow the official custom-authentication configuration and verify `/.auth/login/<provider>` returns a provider redirect before enabling its button.
+
+Required external inputs:
+
+- Google OAuth web client ID and client secret, with the Google callback allowlisted.
+- Meta/Facebook application ID and secret, with the Facebook callback allowlisted and the app published for non-admin users.
+- Microsoft Entra application client ID/secret if switching from the current preconfigured Microsoft provider to a multi-provider custom configuration.
 
 ### Deployment documentation policy
 

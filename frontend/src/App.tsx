@@ -33,7 +33,7 @@ import {
 import type { Application, Profile } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
 
-type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings";
+type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
 type Job = {
   id: number;
   company: string;
@@ -268,12 +268,12 @@ export default function App() {
               Sign out
             </a>
           ) : (
-            <a
+            <button
               className="upgrade"
-              href="/.auth/login/aad?post_login_redirect_uri=/"
+              onClick={() => setPage("auth")}
             >
               <UserRound /> Sign in
-            </a>
+            </button>
           )}
         </header>
         {page === "dashboard" && (
@@ -423,6 +423,7 @@ export default function App() {
         {page === "inbox" && <InboxPage />}
         {page === "credits" && <CreditsPage queued={applications.filter((item) => item.status === "review").length} />}
         {page === "settings" && <SettingsPage />}
+        {page === "auth" && <AuthPage />}
       </main>
       {toast && (
         <div className="toast">
@@ -911,6 +912,33 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
         <label>Job title, company, or skill<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Software Engineer, React, Azure…" /></label>
         <label>Location<input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote, Seattle, United States…" /></label>
         <button className="orange-action" onClick={search}><Search /> Search jobs</button>
+      </section>
+    </div>
+  );
+}
+
+function AuthPage() {
+  return (
+    <div className="auth-page">
+      <section className="auth-card">
+        <div className="auth-brand"><WandSparkles /></div>
+        <h1>Create your ApplyPilot account</h1>
+        <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
+        <a className="provider-button microsoft" href="/.auth/login/aad?post_login_redirect_uri=/">
+          <span className="microsoft-mark"><i /><i /><i /><i /></span>
+          Continue with Microsoft
+        </a>
+        <button className="provider-button" disabled title="Google OAuth registration is not configured in Azure yet">
+          <span className="provider-letter google">G</span>
+          Continue with Google
+          <small>Provider setup required</small>
+        </button>
+        <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
+          <span className="provider-letter facebook">f</span>
+          Continue with Facebook
+          <small>Provider setup required</small>
+        </button>
+        <div className="auth-note">By continuing, you agree to use ApplyPilot for your own job search and to review information before submission.</div>
       </section>
     </div>
   );

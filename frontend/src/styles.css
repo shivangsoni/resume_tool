@@ -1433,6 +1433,102 @@ select {
 .screenshot-profile .apply {
   background: #ff8500;
 }
+.auth-page {
+  min-height: calc(100vh - 72px);
+  display: grid;
+  place-items: center;
+  padding: 40px 18px;
+  background: radial-gradient(circle at top, #fff7ed, #f6f7f9 45%);
+}
+.auth-card {
+  width: min(100%, 470px);
+  background: white;
+  border: 1px solid #e0e5ec;
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgb(16 24 40 / 10%);
+  padding: 34px;
+  text-align: center;
+}
+.auth-brand {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 18px;
+  border-radius: 13px;
+  background: #ff8500;
+  color: white;
+  display: grid;
+  place-items: center;
+}
+.auth-brand svg {
+  width: 24px;
+}
+.auth-card h1 {
+  margin: 0 0 10px;
+  font-size: 25px;
+}
+.auth-card > p {
+  color: #667085;
+  line-height: 1.55;
+  margin: 0 0 24px;
+}
+.provider-button {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #d7dde6;
+  background: white;
+  color: #172033;
+  border-radius: 9px;
+  margin: 10px 0;
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+.provider-button:hover:not(:disabled) {
+  border-color: #ff8500;
+  box-shadow: 0 0 0 3px #fff1df;
+}
+.provider-button:disabled {
+  cursor: not-allowed;
+  color: #98a2b3;
+  background: #f8f9fb;
+}
+.provider-button small {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 500;
+}
+.microsoft-mark {
+  width: 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.microsoft-mark i {
+  height: 10px;
+  background: #f35325;
+}
+.microsoft-mark i:nth-child(2) { background: #81bc06; }
+.microsoft-mark i:nth-child(3) { background: #05a6f0; }
+.microsoft-mark i:nth-child(4) { background: #ffba08; }
+.provider-letter {
+  width: 22px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.google { color: #4285f4; }
+.facebook { color: #1877f2; }
+.auth-note {
+  border-top: 1px solid #eaecf0;
+  margin-top: 22px;
+  padding-top: 18px;
+  color: #7c8595;
+  font-size: 10px;
+  line-height: 1.5;
+}
 .setting-row small {
   color: #7b8495;
   margin-top: 5px;

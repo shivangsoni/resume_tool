@@ -37,6 +37,26 @@ flowchart LR
 3. Functions reject personal API calls without that trusted principal.
 4. The external subject is mapped to an internal SQL user ID. Every profile, document, and application query is scoped to that ID.
 
+```mermaid
+sequenceDiagram
+    actor Candidate
+    participant SPA as React account screen
+    participant SWA as Static Web Apps auth
+    participant IdP as Microsoft / configured social IdP
+    participant API as Azure Functions
+    participant SQL as Azure SQL
+    Candidate->>SPA: Choose provider
+    SPA->>SWA: /.auth/login/provider
+    SWA->>IdP: OAuth/OIDC authorization
+    IdP-->>SWA: Signed callback
+    SWA-->>SPA: Secure auth cookie
+    SPA->>API: Authenticated profile request
+    API->>SQL: Map external subject / create user
+    SQL-->>API: Internal user ID
+```
+
+Microsoft is currently enabled through the platform registration. Google and Facebook require separate developer registrations and secrets. They remain disabled in the UI until those external credentials and callbacks are configured; the app never simulates a successful provider.
+
 ### Resume ingestion and profile enrichment
 
 1. The signed-in browser sends a PDF or DOCX of at most 4 MB to `POST /api/resume` (the F0 analysis limit).
