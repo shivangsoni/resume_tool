@@ -1428,6 +1428,28 @@ select {
 .mail-content h2 { margin: 0 0 8px; }
 .mail-from { color: #667085; border-bottom: 1px solid #e5e7eb; padding-bottom: 16px; }
 .mail-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.public-shell { min-height: 100vh; background: radial-gradient(circle at 85% 10%, #fff3e8 0, transparent 28%), #fbfcfe; color: #101828; }
+.public-header { height: 76px; padding: 0 max(24px, 6vw); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eaecf0; background: rgba(255,255,255,.88); }
+.public-header nav, .landing-actions { display: flex; align-items: center; gap: 14px; }
+.public-header nav > a:not(.orange-action), .public-link { color: #475467; text-decoration: none; font-weight: 600; }
+.public-brand { display: inline-flex; align-items: center; gap: 10px; color: #101828; text-decoration: none; font-size: 22px; }
+.public-brand svg { color: #ff7900; }
+.landing-hero { max-width: 1220px; margin: auto; padding: 90px 28px 64px; display: grid; grid-template-columns: 1.05fr .95fr; gap: 70px; align-items: center; }
+.landing-kicker { color: #e96800; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; }
+.landing-hero h1 { font-size: clamp(44px, 6vw, 76px); line-height: 1.02; letter-spacing: -.05em; margin: 18px 0 24px; }
+.landing-hero h1 em { color: #ff7900; font-style: normal; }
+.landing-hero > div > p { max-width: 640px; color: #667085; font-size: 18px; line-height: 1.7; }
+.landing-hero small { display: block; margin-top: 18px; color: #98a2b3; }
+.orange-action, .secondary-action { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px; border-radius: 10px; text-decoration: none; font-weight: 700; border: 1px solid transparent; }
+.secondary-action { color: #344054; background: white; border-color: #d0d5dd; }
+.landing-preview { border: 1px solid #e4e7ec; border-radius: 24px; background: white; padding: 26px; box-shadow: 0 30px 80px rgba(16,24,40,.12); }
+.preview-top { display: flex; gap: 6px; margin-bottom: 28px; }.preview-top span { width: 9px; height: 9px; border-radius: 50%; background: #f2f4f7; }.preview-top span:first-child { background: #ff7900; }
+.landing-preview > b { font-size: 20px; }
+.preview-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin: 22px 0; }.preview-metrics span { padding: 14px; border-radius: 12px; background: #f8fafc; color: #667085; font-size: 11px; }.preview-metrics strong { display: block; color: #101828; font-size: 20px; }
+.preview-job { display: flex; align-items: center; gap: 12px; padding: 16px; margin-top: 10px; border: 1px solid #eaecf0; border-radius: 14px; }.preview-job > svg:first-child { color: #ff7900; }.preview-job div { flex: 1; display: grid; gap: 4px; }.preview-job small { margin: 0; }.preview-job > svg:last-child { color: #12b76a; }
+.landing-features { max-width: 1160px; margin: auto; padding: 30px 28px 90px; display: grid; grid-template-columns: repeat(3,1fr); gap: 18px; }.landing-features article { padding: 28px; background: white; border: 1px solid #eaecf0; border-radius: 18px; }.landing-features svg { color: #ff7900; }.landing-features h2 { font-size: 18px; }.landing-features p { color: #667085; line-height: 1.6; }
+.public-centered { min-height: calc(100vh - 76px); padding: 50px 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }.public-centered h1 { margin: 20px 0 8px; font-size: 38px; }.public-centered p { color: #667085; max-width: 580px; line-height: 1.7; }.public-centered .landing-actions { margin-top: 20px; flex-wrap: wrap; justify-content: center; }
+.landing-orb, .logout-check { width: 72px; height: 72px; display: grid; place-items: center; border-radius: 22px; background: #fff1e6; color: #ff7900; }.logout-check { color: #039855; background: #ecfdf3; }
 .queued-message {
   color: #8a5300;
   background: #fff7e8;
@@ -1589,4 +1611,6 @@ select {
   }
   .mailbox-layout { grid-template-columns: 1fr; }
   .mail-list { border-right: 0; max-height: 300px; }
+  .public-header { padding: 0 18px; }.public-header nav > a:first-child { display: none; }
+  .landing-hero { grid-template-columns: 1fr; padding-top: 56px; gap: 44px; }.landing-hero h1 { font-size: 46px; }.landing-features { grid-template-columns: 1fr; }
 }

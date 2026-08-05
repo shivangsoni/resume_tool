@@ -97,6 +97,8 @@ Verified production checks:
 
 Microsoft and Google delegated sign-in are configured at `/.auth/login/aad` and `/.auth/login/google`. Both use custom provider registrations because Static Web Apps disables every preconfigured provider as soon as one custom registration is configured. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
 
+Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations. The custom Entra provider uses the tenant-specific v2 issuer so Static Web Apps can validate the callback token issuer.
+
 Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until both providers are configured and tested. Register these callbacks with the providers:
 
 ```text
