@@ -6,6 +6,7 @@
   "main": "src/functions/*.js",
   "scripts": {
     "start": "func start",
+    "dev": "node src/dev-server.js",
     "test": "node --test"
   },
   "dependencies": {

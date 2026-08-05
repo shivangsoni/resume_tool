@@ -16,11 +16,12 @@ db/         Forward-only Azure SQL schema migrations and identity bootstrap
 ```powershell
 npm install --prefix backend --workspaces=false
 npm install --prefix frontend --workspaces=false
-npm run start --prefix backend
+npm run dev --prefix backend
 npm run dev --prefix frontend
 ```
 
-Copy `backend/local.settings.example.json` to `backend/local.settings.json` for local Functions development. Point `frontend/.env` at `http://localhost:7071/api`.
+Copy `backend/local.settings.example.json` to `backend/local.settings.json` for local Functions development.
+The Vite development server proxies `/api` to the Azure Functions host at `http://127.0.0.1:7071`, so the default frontend environment works without CORS configuration.
 
 ## Validation
 
