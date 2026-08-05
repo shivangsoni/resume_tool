@@ -2,7 +2,7 @@
 
 Versioned, forward-only Azure SQL migrations live in `migrations/`. Run them in filename order with `sqlcmd` after the Bicep deployment creates the database.
 
-The Function App uses Microsoft Entra managed identity. A SQL administrator must run `bootstrap/001_function_identity.sql` after replacing the Function App name. GitHub Actions uses the separately scoped principal in the idempotent `bootstrap/002_github_identity.sql`; run that bootstrap once before enabling automated migrations and again after bootstrap permission changes. It grants `ALTER ANY USER` so CI can create or repair only the worker identity named by the deployment script. No SQL password is stored in application settings.
+The Function App uses Microsoft Entra managed identity. A SQL administrator must run `bootstrap/001_function_identity.sql` after replacing the Function App name. GitHub Actions uses the separately scoped principal in the idempotent `bootstrap/002_github_identity.sql`; run that bootstrap once before enabling automated migrations and again after bootstrap permission changes. It grants `ALTER ANY USER` and `ALTER ANY ROLE` so CI can recreate the worker identity and restore its reader/writer memberships. No SQL password is stored in application settings.
 
 The deployment workflow runs all pending migrations with:
 
