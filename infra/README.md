@@ -22,6 +22,10 @@ Review `what-if` before creating resources. If `apply` is not the intended resou
 
 After deployment, execute the scripts in `db/migrations/` as a Microsoft Entra SQL administrator, then replace the placeholder in `db/bootstrap/001_function_identity.sql` with the `backendName` output and execute it. This grants the Function App managed identity data access without a database password.
 
+## GitHub Actions identity
+
+Production deployment uses Microsoft Entra workload identity federation, not a stored client secret. `github-federated-credential.json` documents the credential attached to `applypilot-github-deploy`; its subject is bound to the repository's `production` GitHub environment. The principal needs Contributor and User Access Administrator at the `apply` resource-group scope because the Bicep template provisions resources and role assignments. Run `db/bootstrap/002_github_identity.sql` as the Entra SQL administrator to grant only the database roles required for migrations.
+
 ## Deploy backend independently
 
 ```powershell

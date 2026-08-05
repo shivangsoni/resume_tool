@@ -40,6 +40,24 @@ npm test --prefix backend
 npm run build --prefix frontend
 ```
 
+## GitHub CI/CD
+
+GitHub Actions now validates every pull request and every push to `main` with [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It installs locked dependencies, runs frontend lint/tests/build, runs backend tests, and compiles the Bicep template. A successful `main` run triggers [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml), which deploys Bicep, applies pending SQL migrations, publishes the Function package and frontend independently, and smoke-tests production. The production workflow can also be started manually from **Actions → Deploy production → Run workflow**.
+
+Create a GitHub environment named `production` under **Repository Settings → Environments**. Restrict its deployment branch to `main`, optionally add required reviewers, and add these environment secrets:
+
+| Secret | Value |
+| --- | --- |
+| `AZURE_CLIENT_ID` | `f7743fa2-90ca-4580-a292-012e5ccac741` |
+| `AZURE_TENANT_ID` | `80fa3d36-87ac-489f-890a-6f0b55870bc5` |
+| `AZURE_SUBSCRIPTION_ID` | `b5f1fa5f-c39f-4d7d-866c-57836fe7382f` |
+
+These values identify the deployment application and are not an Azure client secret. GitHub authenticates with short-lived OpenID Connect tokens. The Azure application `applypilot-github-deploy` already has a federated credential for `repo:shivangsoni/resume_tool:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
+
+The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
+
+GitHub repository settings cannot be changed from this workstation until GitHub authentication is restored. After adding the three environment secrets, push `main`; CI/CD will not exist on GitHub until the workflow commit reaches the remote repository.
+
 ## Complete Azure deployment
 
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
@@ -99,9 +117,10 @@ Microsoft and Google delegated sign-in are configured at `/.auth/login/aad` and 
 
 Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations. The custom Entra provider uses the tenant-specific v2 issuer so Static Web Apps can validate the callback token issuer.
 
-Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until both providers are configured and tested. Register these callbacks with the providers:
+GitHub, Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until the provider and callback URLs are configured and tested. Register these callbacks with the providers:
 
 ```text
+https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/github/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
 ```

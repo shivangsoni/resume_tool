@@ -1,0 +1,118 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  AZURE_CORE_OUTPUT: none
+  RESOURCE_GROUP: apply
+  STATIC_WEB_APP: applypilotcentral-web-khaah5ti4wzag
+  FUNCTION_APP: applypilotcentral-api-khaah5ti4wzag
+  STORAGE_ACCOUNT: applypilotcentralkhaah5t
+  SQL_SERVER: simplyapply
+  SQL_DATABASE: applypilot
+  FRONTEND_URL: https://blue-water-0d76ed710.7.azurestaticapps.net
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://blue-water-0d76ed710.7.azurestaticapps.net
+    steps:
+      - name: Check out verified revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Azure infrastructure
+        run: >-
+          az deployment group create
+          --resource-group "$RESOURCE_GROUP"
+          --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          --template-file infra/main.bicep
+          --parameters infra/dev.bicepparam
+
+      - name: Install backend dependencies
+        run: npm ci --prefix backend --omit=dev --workspaces=false
+
+      - name: Allow this runner to migrate Azure SQL
+        id: sql_firewall
+        run: |
+          runner_ip="$(curl --fail --silent --show-error https://api.ipify.org)"
+          test -n "$runner_ip"
+          rule_name="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          az sql server firewall-rule create --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER" --name "$rule_name" --start-ip-address "$runner_ip" --end-ip-address "$runner_ip"
+          echo "rule_name=$rule_name" >> "$GITHUB_OUTPUT"
+
+      - name: Apply pending database migrations
+        env:
+          AZURE_SQL_SERVER: simplyapply.database.windows.net
+          AZURE_SQL_DATABASE: applypilot
+        run: npm run migrate --prefix backend
+
+      - name: Remove temporary SQL firewall rule
+        if: always() && steps.sql_firewall.outputs.rule_name != ''
+        run: az sql server firewall-rule delete --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER" --name "${{ steps.sql_firewall.outputs.rule_name }}"
+
+      - name: Build backend deployment package
+        working-directory: backend
+        run: zip -q -r ../backend.zip host.json package.json package-lock.json src node_modules
+
+      - name: Publish backend from private Blob Storage
+        run: |
+          storage_key="$(az storage account keys list --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT" --query '[0].value' --output tsv)"
+          test -n "$storage_key"
+          az storage container create --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" --name function-releases
+          blob_name="github/${GITHUB_SHA}/backend.zip"
+          az storage blob upload --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" --container-name function-releases --name "$blob_name" --file backend.zip --overwrite true
+          package_url="https://${STORAGE_ACCOUNT}.blob.core.windows.net/function-releases/${blob_name}"
+          az functionapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --settings WEBSITE_RUN_FROM_PACKAGE="$package_url" WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned
+          az functionapp restart --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP"
+
+      - name: Build frontend
+        env:
+          VITE_API_BASE_URL: /api
+        run: |
+          npm ci --prefix frontend --workspaces=false
+          npm run build --prefix frontend
+
+      - name: Read Static Web Apps deployment token
+        id: swa
+        run: |
+          token="$(az staticwebapp secrets list --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query properties.apiKey --output tsv)"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy frontend
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
+          action: upload
+          app_location: frontend/dist
+          skip_app_build: true
+
+      - name: Verify production
+        run: bash scripts/verify-deployment.sh "$FRONTEND_URL"
