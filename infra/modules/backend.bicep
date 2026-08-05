@@ -4,6 +4,9 @@ param appInsightsName string
 param planName string
 param location string
 param allowedOrigins array
+param sqlServerFqdn string
+param sqlDatabaseName string
+param greenhouseBoards string
 param tags object
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -68,6 +71,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~22' }
         { name: 'AzureWebJobsStorage', value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storage.listKeys().keys[0].value}' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
+        { name: 'AZURE_SQL_SERVER', value: sqlServerFqdn }
+        { name: 'AZURE_SQL_DATABASE', value: sqlDatabaseName }
+        { name: 'GREENHOUSE_BOARDS', value: greenhouseBoards }
       ]
     }
   }
@@ -76,3 +82,4 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 output name string = functionApp.name
 output hostname string = functionApp.properties.defaultHostName
 output url string = 'https://${functionApp.properties.defaultHostName}'
+output principalId string = functionApp.identity.principalId

@@ -571,6 +571,7 @@ select {
   color: #98a2b3;
   margin-top: 17px;
 }
+.source-badge { display: block; margin-top: 4px; font-style: normal; color: #694fc9; font-size: 7px; }
 .job-detail {
   overflow: auto;
   position: relative;

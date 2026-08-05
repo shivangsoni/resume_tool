@@ -40,6 +40,8 @@ type Job = {
   skills: string[];
   sourceUrl?: string;
   logoUrl?: string;
+  source?: string;
+  postedAt?: string;
 };
 
 const jobs: Job[] = [
@@ -498,6 +500,7 @@ function JobRow({
         <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
         <small>match</small>
         <time>{j.posted}</time>
+        {j.source && <em className="source-badge">{j.source}</em>}
       </div>
     </button>
   );
@@ -565,7 +568,7 @@ function JobDetail({
           <WandSparkles /> Simple Apply
         </button>
       </div>
-      {job.sourceUrl && <a className="source-link" href={job.sourceUrl} target="_blank" rel="noreferrer">View original listing on Remotive</a>}
+      {job.sourceUrl && <a className="source-link" href={job.sourceUrl} target="_blank" rel="noreferrer">View original listing{job.source ? ` on ${job.source}` : ""}</a>}
       <div className="safe-note">
         <Check /> You’ll review all answers before submission
       </div>

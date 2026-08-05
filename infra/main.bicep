@@ -12,6 +12,12 @@ param location string = resourceGroup().location
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
 
+@description('Name of the existing Azure SQL logical server in this resource group.')
+param sqlServerName string
+
+@description('Database name created on the existing SQL server.')
+param sqlDatabaseName string = 'applypilot'
+
 @description('Tags applied to every supported resource.')
 param tags object = {
   application: 'ApplyPilot'
@@ -32,6 +38,16 @@ module frontend 'modules/frontend.bicep' = {
   }
 }
 
+module database 'modules/database.bicep' = {
+  name: 'database'
+  params: {
+    sqlServerName: sqlServerName
+    databaseName: sqlDatabaseName
+    location: location
+    tags: tags
+  }
+}
+
 module backend 'modules/backend.bicep' = {
   name: 'backend'
   params: {
@@ -41,6 +57,20 @@ module backend 'modules/backend.bicep' = {
     planName: '${appName}-plan-${suffix}'
     location: location
     allowedOrigins: [frontend.outputs.url]
+    sqlServerFqdn: database.outputs.serverFqdn
+    sqlDatabaseName: database.outputs.name
+    greenhouseBoards: 'stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb'
+    tags: tags
+  }
+}
+
+
+module keyVault 'modules/keyvault.bicep' = {
+  name: 'keyVault'
+  params: {
+    name: '${appName}-vault-${suffix}'
+    location: location
+    functionPrincipalId: backend.outputs.principalId
     tags: tags
   }
 }
@@ -50,3 +80,5 @@ output frontendUrl string = frontend.outputs.url
 output frontendDeploymentTokenCommand string = 'az staticwebapp secrets list --name ${frontend.outputs.name} --query properties.apiKey -o tsv'
 output backendName string = backend.outputs.name
 output backendUrl string = backend.outputs.url
+output sqlDatabase string = database.outputs.name
+output keyVaultName string = keyVault.outputs.name

@@ -8,6 +8,7 @@ ApplyPilot is a React job-matching dashboard backed by an Azure Functions servic
 frontend/   React, TypeScript, Vite, frontend tests and Static Web Apps config
 backend/    Azure Functions Node.js API, normalization logic and backend tests
 infra/      Bicep templates for independently deployable Azure resources
+db/         Forward-only Azure SQL schema migrations and identity bootstrap
 ```
 
 ## Local development
@@ -32,7 +33,8 @@ npm run build
 
 Provision Azure resources with [infra/README.md](infra/README.md). The frontend and backend have separate build and deployment commands, allowing either service to be released without redeploying the other.
 
-The backend uses Remotive's public job feed, caches results for six hours, and links every listing back to its original source. Do not remove the source attribution.
+The backend caches normalized results for one hour and links every listing back to its original source. Do not remove source attribution.
+The production feed now prioritizes current employer postings from official Greenhouse boards and uses Remotive as a secondary remote-job source. See [docs/JOB_SOURCES.md](docs/JOB_SOURCES.md) for the source evaluation and provider rules.
 
 ## Privacy
 
