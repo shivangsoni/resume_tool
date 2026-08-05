@@ -8,7 +8,7 @@ param storageAccountName string
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: '${name}-logs'
+  name: '${name}-w2-logs'
   location: location
   tags: tags
   properties: {
@@ -19,7 +19,7 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 }
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${name}-env'
+  name: '${name}-w2-env'
   location: location
   tags: tags
   properties: {
