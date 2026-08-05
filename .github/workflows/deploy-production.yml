@@ -51,10 +51,10 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Register browser worker resource providers
+      - name: Verify browser worker resource providers
         run: |
-          az provider register --namespace Microsoft.App --wait
-          az provider register --namespace Microsoft.ContainerRegistry --wait
+          test "$(az provider show --namespace Microsoft.App --query registrationState --output tsv)" = "Registered"
+          test "$(az provider show --namespace Microsoft.ContainerRegistry --query registrationState --output tsv)" = "Registered"
 
       - name: Deploy Azure infrastructure
         run: >-
