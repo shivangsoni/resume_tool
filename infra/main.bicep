@@ -15,6 +15,16 @@ param browserWorkerLocation string = 'westus2'
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
 
+@description('Azure AD client ID used by the Static Web App authentication provider.')
+param azureClientId string = ''
+
+@description('Name of the Key Vault secret that stores the Azure AD client secret.')
+param azureClientSecretName string = 'AZURE_CLIENT_SECRET'
+
+@description('Optional Azure AD client secret value used to populate the Key Vault secret if it does not already exist.')
+@secure()
+param azureClientSecretValue string = ''
+
 @description('Azure AI Document Intelligence pricing tier. Use F0 for development or S0 when F0 is unavailable.')
 @allowed(['F0', 'S0'])
 param documentIntelligenceSku string = 'F0'
@@ -77,7 +87,29 @@ module frontend 'modules/frontend.bicep' = {
     location: location
     sku: staticWebAppSku
     tags: tags
+    azureClientId: azureClientId
   }
+}
+
+module keyVault 'modules/keyvault.bicep' = {
+  name: 'keyVault'
+  params: {
+    name: keyVaultName
+    location: location
+    functionPrincipalId: frontend.outputs.principalId
+    secretName: azureClientSecretName
+    secretValue: azureClientSecretValue
+    tags: tags
+  }
+}
+
+resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
+  name: '${frontend.outputs.name}/appsettings'
+  properties: {
+    AZURE_CLIENT_ID: azureClientId
+    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${concat(keyVault.outputs.uri, 'secrets/', azureClientSecretName)})'
+  }
+  dependsOn: [frontend, keyVault]
 }
 
 module database 'modules/database.bicep' = {
@@ -152,17 +184,14 @@ module documentIntelligenceAccess 'modules/document-intelligence-access.bicep' =
 }
 
 
-module keyVault 'modules/keyvault.bicep' = {
-  name: 'keyVault'
+module linkedBackend 'modules/link-backend.bicep' = {
+  name: 'linkedBackend'
   params: {
-    name: keyVaultName
-    location: location
-    functionPrincipalId: backend.outputs.principalId
-    tags: tags
+    staticWebAppName: frontend.outputs.name
+    backendResourceId: backend.outputs.id
+    backendRegion: location
   }
 }
-
-module linkedBackend 'modules/link-backend.bicep' = {
   name: 'linkedBackend'
   params: {
     staticWebAppName: frontend.outputs.name
