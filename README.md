@@ -70,6 +70,8 @@ Database migrations are split on `GO` batch separators by `backend/scripts/migra
 
 The SQL grant step reads the browser worker's managed-identity principal ID from Azure and creates or repairs its contained database user with an explicit SID. This avoids requiring the GitHub deployment identity to resolve service principals through Microsoft Graph and keeps the database user valid if the Container App is recreated.
 
+The GitHub SQL principal also requires `ALTER ANY USER`, provisioned by `db/bootstrap/002_github_identity.sql`, to create or repair that contained worker user. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
+
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 
 ### Current development deployment

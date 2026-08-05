@@ -11,4 +11,7 @@ IF IS_ROLEMEMBER('db_datareader', 'applypilot-github-deploy') <> 1
 
 IF IS_ROLEMEMBER('db_datawriter', 'applypilot-github-deploy') <> 1
   ALTER ROLE db_datawriter ADD MEMBER [applypilot-github-deploy];
+
+-- Required to create or repair the browser worker's contained Entra user.
+GRANT ALTER ANY USER TO [applypilot-github-deploy];
 GO
