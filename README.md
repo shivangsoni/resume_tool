@@ -53,7 +53,7 @@ Last verified: August 5, 2026
 | Subscription | Visual Studio Enterprise Subscription (`b5f1fa5f-c39f-4d7d-866c-57836fe7382f`) |
 | Resource group | `apply` |
 | Application region | `centralus` |
-| Infrastructure deployment | `applypilot-resume-20260805-084454` |
+| Infrastructure deployment | `applypilot-email-rbac-20260805-094348` |
 | Frontend | https://blue-water-0d76ed710.7.azurestaticapps.net |
 | Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Standard) |
 | Backend route | `https://blue-water-0d76ed710.7.azurestaticapps.net/api` (linked Function backend) |
@@ -62,6 +62,7 @@ Last verified: August 5, 2026
 | SQL database | `applypilot` (Basic) |
 | Key Vault | `applypilotcentralvaultkh` |
 | Document Intelligence | `applypilotcentral-docs-khaah5ti4wzag` (`FormRecognizer`, F0) |
+| Email | `applypilotcentral-comm-khaah5ti4wzag`, sender `donotreply@fc8c25a7-717b-40f1-ae05-abbf0a72def2.azurecomm.net` |
 
 Verified production checks:
 
@@ -82,6 +83,7 @@ Verified production checks:
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
 - Resumes are held in a private Blob container and accessed by the Function managed identity.
 - Resume extraction uses Document Intelligence through managed identity; detected values fill blank profile fields only.
+- Queuing an application sends a real confirmation to the authenticated identity email through Azure Communication Services when that identity exposes a valid email address.
 
 ### Application lifecycle
 
@@ -109,6 +111,19 @@ Required external inputs:
 - Google OAuth web client ID and client secret, with the Google callback allowlisted.
 - Meta/Facebook application ID and secret, with the Facebook callback allowlisted and the app published for non-admin users.
 - Microsoft Entra application client ID/secret if switching from the current preconfigured Microsoft provider to a multi-provider custom configuration.
+
+### Email and mailbox behavior
+
+Azure Communication Services Email provides outbound delivery only. The deployed Azure-managed domain sends queue confirmations from its fixed `donotreply@...azurecomm.net` address; Azure-managed sender usernames cannot be personalized. The Function uses managed identity with the Communication and Email Service Owner role, so no email connection string is stored in the app.
+
+`apply.com` is not owned by this subscription and cannot be used or verified here. Unique receiving aliases such as `username@your-domain.example` require:
+
+1. A domain you own and can verify through DNS.
+2. An inbound email provider that supports catch-all or per-alias routing and signed webhooks.
+3. MX, SPF, DKIM, and DMARC records for that domain.
+4. A webhook endpoint that validates the provider signature, resolves the alias to an internal user ID, stores sanitized message metadata, and forwards according to user consent.
+
+Until those inputs exist, the Inbox page explicitly shows inbound mail as unconfigured and does not issue nonfunctional aliases.
 
 ### Deployment documentation policy
 
@@ -299,7 +314,7 @@ az functionapp show --resource-group $resourceGroup --name $backendName `
   --query '{name:name,state:state,host:defaultHostName,runtime:siteConfig.linuxFxVersion}' --output table
 
 az functionapp config appsettings list --resource-group $resourceGroup --name $backendName `
-  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS' || name=='AZURE_STORAGE_ACCOUNT' || name=='RESUME_CONTAINER' || name=='DOCUMENT_INTELLIGENCE_ENDPOINT'].{name:name,value:value}" `
+  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS' || name=='AZURE_STORAGE_ACCOUNT' || name=='RESUME_CONTAINER' || name=='DOCUMENT_INTELLIGENCE_ENDPOINT' || name=='EMAIL_COMMUNICATION_ENDPOINT' || name=='EMAIL_SENDER_ADDRESS'].{name:name,value:value}" `
   --output table
 
 az cognitiveservices account show --resource-group $resourceGroup --name $documentIntelligenceName `
@@ -326,6 +341,7 @@ Provisioning resources in Azure Portal is not enough; you must complete both cod
 - **Profile/application API returns 401:** sign in from the app first. This is expected for anonymous requests. Do not add a client-generated identity header.
 - **Resume upload fails:** confirm the private `resumes` container exists and the Function identity has Storage Blob Data Contributor; allow several minutes for a new role assignment to propagate.
 - **Resume uploads but extraction fails:** confirm `DOCUMENT_INTELLIGENCE_ENDPOINT`, the Cognitive Services User role assignment, and service quota. The Blob upload is retained.
+- **Queue email is not delivered:** confirm the authenticated identity exposes a valid email, inspect `EMAIL_COMMUNICATION_ENDPOINT` and `EMAIL_SENDER_ADDRESS`, and verify the Function identity has Communication and Email Service Owner. Email failure does not roll back the application queue record.
 - **Portal resource blade itself fails:** confirm the selected subscription with `az account show`, then inspect resources through CLI using `az resource list --resource-group apply --output table`. Portal UI failure does not necessarily mean the deployed endpoints are down.
 - **Deployment status:** inspect it with `az deployment group show --resource-group $resourceGroup --name $deploymentName --output table` and `az deployment operation group list --resource-group $resourceGroup --name $deploymentName --output table`.
 

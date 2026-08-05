@@ -1,6 +1,7 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
 import { createApplication, listApplications, updateApplication } from "../database.js";
+import { sendApplicationQueuedEmail } from "../notifications.js";
 
 app.http("applications", {
   methods: ["GET", "POST"], authLevel: "anonymous", route: "applications",
@@ -10,7 +11,11 @@ app.http("applications", {
       if (request.method === "GET") return { jsonBody: { applications: await listApplications(principal) }, headers: { "Cache-Control": "no-store" } };
       const body = await request.json();
       if (!body?.job?.id || !body.job.sourceUrl) return { status: 400, jsonBody: { error: "A valid job is required." } };
-      return { status: 201, jsonBody: { application: await createApplication(principal, body.job, body.answers || {}) } };
+      const application = await createApplication(principal, body.job, body.answers || {});
+      let notification = { sent: false };
+      try { notification = await sendApplicationQueuedEmail(principal, application); }
+      catch (emailError) { context.warn("Application email notification failed", emailError); }
+      return { status: 201, jsonBody: { application, notification } };
     } catch (error) { context.error("Applications request failed", error); return { status: 500, jsonBody: { error: "Applications request failed." } }; }
   },
 });

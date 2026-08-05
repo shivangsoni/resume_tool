@@ -15,6 +15,7 @@ flowchart LR
     DocAI[Azure AI Document Intelligence<br/>prebuilt-layout]
     GH[Greenhouse boards]
     Remotive[Remotive API]
+    Email[Azure Communication Services Email<br/>outbound notifications]
 
     Candidate -->|sign in| Auth
     Candidate -->|same-origin /api| SWA
@@ -25,6 +26,7 @@ flowchart LR
     API -->|managed identity| DocAI
     API -->|job discovery| GH
     API -->|job discovery| Remotive
+    API -->|managed identity| Email
     Blob -->|resume bytes| DocAI
 ```
 
@@ -56,6 +58,22 @@ sequenceDiagram
 ```
 
 Microsoft is currently enabled through the platform registration. Google and Facebook require separate developer registrations and secrets. They remain disabled in the UI until those external credentials and callbacks are configured; the app never simulates a successful provider.
+
+### Email notification and future inbound alias flow
+
+```mermaid
+flowchart LR
+    Queue[Application queued] --> Function[Azure Function]
+    Function -->|managed identity| ACS[Communication Services Email]
+    ACS -->|outbound confirmation| IdentityEmail[Authenticated user email]
+
+    Recruiter[Recruiter reply] -. future MX .-> Inbound[Owned-domain inbound provider]
+    Inbound -. signed webhook .-> Function
+    Function -. alias lookup .-> SQL[(User mailbox metadata)]
+    Function -. consented forwarding .-> IdentityEmail
+```
+
+The solid path is deployed. The dotted inbound path is intentionally inactive until an owned domain and inbound provider are supplied. Azure Communication Services Email is not a receiving mailbox service, and an Azure-managed domain cannot provide personalized sender usernames.
 
 ### Resume ingestion and profile enrichment
 
@@ -123,6 +141,7 @@ The public Greenhouse feed exposes application questions, but submission require
 | Azure SQL Basic | Users, profiles, jobs, applications, document metadata | Entra app access; personal queries include the internal user ID |
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |
+| Communication Services Email | Outbound application queue notifications | Azure-managed domain; managed-identity sender role; no inbound mailbox |
 | Application Insights | Runtime diagnostics | 30-day retention configured by Bicep |
 | Key Vault | Future application secrets | Function identity access; no resume or profile payloads stored here |
 

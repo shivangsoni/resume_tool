@@ -9,7 +9,9 @@
     "GREENHOUSE_BOARDS": "stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb",
     "AZURE_STORAGE_ACCOUNT": "",
     "RESUME_CONTAINER": "resumes",
-    "DOCUMENT_INTELLIGENCE_ENDPOINT": "https://<document-intelligence-name>.cognitiveservices.azure.com/"
+    "DOCUMENT_INTELLIGENCE_ENDPOINT": "https://<document-intelligence-name>.cognitiveservices.azure.com/",
+    "EMAIL_COMMUNICATION_ENDPOINT": "https://<communication-service-name>.communication.azure.com",
+    "EMAIL_SENDER_ADDRESS": "donotreply@<azure-managed-domain>.azurecomm.net"
   },
   "Host": {
     "CORS": "http://localhost:5173",

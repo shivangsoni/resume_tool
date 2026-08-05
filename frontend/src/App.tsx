@@ -320,7 +320,9 @@ export default function App() {
                   ...items.filter((item) => item.id !== result.application.id),
                 ]);
                 notify(
-                  "Application queued using your saved profile. It is not marked submitted until an employer confirms receipt.",
+                  result.notification?.sent
+                    ? "Application queued. A confirmation was emailed to your sign-in address."
+                    : "Application queued using your saved profile. Email delivery is unavailable for this account.",
                 );
               } catch (error) {
                 notify(
@@ -948,8 +950,8 @@ function InboxPage() {
   return (
     <div className="simple-page">
       <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Application messages received through a connected mailbox appear here.</p></div>
-      <div className="info-banner">A mailbox provider is not connected yet. No emails are fabricated or copied from another account.</div>
-      <section className="simple-card empty-feature"><Mail /><h2>Connect an inbox</h2><p>Add a Gmail or Outlook integration before application confirmations and recruiter replies can be synchronized.</p><button disabled>Mailbox integration required</button></section>
+      <div className="info-banner">Outbound queue confirmations are sent to your sign-in email. An inbound mailbox provider is not connected yet, so no messages are fabricated or copied from another account.</div>
+      <section className="simple-card empty-feature"><Mail /><h2>Inbound mailbox requires a verified domain</h2><p>Connect an owned domain and inbound email webhook before unique aliases and recruiter replies can be synchronized.</p><button disabled>Domain and inbound provider required</button></section>
     </div>
   );
 }

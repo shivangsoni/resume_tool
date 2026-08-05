@@ -58,7 +58,7 @@ export const createApplication = (
   job: unknown,
   answers: Record<string, string>,
 ) =>
-  request<{ application: Application }>("/applications", {
+  request<{ application: Application; notification: { sent: boolean; status?: string } }>("/applications", {
     method: "POST",
     body: JSON.stringify({ job, answers }),
   });

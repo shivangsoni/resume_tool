@@ -33,6 +33,15 @@ var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, app
 var safeBase = toLower(replace(appName, '-', ''))
 var keyVaultName = take('${safeBase}vault${suffix}', 24)
 
+module email 'modules/email.bicep' = {
+  name: 'email'
+  params: {
+    communicationServiceName: take('${safeBase}-comm-${suffix}', 63)
+    emailServiceName: take('${safeBase}-email-${suffix}', 63)
+    tags: tags
+  }
+}
+
 module documentIntelligence 'modules/document-intelligence.bicep' = {
   name: 'documentIntelligence'
   params: {
@@ -76,7 +85,17 @@ module backend 'modules/backend.bicep' = {
     sqlDatabaseName: database.outputs.name
     greenhouseBoards: 'stripe:Stripe,cloudflare:Cloudflare,figma:Figma,airbnb:Airbnb'
     documentIntelligenceEndpoint: documentIntelligence.outputs.endpoint
+    emailEndpoint: email.outputs.endpoint
+    emailSenderAddress: email.outputs.senderAddress
     tags: tags
+  }
+}
+
+module emailAccess 'modules/email-access.bicep' = {
+  name: 'emailAccess'
+  params: {
+    communicationServiceName: email.outputs.name
+    functionPrincipalId: backend.outputs.principalId
   }
 }
 
@@ -116,3 +135,6 @@ output backendUrl string = backend.outputs.url
 output sqlDatabase string = database.outputs.name
 output keyVaultName string = keyVault.outputs.name
 output documentIntelligenceName string = documentIntelligence.outputs.name
+output communicationServiceName string = email.outputs.name
+output emailServiceName string = email.outputs.emailServiceName
+output emailSenderAddress string = email.outputs.senderAddress
