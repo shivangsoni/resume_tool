@@ -8,6 +8,9 @@ param appName string = 'applypilot'
 @description('Azure region for the Function App and related resources.')
 param location string = resourceGroup().location
 
+@description('Region for the isolated browser worker; separated to avoid Container Apps capacity constraints.')
+param browserWorkerLocation string = 'westus2'
+
 @description('Static Web Apps plan. Free is appropriate for development.')
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
@@ -114,7 +117,7 @@ module browserWorker 'modules/browser-worker.bicep' = {
   name: 'browserWorker'
   params: {
     name: take('${appName}-browser-${suffix}', 32)
-    location: location
+    location: browserWorkerLocation
     serviceBusNamespace: serviceBus.outputs.namespace
     queueName: serviceBus.outputs.queueName
     sqlServerFqdn: database.outputs.serverFqdn
