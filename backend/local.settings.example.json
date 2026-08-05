@@ -11,7 +11,13 @@
     "RESUME_CONTAINER": "resumes",
     "DOCUMENT_INTELLIGENCE_ENDPOINT": "https://<document-intelligence-name>.cognitiveservices.azure.com/",
     "EMAIL_COMMUNICATION_ENDPOINT": "https://<communication-service-name>.communication.azure.com",
-    "EMAIL_SENDER_ADDRESS": "donotreply@<azure-managed-domain>.azurecomm.net"
+    "EMAIL_SENDER_ADDRESS": "donotreply@<azure-managed-domain>.azurecomm.net",
+    "SERVICE_BUS_NAMESPACE": "<namespace>.servicebus.windows.net",
+    "SERVICE_BUS__fullyQualifiedNamespace": "<namespace>.servicebus.windows.net",
+    "APPLICATION_SUBMISSION_QUEUE": "application-submissions",
+    "EMPLOYER_SUBMISSION_ENDPOINT": "",
+    "EMPLOYER_SUBMISSION_SOURCES": "",
+    "EMPLOYER_SUBMISSION_TOKEN": ""
   },
   "Host": {
     "CORS": "http://localhost:5173",

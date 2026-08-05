@@ -6,6 +6,7 @@ This Bicep deployment creates two independently deployable workloads:
 - Azure Functions on Linux Consumption for `backend/`, plus its storage account and Application Insights.
 - Azure SQL Basic database on your existing logical SQL server.
 - Azure Key Vault with RBAC access for the Function App managed identity.
+- Azure Service Bus Basic with a durable application submission queue and dead-letter queue.
 
 ## Provision
 
@@ -25,6 +26,8 @@ After deployment, execute the scripts in `db/migrations/` as a Microsoft Entra S
 ## GitHub Actions identity
 
 Production deployment uses Microsoft Entra workload identity federation, not a stored client secret. `github-federated-credential.json` documents the credential attached to `applypilot-github-deploy`; its subject is bound to the repository's `production` GitHub environment. The principal needs Contributor and User Access Administrator at the `apply` resource-group scope because the Bicep template provisions resources and role assignments. Run `db/bootstrap/002_github_identity.sql` as the Entra SQL administrator to grant only the database roles required for migrations.
+
+The Function managed identity receives Azure Service Bus Data Sender and Data Receiver roles. Local/SAS authentication is disabled. Configure an authorized employer adapter with `EMPLOYER_SUBMISSION_ENDPOINT`, `EMPLOYER_SUBMISSION_SOURCES`, and a Key Vault-backed `EMPLOYER_SUBMISSION_TOKEN`; without those settings, the worker safely moves unsupported applications to `needs_action`.
 
 ## Deploy backend independently
 

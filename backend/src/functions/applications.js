@@ -1,7 +1,8 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { createApplication, listApplications, updateApplication } from "../database.js";
+import { createApplication, listApplications, queueApplicationSubmission, updateApplication } from "../database.js";
 import { sendApplicationQueuedEmail } from "../notifications.js";
+import { enqueueApplicationSubmission } from "../submission-queue.js";
 
 app.http("applications", {
   methods: ["GET", "POST"], authLevel: "anonymous", route: "applications",
@@ -17,6 +18,22 @@ app.http("applications", {
       catch (emailError) { context.warn("Application email notification failed", emailError); }
       return { status: 201, jsonBody: { application, notification } };
     } catch (error) { context.error("Applications request failed", error); return { status: 500, jsonBody: { error: "Applications request failed." } }; }
+  },
+});
+
+app.http("submitApplication", {
+  methods: ["POST"], authLevel: "anonymous", route: "applications/{id}/submit",
+  handler: async (request, context) => {
+    const principal = getPrincipal(request); if (!principal) return unauthorized();
+    try {
+      const application = await queueApplicationSubmission(principal, request.params.id);
+      if (!application) return { status: 404, jsonBody: { error: "Application not found or cannot be queued." } };
+      await enqueueApplicationSubmission(application);
+      return { status: 202, jsonBody: { application, queue: { accepted: true } } };
+    } catch (error) {
+      context.error("Application enqueue failed", error);
+      return { status: 503, jsonBody: { error: "Application could not be queued. Retry safely; submissions are idempotent." } };
+    }
   },
 });
 

@@ -99,7 +99,7 @@ export async function refreshQueuedApplications(principal, profile) {
   return refreshed;
 }
 
-const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
+const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, submissionProvider: row.SubmissionProvider, providerReceiptId: row.ProviderReceiptId, lastSubmissionError: row.LastSubmissionError, submissionQueuedAt: row.SubmissionQueuedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
 
 export async function listApplications(principal) {
   const userId = await ensureUser(principal);
@@ -129,7 +129,7 @@ export async function createApplication(principal, job, answers = {}) {
 
 export async function updateApplication(principal, id, update) {
   const userId = await ensureUser(principal);
-  const allowed = ["review", "submitted", "interview", "offer", "rejected", "failed"];
+  const allowed = ["review", "queued", "needs_action", "submitted", "interview", "offer", "rejected", "failed"];
   if (!allowed.includes(update.status)) throw new Error("Invalid application status.");
   const db = await pool();
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
@@ -141,6 +141,54 @@ export async function updateApplication(principal, id, update) {
       OUTPUT inserted.* WHERE Id=@id AND UserId=@userId;
     `);
   return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function queueApplicationSubmission(principal, id) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id).query(`
+    UPDATE dbo.Applications SET Status='queued', SubmissionQueuedAt=SYSUTCDATETIME(), LastSubmissionError=NULL, UpdatedAt=SYSUTCDATETIME()
+    OUTPUT inserted.*
+    WHERE Id=@id AND UserId=@userId AND Status IN ('review','needs_action','failed','queued');
+  `);
+  return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function claimApplicationForSubmission(id) {
+  const db = await pool();
+  const result = await db.request().input("id", sql.UniqueIdentifier, id)
+    .query(`
+      UPDATE dbo.Applications SET Status='processing', UpdatedAt=SYSUTCDATETIME()
+      OUTPUT inserted.* WHERE Id=@id AND Status='queued';
+    `);
+  return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function recordSubmissionOutcome(id, outcome) {
+  const db = await pool();
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    await new sql.Request(transaction).input("id", sql.UniqueIdentifier, id)
+      .input("outcome", sql.VarChar(30), outcome.outcome)
+      .input("provider", sql.NVarChar(100), outcome.provider || null)
+      .input("receipt", sql.NVarChar(300), outcome.receiptId || null)
+      .input("detail", sql.NVarChar(2000), outcome.detail || null).query(`
+        INSERT dbo.ApplicationSubmissionAttempts (ApplicationId,Outcome,Provider,ProviderReceiptId,Detail)
+        VALUES (@id,@outcome,@provider,@receipt,@detail);
+
+        UPDATE dbo.Applications SET
+          Status=CASE WHEN @outcome='submitted' THEN 'submitted' WHEN @outcome='retrying' THEN 'queued' ELSE 'needs_action' END,
+          SubmissionProvider=COALESCE(@provider,SubmissionProvider),
+          ProviderReceiptId=COALESCE(@receipt,ProviderReceiptId),
+          LastSubmissionError=CASE WHEN @outcome='submitted' THEN NULL ELSE @detail END,
+          AppliedAt=CASE WHEN @outcome='submitted' THEN COALESCE(AppliedAt,SYSUTCDATETIME()) ELSE AppliedAt END,
+          SubmittedConfirmedAt=CASE WHEN @outcome='submitted' THEN SYSUTCDATETIME() ELSE SubmittedConfirmedAt END,
+          UpdatedAt=SYSUTCDATETIME()
+        WHERE Id=@id;
+      `);
+    await transaction.commit();
+  } catch (error) { await transaction.rollback(); throw error; }
 }
 
 export async function saveDocument(principal, document) {

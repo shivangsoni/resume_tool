@@ -76,6 +76,7 @@ Last verified: August 5, 2026
 | Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Standard) |
 | Backend route | `https://blue-water-0d76ed710.7.azurestaticapps.net/api` (linked Function backend) |
 | Function App | `applypilotcentral-api-khaah5ti4wzag` (Node.js 22, Linux Consumption) |
+| Service Bus | `applypilotcentral-bus-khaah5ti4wzag`, queue `application-submissions` |
 | SQL logical server | `simplyapply.database.windows.net` |
 | SQL database | `applypilot` (Basic) |
 | Key Vault | `applypilotcentralvaultkh` |
@@ -97,7 +98,7 @@ Verified production checks:
 - The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
-- Database migrations `001_initial` through `006_resume_extraction` are applied.
+- Database migrations `001_initial` through `008_submission_queue` are applied by CI/CD before backend publication.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
 - Resumes are held in a private Blob container and accessed by the Function managed identity.
 - Resume extraction uses Document Intelligence through managed identity; detected values fill blank profile fields only.
@@ -107,10 +108,14 @@ Verified production checks:
 
 1. Sign in with Microsoft through Static Web Apps authentication.
 2. Upload a PDF or DOCX resume (maximum 4 MB on the F0 tier). ApplyPilot extracts reusable details into blank profile fields for review.
-3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` queue record with the complete saved profile snapshot and stays inside the portal.
+3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record with the complete saved profile snapshot and stays inside the portal.
 4. When your résumé or profile changes, queued `review` applications are refreshed automatically with the latest answers.
-5. The application remains visibly queued until an authorized provider integration returns an employer receipt. A queue record is never represented as a submission.
-6. Track employer-confirmed `submitted`, `interview`, `offer`, or `rejected` states in SQL when a supported channel supplies those events.
+5. `POST /api/applications/{id}/submit` verifies ownership and sends the application ID to Azure Service Bus using managed identity.
+6. The queue-triggered Function calls only explicitly allowlisted employer providers. Unsupported integrations move to `needs_action`; transient errors retry five times and then dead-letter.
+7. Only a verifiable employer receipt changes the application to `submitted`. Submission attempts, provider identity, and receipts are audited in SQL.
+8. Track employer-confirmed `interview`, `offer`, or `rejected` states when a supported channel supplies those events.
+
+Employer submission configuration is server-side only: `EMPLOYER_SUBMISSION_ENDPOINT` selects an authorized integration, `EMPLOYER_SUBMISSION_SOURCES` allowlists sources, and `EMPLOYER_SUBMISSION_TOKEN` must be supplied through a Key Vault reference or protected Function setting. With no provider configured, the durable queue remains operational but safely reports `needs_action` instead of fabricating a submission.
 
 ### Authentication providers
 
@@ -266,6 +271,7 @@ sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/004_application_wor
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/005_resume_documents.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/006_resume_extraction.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/007_inbound_mailbox.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/008_submission_queue.sql
 ```
 
 Next, open `db/bootstrap/001_function_identity.sql`, replace `APPLY_FUNCTION_APP_NAME` with the value of `$backendName`, and execute it:

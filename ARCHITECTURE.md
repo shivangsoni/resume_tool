@@ -16,6 +16,9 @@ flowchart LR
     GH[Greenhouse boards]
     Remotive[Remotive API]
     Email[Azure Communication Services Email<br/>outbound notifications]
+    Bus[Azure Service Bus<br/>application-submissions queue + DLQ]
+    Worker[Queue-triggered Function<br/>submission orchestrator]
+    Provider[Authorized employer<br/>submission provider]
 
     Candidate -->|sign in| Auth
     Candidate -->|same-origin /api| SWA
@@ -27,6 +30,11 @@ flowchart LR
     API -->|job discovery| GH
     API -->|job discovery| Remotive
     API -->|managed identity| Email
+    API -->|enqueue with managed identity| Bus
+    Bus -->|queue trigger| Worker
+    Worker -->|authorized API only| Provider
+    Provider -->|verifiable receipt| Worker
+    Worker -->|attempt and receipt| SQL
     Blob -->|resume bytes| DocAI
 ```
 
@@ -90,17 +98,23 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 
 1. Azure Functions retrieves current jobs from configured Greenhouse boards and Remotive, normalizes them, and synchronizes searchable metadata to SQL.
 2. The browser queries `/api/jobs`, filters results, and displays source provenance and direct employer URLs.
-3. **Simple Apply** creates a SQL `review` queue record containing the job and saved profile answers without navigating away from ApplyPilot.
-8. When a résumé upload or profile update enriches the candidate profile, queued applications are refreshed asynchronously with the latest saved answers.
-9. The queue waits for an authorized provider-specific submission channel. Unsupported sources remain queued and are not represented as submitted.
-10. An employer receipt advances the record to submitted; subsequent events advance through interview, offer, rejected, or failed.
+3. **Simple Apply** creates a SQL `review` record containing the job and saved profile answers without navigating away from ApplyPilot.
+4. `POST /api/applications/{id}/submit` verifies ownership, changes the record to `queued`, and sends an idempotent message to Azure Service Bus.
+5. The queue-triggered Function loads the authoritative application snapshot and selects an explicitly configured provider adapter.
+6. Unsupported providers or missing requirements move the application to `needs_action`; they are never represented as submitted.
+7. Transient provider errors are retried by Service Bus up to five deliveries, then retained in the dead-letter queue for investigation.
+8. Only a non-empty employer receipt advances the record to `submitted`; every attempt and receipt is audited in SQL.
+9. When a résumé upload or profile update enriches the candidate profile, review applications are refreshed with the latest saved answers.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Discovered
     Discovered --> Review: candidate selects job
     Review --> ProviderQueue: queue saved profile
-    ProviderQueue --> Review: unresolved question or unsupported provider
+    ProviderQueue --> NeedsAction: unresolved question or unsupported provider
+    ProviderQueue --> DeadLetter: transient failure after 5 deliveries
+    NeedsAction --> ProviderQueue: candidate resolves and retries
+    DeadLetter --> ProviderQueue: operator investigates and replays
     ProviderQueue --> Submitted: employer confirms receipt
     Submitted --> Interview
     Submitted --> Rejected
@@ -133,6 +147,8 @@ flowchart TD
 
 The public Greenhouse feed exposes application questions, but submission requires a private API key issued by each hiring company. Remotive provides discovery and requires consumers to link back to its listing. ApplyPilot must not mark either source submitted without an employer receipt. A future user-controlled Playwright runner can prefill supported hosted forms, but it must pause for missing required questions, consent, CAPTCHA, and the final user-authorized submit action.
 
+The submission endpoint is intentionally not a generic browser-automation proxy. Provider endpoints and credentials are server-side configuration, sources must be allowlisted, and the application ID is used as the provider idempotency key. A `2xx` response without a receipt is treated as `needs_action`, not success.
+
 ## Azure resources and security
 
 | Component | Purpose | Security boundary |
@@ -143,6 +159,7 @@ The public Greenhouse feed exposes application questions, but submission require
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |
 | Communication Services Email | Outbound application queue notifications | Azure-managed domain; managed-identity sender role; no inbound mailbox |
+| Azure Service Bus Basic | Durable application submission queue, retries, and dead-letter retention | Local/SAS auth disabled; Function identity has sender and receiver roles |
 | Application Insights | Runtime diagnostics | 30-day retention configured by Bicep |
 | Key Vault | Future application secrets | Function identity access; no resume or profile payloads stored here |
 
@@ -164,12 +181,13 @@ Infrastructure deployment precedes backend deployment when a service or setting 
 - Health checks expose API and SQL connectivity without credentials or personal data.
 - Application Insights receives Function errors and extraction warnings.
 - Application snapshots preserve employer URLs and titles after upstream job removal.
+- Service Bus retries transient submission failures five times and dead-letters poison messages; SQL preserves each processing attempt.
 
 ## Current limitations and evolution
 
 - Parsing uses the general layout model plus deterministic field detection. A custom neural model can improve work-history and education extraction after at least five representative, consented training resumes are available.
 - Employer forms remain a separate trust domain. Future browser automation must preserve user review, consent, CAPTCHA, and site terms.
-- Production hardening should add retention/deletion controls, malware scanning, private endpoints, queue-based asynchronous extraction, audit events, and user data export/deletion.
+- Production hardening should add retention/deletion controls, malware scanning, private endpoints, queue-based asynchronous extraction, dead-letter alerting/replay, and user data export/deletion.
 
 ## Design references
 

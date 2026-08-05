@@ -39,6 +39,15 @@ var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, app
 var safeBase = toLower(replace(appName, '-', ''))
 var keyVaultName = take('${safeBase}vault${suffix}', 24)
 
+module serviceBus 'modules/service-bus.bicep' = {
+  name: 'serviceBus'
+  params: {
+    namespaceName: take('${safeBase}-bus-${suffix}', 50)
+    location: location
+    tags: tags
+  }
+}
+
 module email 'modules/email.bicep' = {
   name: 'email'
   params: {
@@ -95,7 +104,17 @@ module backend 'modules/backend.bicep' = {
     emailSenderAddress: email.outputs.senderAddress
     postmarkInboundAddress: postmarkInboundAddress
     mailboxDomain: mailboxDomain
+    serviceBusNamespace: serviceBus.outputs.namespace
+    submissionQueueName: serviceBus.outputs.queueName
     tags: tags
+  }
+}
+
+module serviceBusAccess 'modules/service-bus-access.bicep' = {
+  name: 'serviceBusAccess'
+  params: {
+    namespaceResourceId: serviceBus.outputs.id
+    functionPrincipalId: backend.outputs.principalId
   }
 }
 
@@ -146,3 +165,5 @@ output documentIntelligenceName string = documentIntelligence.outputs.name
 output communicationServiceName string = email.outputs.name
 output emailServiceName string = email.outputs.emailServiceName
 output emailSenderAddress string = email.outputs.senderAddress
+output serviceBusNamespace string = serviceBus.outputs.namespace
+output applicationSubmissionQueue string = serviceBus.outputs.queueName
