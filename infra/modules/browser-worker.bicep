@@ -61,8 +61,9 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
     template: {
       containers: [{
         name: 'browser-worker'
-        image: 'mcr.microsoft.com/playwright:v1.58.2-noble'
-        command: ['/bin/sh', '-c', 'sleep 3600']
+        // Bootstrap with a small, known-good public image. The deployment workflow
+        // replaces this revision with the application-specific Playwright image.
+        image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
         env: [
           { name: 'SERVICE_BUS_NAMESPACE', value: serviceBusNamespace }
           { name: 'APPLICATION_SUBMISSION_QUEUE', value: queueName }
