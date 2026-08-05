@@ -258,6 +258,8 @@ az functionapp deployment source config-zip `
 az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
+Always repeat this backend package deployment after any Bicep run that creates or updates the Static Web Apps linked backend. The infrastructure release can recreate the link metadata; publishing and restarting the Function afterward ensures `/api/*` routes are registered at the edge.
+
 After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 
 ```powershell
@@ -304,6 +306,12 @@ $frontendUrl
 Start-Process $frontendUrl
 ```
 
+Run the release gate after every backend or frontend deployment. Do not consider the release successful if it reports a 404:
+
+```powershell
+.\scripts\verify-deployment.ps1 -BaseUrl $frontendUrl
+```
+
 ### 8. Verify Azure state
 
 ```powershell
@@ -337,6 +345,7 @@ Provisioning resources in Azure Portal is not enough; you must complete both cod
 - **Static site shows a default/empty page or 404:** redeploy `frontend/dist`. Confirm both `index.html` and `staticwebapp.config.json` exist inside `frontend/dist` before deployment.
 - **Frontend loads but reports API unavailable:** open `$frontendUrl/api/health` and `$frontendUrl/api/jobs?limit=3`. Confirm the Standard Static Web App has the Function backend linked, then rebuild with `VITE_API_BASE_URL='/api'`.
 - **Function returns 404:** inspect ZIP contents and confirm `host.json`, `package.json`, and `src/functions/jobs.js` are at the ZIP root structure shown above.
+- **Static Web Apps `/api/jobs` returns 404 while the linked backend says Succeeded:** redeploy/restart the Function after the final Bicep deployment, then run `scripts/verify-deployment.ps1`. The linked-backend resource can be recreated by infrastructure even though its displayed state remains Succeeded.
 - **Function returns 500/503:** stream logs with `az webapp log tail --resource-group $resourceGroup --name $backendName`. Verify SQL migrations and the managed-identity database user.
 - **Profile/application API returns 401:** sign in from the app first. This is expected for anonymous requests. Do not add a client-generated identity header.
 - **Resume upload fails:** confirm the private `resumes` container exists and the Function identity has Storage Blob Data Contributor; allow several minutes for a new role assignment to propagate.
