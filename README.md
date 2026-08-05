@@ -185,6 +185,8 @@ Until those inputs exist, the Inbox page explicitly shows inbound mail as unconf
 
 ### Deployment documentation policy
 
+GitHub workflows use Node 24-compatible action generations: `actions/checkout@v6`, `actions/setup-node@v6`, `azure/login@v3`, and `azure/CLI@v3`. Keep these major versions current together; older Node 20 action runtimes are deprecated on GitHub-hosted runners and older Azure Login releases can fail to parse newer bundled Azure CLI versions.
+
 Any change to Bicep, Azure resource names, regions, application settings, database migrations, build output, deployment packaging, runtime versions, URLs, CORS, or release commands must update this README in the same commit. Deployment instructions are considered incomplete until they have been executed or clearly marked unverified.
 
 ### 1. Prerequisites
