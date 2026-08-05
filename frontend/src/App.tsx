@@ -381,6 +381,12 @@ export default function App() {
                   setProfile(normalized);
                   saveProfile(normalized);
                 }
+                try {
+                  const refreshed = await getApplications();
+                  setApplications(refreshed.applications);
+                } catch {
+                  // ignore application refresh failures for upload
+                }
                 notify(
                   result.extractionStatus === "succeeded"
                     ? "Resume uploaded; detected details added to blank profile fields"
@@ -403,6 +409,12 @@ export default function App() {
                 const result = await putRemoteProfile(profile);
                 setProfile(result.profile);
                 saveProfile(result.profile);
+                try {
+                  const refreshed = await getApplications();
+                  setApplications(refreshed.applications);
+                } catch {
+                  // ignore application refresh failures for preferences save
+                }
                 notify("Preferences saved");
               } catch (error) {
                 notify(error instanceof Error ? error.message : "Save failed");
@@ -419,6 +431,12 @@ export default function App() {
                 const result = await putRemoteProfile(profile);
                 setProfile(result.profile);
                 saveProfile(result.profile);
+                try {
+                  const refreshed = await getApplications();
+                  setApplications(refreshed.applications);
+                } catch {
+                  // ignore application refresh failures on profile save
+                }
                 notify("Profile saved securely");
               } catch (error) {
                 notify(error instanceof Error ? error.message : "Save failed");
@@ -941,6 +959,10 @@ function AuthPage() {
           <span className="provider-letter google">G</span>
           Continue with Google
         </a>
+        <a className="provider-button github" href="/.auth/login/github?post_login_redirect_uri=/dashboard">
+          <span className="provider-letter github">GH</span>
+          Continue with GitHub
+        </a>
         <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
           <span className="provider-letter facebook">f</span>
           Continue with Facebook
@@ -960,7 +982,7 @@ function LandingPage() {
   return (
     <main className="public-shell">
       <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><div className="landing-actions"><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></div><small>Microsoft and Google delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
+      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions"><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></div><small>Microsoft, Google, and GitHub delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
       <section className="landing-features" id="features"><article><Search /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><FileText /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
     </main>
   );

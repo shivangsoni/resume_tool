@@ -68,6 +68,37 @@ export async function mergeProfileSuggestions(principal, suggestions) {
   return saveProfile(principal, profile);
 }
 
+export async function refreshQueuedApplications(principal, profile) {
+  if (!profile || !Object.keys(profile).length) return 0;
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId)
+    .query("SELECT Id, AnswersJson FROM dbo.Applications WHERE UserId=@userId AND Status='review'");
+
+  let refreshed = 0;
+  for (const row of result.recordset) {
+    const answers = row.AnswersJson ? JSON.parse(row.AnswersJson) : {};
+    const merged = { ...answers };
+    let changed = false;
+    for (const [key, value] of Object.entries(profile)) {
+      if (typeof value !== "string") continue;
+      const current = String(answers[key] || "").trim();
+      const next = value.trim();
+      if (next && !current) {
+        merged[key] = next;
+        changed = true;
+      }
+    }
+    if (!changed) continue;
+    await db.request()
+      .input("id", sql.UniqueIdentifier, row.Id)
+      .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(merged))
+      .query("UPDATE dbo.Applications SET AnswersJson=@answers, UpdatedAt=SYSUTCDATETIME() WHERE Id=@id");
+    refreshed += 1;
+  }
+  return refreshed;
+}
+
 const mapApplication = (row) => ({ id: row.Id, jobId: Number(row.JobId), jobExternalId: row.JobExternalId, company: row.Company, title: row.Title, location: row.Location, source: row.Source, sourceUrl: row.SourceUrl, status: row.Status, answers: row.AnswersJson ? JSON.parse(row.AnswersJson) : {}, notes: row.Notes, appliedAt: row.AppliedAt, submittedConfirmedAt: row.SubmittedConfirmedAt, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt });
 
 export async function listApplications(principal) {

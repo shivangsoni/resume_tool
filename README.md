@@ -108,8 +108,9 @@ Verified production checks:
 1. Sign in with Microsoft through Static Web Apps authentication.
 2. Upload a PDF or DOCX resume (maximum 4 MB on the F0 tier). ApplyPilot extracts reusable details into blank profile fields for review.
 3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` queue record with the complete saved profile snapshot and stays inside the portal.
-4. The application remains visibly queued until an authorized provider integration returns an employer receipt. A queue record is never represented as a submission.
-5. Track employer-confirmed `submitted`, `interview`, `offer`, or `rejected` states in SQL when a supported channel supplies those events.
+4. When your résumé or profile changes, queued `review` applications are refreshed automatically with the latest answers.
+5. The application remains visibly queued until an authorized provider integration returns an employer receipt. A queue record is never represented as a submission.
+6. Track employer-confirmed `submitted`, `interview`, `offer`, or `rejected` states in SQL when a supported channel supplies those events.
 
 ### Authentication providers
 
@@ -125,7 +126,7 @@ https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
 ```
 
-Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; GitHub uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Static Web Apps custom authentication is Standard-tier only. Verify every redirect chain after any auth configuration change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
+Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; GitHub uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. To configure GitHub auth, set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in your Static Web App configuration and register the callback URL exactly. Static Web Apps custom authentication is Standard-tier only. Verify every redirect chain after any auth configuration change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
 
 Required external inputs:
 
