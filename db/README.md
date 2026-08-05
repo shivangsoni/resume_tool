@@ -8,4 +8,8 @@ The Function App uses Microsoft Entra managed identity. A SQL administrator must
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/001_initial.sql
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/002_job_search.sql
 sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/003_job_sync_procedure.sql
+sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/004_application_workflow.sql
+sqlcmd -S <server>.database.windows.net -d applypilot -G -i db/migrations/005_resume_documents.sql
 ```
+
+Migration 004 persists each job snapshot and its review/submission state. Migration 005 records metadata for resumes stored in the private Azure Blob container; resume file contents are not stored in SQL.

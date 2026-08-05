@@ -1,6 +1,8 @@
 # ApplyPilot
 
-ApplyPilot is a React job-matching dashboard backed by an Azure Functions service that retrieves current remote job listings.
+ApplyPilot is a production-oriented React job search and application tracker. It retrieves current listings, stores a signed-in user's profile and application history in Azure SQL, uploads resumes to private Blob Storage, opens the employer's real application form, and requires the user to confirm the final submission.
+
+The product deliberately uses a review-first workflow. It does not claim an application was submitted merely because an employer page was opened, and it does not bypass employer consent, CAPTCHA, screening questions, or terms of service.
 
 ## Repository structure
 
@@ -45,10 +47,10 @@ Last verified: August 5, 2026
 | Subscription | Visual Studio Enterprise Subscription (`b5f1fa5f-c39f-4d7d-866c-57836fe7382f`) |
 | Resource group | `apply` |
 | Application region | `centralus` |
-| Infrastructure deployment | `applypilot-20260805-005152` |
+| Infrastructure deployment | `applypilot-workflow-20260805-082546` |
 | Frontend | https://blue-water-0d76ed710.7.azurestaticapps.net |
-| Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Free) |
-| Backend | https://applypilotcentral-api-khaah5ti4wzag.azurewebsites.net |
+| Static Web App | `applypilotcentral-web-khaah5ti4wzag` (Standard) |
+| Backend route | `https://blue-water-0d76ed710.7.azurestaticapps.net/api` (linked Function backend) |
 | Function App | `applypilotcentral-api-khaah5ti4wzag` (Node.js 22, Linux Consumption) |
 | SQL logical server | `simplyapply.database.windows.net` |
 | SQL database | `applypilot` (Basic) |
@@ -60,7 +62,19 @@ Verified production checks:
 - Frontend CORS and the compiled API URL target the Function App above.
 - `/api/health` returns `status: ok` with Azure SQL connected.
 - `/api/jobs` returns current Greenhouse and Remotive listings.
-- Database migrations `001_initial`, `002_job_search`, and `003_job_sync_procedure` are applied.
+- Anonymous requests to profile, applications, and resume APIs return HTTP 401.
+- Database migrations `001_initial` through `005_resume_documents` are applied.
+- The Function App is linked to Static Web Apps; its direct public endpoint is protected.
+- Resumes are held in a private Blob container and accessed by the Function managed identity.
+
+### Application lifecycle
+
+1. Sign in with Microsoft through Static Web Apps authentication.
+2. Complete profile/preferences and upload a PDF or DOCX resume (maximum 5 MB).
+3. Choose **Simple Apply** on a live job. ApplyPilot saves an `in_progress` record and opens the employer's source form.
+4. Review and complete the employer form yourself.
+5. Return to **Applications** and choose **Confirm submitted** only after the employer accepts it.
+6. Track subsequent `interview`, `offer`, or `rejected` states in SQL.
 
 ### Deployment documentation policy
 
@@ -161,6 +175,8 @@ $sqlServerFqdn = 'simplyapply.database.windows.net'
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/001_initial.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/002_job_search.sql
 sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/003_job_sync_procedure.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/004_application_workflow.sql
+sqlcmd -S $sqlServerFqdn -d $sqlDatabase -G -i db/migrations/005_resume_documents.sql
 ```
 
 Next, open `db/bootstrap/001_function_identity.sql`, replace `APPLY_FUNCTION_APP_NAME` with the value of `$backendName`, and execute it:
@@ -190,11 +206,11 @@ az functionapp deployment source config-zip `
 az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
-Verify the backend before deploying the frontend:
+After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 
 ```powershell
-Invoke-RestMethod "$backendUrl/api/health" | ConvertTo-Json
-$jobs = Invoke-RestMethod "$backendUrl/api/jobs?limit=3"
+Invoke-RestMethod "$frontendUrl/api/health" | ConvertTo-Json
+$jobs = Invoke-RestMethod "$frontendUrl/api/jobs?limit=3"
 $jobs.jobs | Select-Object title,company,source,postedAt | Format-Table
 ```
 
@@ -202,10 +218,10 @@ Do not continue until `/api/health` returns `status: ok` or `status: degraded` a
 
 ### 7. Build and deploy the frontend code
 
-`VITE_API_BASE_URL` is compiled into the frontend bundle, so it must reference the deployed Function App before building.
+The deployed frontend must use the same-origin `/api` route. Static Web Apps forwards it to the linked Function backend and supplies the trusted signed-in identity.
 
 ```powershell
-$env:VITE_API_BASE_URL = "$backendUrl/api"
+$env:VITE_API_BASE_URL = '/api'
 npm ci --prefix frontend --workspaces=false
 npm run lint --prefix frontend
 npm test --prefix frontend
@@ -240,14 +256,20 @@ Start-Process $frontendUrl
 
 ```powershell
 az staticwebapp show --resource-group $resourceGroup --name $frontendName `
-  --query '{name:name,hostname:defaultHostname,repositoryUrl:repositoryUrl}' --output table
+  --query '{name:name,hostname:defaultHostname,sku:sku.name,repositoryUrl:repositoryUrl}' --output table
 
 az functionapp show --resource-group $resourceGroup --name $backendName `
   --query '{name:name,state:state,host:defaultHostName,runtime:siteConfig.linuxFxVersion}' --output table
 
 az functionapp config appsettings list --resource-group $resourceGroup --name $backendName `
-  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS'].{name:name,value:value}" `
+  --query "[?name=='AZURE_SQL_SERVER' || name=='AZURE_SQL_DATABASE' || name=='GREENHOUSE_BOARDS' || name=='AZURE_STORAGE_ACCOUNT' || name=='RESUME_CONTAINER'].{name:name,value:value}" `
   --output table
+
+Invoke-RestMethod "$frontendUrl/api/health"
+Invoke-RestMethod "$frontendUrl/api/jobs?limit=3"
+
+try { Invoke-WebRequest "$frontendUrl/api/profile" -UseBasicParsing } catch { $_.Exception.Response.StatusCode.value__ }
+# Expected while signed out: 401
 ```
 
 ## Deployed application not loading
@@ -255,15 +277,16 @@ az functionapp config appsettings list --resource-group $resourceGroup --name $b
 Provisioning resources in Azure Portal is not enough; you must complete both code-deployment steps above.
 
 - **Static site shows a default/empty page or 404:** redeploy `frontend/dist`. Confirm both `index.html` and `staticwebapp.config.json` exist inside `frontend/dist` before deployment.
-- **Frontend loads but reports API unavailable:** open `$backendUrl/api/health` and `$backendUrl/api/jobs?limit=3` directly. Rebuild the frontend with `VITE_API_BASE_URL="$backendUrl/api"` after the backend URL changes.
+- **Frontend loads but reports API unavailable:** open `$frontendUrl/api/health` and `$frontendUrl/api/jobs?limit=3`. Confirm the Standard Static Web App has the Function backend linked, then rebuild with `VITE_API_BASE_URL='/api'`.
 - **Function returns 404:** inspect ZIP contents and confirm `host.json`, `package.json`, and `src/functions/jobs.js` are at the ZIP root structure shown above.
 - **Function returns 500/503:** stream logs with `az webapp log tail --resource-group $resourceGroup --name $backendName`. Verify SQL migrations and the managed-identity database user.
-- **Browser reports CORS:** rerun the Bicep deployment so the Function App allowed origin matches the current Static Web App hostname.
+- **Profile/application API returns 401:** sign in from the app first. This is expected for anonymous requests. Do not add a client-generated identity header.
+- **Resume upload fails:** confirm the private `resumes` container exists and the Function identity has Storage Blob Data Contributor; allow several minutes for a new role assignment to propagate.
 - **Portal resource blade itself fails:** confirm the selected subscription with `az account show`, then inspect resources through CLI using `az resource list --resource-group apply --output table`. Portal UI failure does not necessarily mean the deployed endpoints are down.
 - **Deployment status:** inspect it with `az deployment group show --resource-group $resourceGroup --name $deploymentName --output table` and `az deployment operation group list --resource-group $resourceGroup --name $deploymentName --output table`.
 
 The frontend and backend can be redeployed independently. See [docs/JOB_SOURCES.md](docs/JOB_SOURCES.md) for job-provider rules.
 
-## Privacy
+## Privacy and security
 
-The current profile feature uses browser local storage. Never enter passwords, Social Security numbers, government IDs, or payment information.
+Profile and application data are scoped to the Microsoft-authenticated user and stored in Azure SQL. Resume files are stored in a private Blob container. The browser keeps only non-sensitive display preferences as a fallback. Never enter passwords, Social Security numbers, government IDs, or payment information, and never upload those values as screening answers.

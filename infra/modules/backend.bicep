@@ -22,6 +22,17 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource resumes 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'resumes'
+  properties: { publicAccess: 'None' }
+}
+
 resource insights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
@@ -74,8 +85,20 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AZURE_SQL_SERVER', value: sqlServerFqdn }
         { name: 'AZURE_SQL_DATABASE', value: sqlDatabaseName }
         { name: 'GREENHOUSE_BOARDS', value: greenhouseBoards }
+        { name: 'AZURE_STORAGE_ACCOUNT', value: storage.name }
+        { name: 'RESUME_CONTAINER', value: resumes.name }
       ]
     }
+  }
+}
+
+resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, functionApp.name, 'StorageBlobDataContributor')
+  scope: storage
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
 }
 
@@ -83,3 +106,4 @@ output name string = functionApp.name
 output hostname string = functionApp.properties.defaultHostName
 output url string = 'https://${functionApp.properties.defaultHostName}'
 output principalId string = functionApp.identity.principalId
+output id string = functionApp.id

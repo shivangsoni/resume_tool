@@ -1,12 +1,34 @@
-import type { Application, Profile } from './types'
+import type { Profile } from "./types";
 
-export const emptyProfile: Profile = { firstName: '', lastName: '', email: '', phone: '', location: '', headline: '', summary: '', linkedin: '', portfolio: '', workAuthorization: '', sponsorship: '', skills: '' }
+export const emptyProfile: Profile = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  location: "",
+  headline: "",
+  summary: "",
+  linkedin: "",
+  portfolio: "",
+  workAuthorization: "",
+  sponsorship: "",
+  skills: "",
+  targetRoles: "",
+  preferredLocations: "",
+  minSalary: "",
+  experienceLevel: "",
+};
 
 export function loadProfile(): Profile {
-  try { return { ...emptyProfile, ...JSON.parse(localStorage.getItem('applymate.profile') || '{}') } } catch { return emptyProfile }
+  try {
+    return {
+      ...emptyProfile,
+      ...JSON.parse(localStorage.getItem("applymate.profile") || "{}"),
+    };
+  } catch {
+    return emptyProfile;
+  }
 }
-export function saveProfile(profile: Profile) { localStorage.setItem('applymate.profile', JSON.stringify(profile)) }
-export function loadApplications(): Application[] {
-  try { return JSON.parse(localStorage.getItem('applymate.applications') || '[]') } catch { return [] }
+export function saveProfile(profile: Profile) {
+  localStorage.setItem("applymate.profile", JSON.stringify(profile));
 }
-export function saveApplications(items: Application[]) { localStorage.setItem('applymate.applications', JSON.stringify(items)) }

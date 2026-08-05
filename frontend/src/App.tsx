@@ -1,27 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
-  Bell,
   Briefcase,
   Check,
   ChevronDown,
   ChevronRight,
-  CircleHelp,
   FileText,
-  Filter,
   LayoutDashboard,
   MapPin,
   Search,
-  Settings,
   SlidersHorizontal,
-  Sparkles,
   Upload,
   UserRound,
   WandSparkles,
   X,
 } from "lucide-react";
-import { loadProfile, saveProfile } from "./storage";
-import type { Profile } from "./types";
+import { emptyProfile, loadProfile, saveProfile } from "./storage";
+import {
+  createApplication,
+  getApplications,
+  getCurrentUser,
+  getRemoteProfile,
+  putRemoteProfile,
+  updateApplication,
+  uploadResume,
+} from "./api";
+import type { Application, Profile } from "./types";
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile";
 type Job = {
@@ -51,7 +55,6 @@ export default function App() {
   const [status, setStatus] = useState<"all" | "ready" | "applied" | "failed">(
     "all",
   );
-  const [auto, setAuto] = useState(false);
   const [dismissed, setDismissed] = useState<number[]>([]);
   const [profile, setProfile] = useState(loadProfile);
   const [toast, setToast] = useState("");
@@ -61,6 +64,40 @@ export default function App() {
   );
   const [feedError, setFeedError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [currentUser, setCurrentUser] = useState<{
+    userId: string;
+    userDetails?: string;
+  } | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [resumeDocument, setResumeDocument] = useState<{
+    name: string;
+    size: number;
+  } | null>(null);
+  const notify = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(""), 2200);
+  };
+  useEffect(() => {
+    getCurrentUser()
+      .then(async (user) => {
+        setCurrentUser(user);
+        if (user) {
+          const [remoteProfile, remoteApplications] = await Promise.all([
+            getRemoteProfile(),
+            getApplications(),
+          ]);
+          if (remoteProfile.profile) {
+            const normalized = { ...emptyProfile, ...remoteProfile.profile };
+            setProfile(normalized);
+            saveProfile(normalized);
+          }
+          setApplications(remoteApplications.applications);
+        }
+      })
+      .catch(() => notify("Account data could not be loaded"))
+      .finally(() => setAuthReady(true));
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     fetch(`${import.meta.env.VITE_API_BASE_URL || "/api"}/jobs?limit=50`, {
@@ -86,21 +123,36 @@ export default function App() {
       });
     return () => controller.abort();
   }, [reloadKey]);
+  const displayJobs = useMemo(
+    () =>
+      liveJobs.map((item) => {
+        const application = applications.find(
+          (entry) => entry.jobId === item.id,
+        );
+        return {
+          ...item,
+          status:
+            application &&
+            ["submitted", "interview", "offer"].includes(application.status)
+              ? ("applied" as const)
+              : application?.status === "failed"
+                ? ("failed" as const)
+                : ("ready" as const),
+        };
+      }),
+    [liveJobs, applications],
+  );
   const visible = useMemo(
     () =>
-      liveJobs.filter(
+      displayJobs.filter(
         (j) =>
           !dismissed.includes(j.id) &&
           (status === "all" || j.status === status) &&
           (j.title + j.company).toLowerCase().includes(query.toLowerCase()),
       ),
-    [dismissed, status, query, liveJobs],
+    [dismissed, status, query, displayJobs],
   );
-  const job = liveJobs.find((j) => j.id === selected) || visible[0];
-  const notify = (s: string) => {
-    setToast(s);
-    setTimeout(() => setToast(""), 2200);
-  };
+  const job = displayJobs.find((j) => j.id === selected) || visible[0];
   return (
     <div className="sa-shell">
       <aside className="sa-side">
@@ -122,7 +174,7 @@ export default function App() {
             label="Applications"
             active={page === "applications"}
             click={() => setPage("applications")}
-            count={liveJobs.filter((item) => item.status === "applied").length}
+            count={applications.length}
           />
           <Side
             icon={<FileText />}
@@ -146,31 +198,24 @@ export default function App() {
         <div className="side-lower">
           <div className="usage">
             <div>
-              <span>Weekly applications</span>
+              <span>Submitted applications</span>
               <b>
-                {liveJobs.filter((item) => item.status === "applied").length} /
-                100
+                {
+                  applications.filter((item) => item.status === "submitted")
+                    .length
+                }{" "}
+                / 100
               </b>
             </div>
             <i>
               <em
                 style={{
-                  width: `${Math.min(liveJobs.filter((item) => item.status === "applied").length, 100)}%`,
+                  width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%`,
                 }}
               />
             </i>
-            <small>Resets Monday</small>
+            <small>Persisted in your account</small>
           </div>
-          <Side
-            icon={<CircleHelp />}
-            label="Help & support"
-            click={() => notify("Support center coming soon")}
-          />
-          <Side
-            icon={<Settings />}
-            label="Settings"
-            click={() => notify("Settings coming soon")}
-          />
           <div className="user">
             <span>SS</span>
             <div>
@@ -187,17 +232,28 @@ export default function App() {
             <WandSparkles /> ApplyPilot
           </div>
           <div className="header-spacer" />
-          <button className="icon-btn">
-            <Bell />
-          </button>
-          <button className="upgrade">
-            <Sparkles /> Upgrade
-          </button>
+          {!authReady ? (
+            <span className="auth-label">Checking account…</span>
+          ) : currentUser ? (
+            <a
+              className="upgrade"
+              href="/.auth/logout?post_logout_redirect_uri=/"
+            >
+              Sign out
+            </a>
+          ) : (
+            <a
+              className="upgrade"
+              href="/.auth/login/aad?post_login_redirect_uri=/"
+            >
+              <UserRound /> Sign in
+            </a>
+          )}
         </header>
         {page === "dashboard" && (
           <Dashboard
             visible={visible}
-            allJobs={liveJobs}
+            allJobs={displayJobs}
             selected={selected}
             setSelected={setSelected}
             job={job}
@@ -205,7 +261,6 @@ export default function App() {
             setQuery={setQuery}
             status={status}
             setStatus={setStatus}
-            auto={auto}
             feedState={feedState}
             feedError={feedError}
             retry={() => {
@@ -213,30 +268,111 @@ export default function App() {
               setFeedError("");
               setReloadKey((value) => value + 1);
             }}
-            setAuto={setAuto}
             dismiss={(id) => {
               setDismissed([...dismissed, id]);
               notify("Removed from your matches");
             }}
-            apply={(j) =>
-              notify(`Application for ${j.title} queued for review`)
-            }
+            apply={async (j) => {
+              if (!currentUser) {
+                location.href = "/.auth/login/aad?post_login_redirect_uri=/";
+                return;
+              }
+              try {
+                const result = await createApplication(j, {
+                  workAuthorization: profile.workAuthorization,
+                  sponsorship: profile.sponsorship,
+                });
+                setApplications((items) => [
+                  result.application,
+                  ...items.filter((item) => item.id !== result.application.id),
+                ]);
+                window.open(j.sourceUrl, "_blank", "noopener,noreferrer");
+                setPage("applications");
+                notify(
+                  "Review saved. Complete the employer form, then confirm submission here.",
+                );
+              } catch (error) {
+                notify(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not create application",
+                );
+              }
+            }}
           />
         )}
         {page === "applications" && (
           <Applications
-            jobs={liveJobs.filter((item) => item.status === "applied")}
+            applications={applications}
+            update={async (id, nextStatus) => {
+              try {
+                const result = await updateApplication(id, nextStatus);
+                setApplications((items) =>
+                  items.map((item) =>
+                    item.id === id ? result.application : item,
+                  ),
+                );
+                notify(`Application updated to ${nextStatus}`);
+              } catch (error) {
+                notify(
+                  error instanceof Error ? error.message : "Update failed",
+                );
+              }
+            }}
           />
         )}
-        {page === "resume" && <Resume />}
-        {page === "preferences" && <Preferences />}
+        {page === "resume" && (
+          <Resume
+            document={resumeDocument}
+            upload={async (file) => {
+              if (!currentUser) {
+                location.href = "/.auth/login/aad?post_login_redirect_uri=/";
+                return;
+              }
+              try {
+                const result = await uploadResume(file);
+                setResumeDocument({
+                  name: result.document.FileName,
+                  size: result.document.SizeBytes,
+                });
+                notify("Résumé uploaded securely");
+              } catch (error) {
+                notify(
+                  error instanceof Error ? error.message : "Upload failed",
+                );
+              }
+            }}
+          />
+        )}
+        {page === "preferences" && (
+          <Preferences
+            profile={profile}
+            setProfile={setProfile}
+            save={async () => {
+              try {
+                const result = await putRemoteProfile(profile);
+                setProfile(result.profile);
+                saveProfile(result.profile);
+                notify("Preferences saved");
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "Save failed");
+              }
+            }}
+          />
+        )}
         {page === "profile" && (
           <ProfileView
             profile={profile}
             setProfile={setProfile}
-            save={() => {
-              saveProfile(profile);
-              notify("Profile saved");
+            save={async () => {
+              try {
+                const result = await putRemoteProfile(profile);
+                setProfile(result.profile);
+                saveProfile(result.profile);
+                notify("Profile saved securely");
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "Save failed");
+              }
             }}
           />
         )}
@@ -283,11 +419,9 @@ function Dashboard(p: {
   setQuery: (s: string) => void;
   status: "all" | "ready" | "applied" | "failed";
   setStatus: (s: "all" | "ready" | "applied" | "failed") => void;
-  auto: boolean;
   feedState: "loading" | "live" | "error";
   feedError: string;
   retry: () => void;
-  setAuto: (b: boolean) => void;
   dismiss: (n: number) => void;
   apply: (j: Job) => void;
 }) {
@@ -306,25 +440,6 @@ function Dashboard(p: {
                   : "API unavailable"}
             </span>
           </p>
-        </div>
-        <div className="auto-box">
-          <div className="pulse">
-            <WandSparkles />
-          </div>
-          <div>
-            <b>Full Auto-Apply</b>
-            <small>
-              {p.auto
-                ? "Actively applying to strong matches"
-                : "Turn on to apply while you sleep"}
-            </small>
-          </div>
-          <button
-            className={`switch ${p.auto ? "on" : ""}`}
-            onClick={() => p.setAuto(!p.auto)}
-          >
-            <i />
-          </button>
         </div>
       </section>
       <div className="metric-row">
@@ -351,8 +466,8 @@ function Dashboard(p: {
             <Check />
           </span>
           <div>
-            <b>You’re ready for Simple Apply</b>
-            <small>Resume and preferences are complete</small>
+            <b>Review-first application workflow</b>
+            <small>Every submission requires your confirmation</small>
           </div>
         </div>
       </div>
@@ -365,12 +480,6 @@ function Dashboard(p: {
             onChange={(e) => p.setQuery(e.target.value)}
           />
         </div>
-        <button>
-          <MapPin /> United States <ChevronDown />
-        </button>
-        <button>
-          <Filter /> Filters <i>2</i>
-        </button>
         <select
           value={p.status}
           onChange={(e) => p.setStatus(e.target.value as typeof p.status)}
@@ -578,7 +687,13 @@ function JobDetail({
   );
 }
 
-function Applications({ jobs: appliedJobs }: { jobs: Job[] }) {
+function Applications({
+  applications,
+  update,
+}: {
+  applications: Application[];
+  update: (id: string, status: Application["status"]) => Promise<void>;
+}) {
   return (
     <div className="basic-page">
       <h1>Applications</h1>
@@ -589,35 +704,73 @@ function Applications({ jobs: appliedJobs }: { jobs: Job[] }) {
           <span>STATUS</span>
           <span>DATE</span>
         </div>
-        {appliedJobs.length === 0 && (
+        {applications.length === 0 && (
           <div className="no-results">
             <Briefcase />
-            <b>No submitted applications yet</b>
-            <span>
-              Applications submitted through the API will appear here.
-            </span>
+            <b>No applications in progress</b>
+            <span>Choose Simple Apply on a job match to start a review.</span>
           </div>
         )}
-        {appliedJobs.map((j) => (
-          <div className="table-row" key={j.id}>
+        {applications.map((application) => (
+          <div className="table-row application-row" key={application.id}>
             <div>
-              <span className="job-logo">{j.logo}</span>
+              <span className="job-logo">
+                {application.company?.slice(0, 1) || "?"}
+              </span>
               <div>
-                <b>{j.title}</b>
-                <small>{j.company}</small>
+                <b>{application.title}</b>
+                <small>
+                  {application.company} · {application.location}
+                </small>
               </div>
             </div>
-            <span className="success-pill">
-              <Check /> Applied
+            <span className={`status-pill ${application.status}`}>
+              {application.status === "submitted" && <Check />}{" "}
+              {application.status}
             </span>
-            <time>Jul 30, 2026</time>
+            <div className="application-actions">
+              {application.status === "review" && (
+                <>
+                  <a
+                    href={application.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open employer form
+                  </a>
+                  <button onClick={() => update(application.id, "submitted")}>
+                    Confirm submitted
+                  </button>
+                </>
+              )}
+              {application.status === "submitted" && (
+                <button onClick={() => update(application.id, "interview")}>
+                  Mark interview
+                </button>
+              )}
+              {application.status === "interview" && (
+                <button onClick={() => update(application.id, "offer")}>
+                  Mark offer
+                </button>
+              )}
+              <time>
+                {new Date(application.updatedAt).toLocaleDateString()}
+              </time>
+            </div>
           </div>
         ))}
       </div>
     </div>
   );
 }
-function Resume() {
+function Resume({
+  document,
+  upload,
+}: {
+  document: { name: string; size: number } | null;
+  upload: (file: File) => Promise<void>;
+}) {
+  const [uploading, setUploading] = useState(false);
   return (
     <div className="basic-page">
       <h1>Resumes</h1>
@@ -626,17 +779,49 @@ function Resume() {
         <span>
           <Upload />
         </span>
-        <h2>Upload your primary résumé</h2>
-        <p>PDF or DOCX, up to 5 MB</p>
+        <h2>{document ? document.name : "Upload your primary résumé"}</h2>
+        <p>
+          {document
+            ? `${(document.size / 1024).toFixed(0)} KB · Stored privately in Azure`
+            : "PDF or DOCX, up to 5 MB"}
+        </p>
         <label className="apply">
-          Choose résumé
-          <input type="file" accept=".pdf,.doc,.docx" hidden />
+          {uploading
+            ? "Uploading…"
+            : document
+              ? "Replace résumé"
+              : "Choose résumé"}
+          <input
+            type="file"
+            accept=".pdf,.docx"
+            hidden
+            disabled={uploading}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              setUploading(true);
+              try {
+                await upload(file);
+              } finally {
+                setUploading(false);
+                event.target.value = "";
+              }
+            }}
+          />
         </label>
       </div>
     </div>
   );
 }
-function Preferences() {
+function Preferences({
+  profile,
+  setProfile,
+  save,
+}: {
+  profile: Profile;
+  setProfile: (profile: Profile) => void;
+  save: () => void;
+}) {
   return (
     <div className="basic-page">
       <h1>Job Preferences</h1>
@@ -644,26 +829,49 @@ function Preferences() {
       <div className="settings-card">
         <label>
           Target job titles
-          <input defaultValue="Product Manager, Senior Product Manager" />
+          <input
+            value={profile.targetRoles}
+            onChange={(event) =>
+              setProfile({ ...profile, targetRoles: event.target.value })
+            }
+          />
         </label>
         <label>
           Preferred locations
-          <input defaultValue="United States, Remote" />
+          <input
+            value={profile.preferredLocations}
+            onChange={(event) =>
+              setProfile({ ...profile, preferredLocations: event.target.value })
+            }
+          />
         </label>
         <div className="two">
           <label>
             Minimum salary
-            <input defaultValue="$120,000" />
+            <input
+              value={profile.minSalary}
+              onChange={(event) =>
+                setProfile({ ...profile, minSalary: event.target.value })
+              }
+            />
           </label>
           <label>
             Experience level
-            <select>
+            <select
+              value={profile.experienceLevel}
+              onChange={(event) =>
+                setProfile({ ...profile, experienceLevel: event.target.value })
+              }
+            >
+              <option value="">Any level</option>
               <option>Mid level</option>
               <option>Senior level</option>
             </select>
           </label>
         </div>
-        <button className="apply">Save preferences</button>
+        <button className="apply" onClick={save}>
+          Save preferences
+        </button>
       </div>
     </div>
   );

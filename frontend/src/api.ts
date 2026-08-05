@@ -1,0 +1,71 @@
+import type { Application, Profile } from "./types";
+
+const API = import.meta.env.VITE_API_BASE_URL || "/api";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  if (response.status === 401) throw new Error("AUTH_REQUIRED");
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(body.error || `Request failed (${response.status})`);
+  return body;
+}
+
+export async function getCurrentUser() {
+  if (import.meta.env.DEV)
+    return {
+      userId: "local-development-user",
+      userDetails: "local@example.test",
+    };
+  const response = await fetch("/.auth/me");
+  if (!response.ok) return null;
+  const body = await response.json();
+  return body.clientPrincipal || null;
+}
+
+export const getRemoteProfile = () =>
+  request<{ profile: Profile | null; updatedAt: string | null }>("/profile");
+export const putRemoteProfile = (profile: Profile) =>
+  request<{ profile: Profile; updatedAt: string }>("/profile", {
+    method: "PUT",
+    body: JSON.stringify(profile),
+  });
+export const getApplications = () =>
+  request<{ applications: Application[] }>("/applications");
+export const createApplication = (
+  job: unknown,
+  answers: Record<string, string>,
+) =>
+  request<{ application: Application }>("/applications", {
+    method: "POST",
+    body: JSON.stringify({ job, answers }),
+  });
+export const updateApplication = (
+  id: string,
+  status: Application["status"],
+  notes?: string,
+) =>
+  request<{ application: Application }>(`/applications/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, notes }),
+  });
+
+export async function uploadResume(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API}/resume`, { method: "POST", body: form });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(body.error || `Upload failed (${response.status})`);
+  return body as {
+    document: {
+      Id: string;
+      FileName: string;
+      SizeBytes: number;
+      CreatedAt: string;
+    };
+  };
+}

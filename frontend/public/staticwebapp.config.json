@@ -1,5 +1,10 @@
 {
-  "navigationFallback": { "rewrite": "/index.html", "exclude": ["/assets/*.{css,js,png,jpg,svg}", "/api/*"] },
+  "routes": [
+    { "route": "/api/profile*", "allowedRoles": ["authenticated"] },
+    { "route": "/api/applications*", "allowedRoles": ["authenticated"] },
+    { "route": "/api/resume*", "allowedRoles": ["authenticated"] }
+  ],
+  "navigationFallback": { "rewrite": "/index.html", "exclude": ["/assets/*.{css,js,png,jpg,svg}", "/api/*", "/.auth/*"] },
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",

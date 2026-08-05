@@ -202,6 +202,13 @@ select {
   gap: 7px;
   align-items: center;
 }
+.upgrade {
+  text-decoration: none;
+}
+.auth-label {
+  font-size: 10px;
+  color: #667085;
+}
 .upgrade svg {
   width: 15px;
 }
@@ -890,6 +897,63 @@ select {
 }
 .success-pill {
   color: #168a54;
+}
+.application-row {
+  grid-template-columns: 1fr 110px minmax(220px, auto);
+}
+.status-pill {
+  display: inline-flex;
+  width: max-content;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 5px 8px;
+  text-transform: capitalize;
+  font-size: 9px;
+  background: #f2f4f7;
+  color: #475467;
+}
+.status-pill.submitted,
+.status-pill.offer {
+  background: #e9f8ef;
+  color: #168a54;
+}
+.status-pill.interview {
+  background: #eef2ff;
+  color: #5145cd;
+}
+.status-pill.review {
+  background: #fff6df;
+  color: #946200;
+}
+.status-pill svg {
+  width: 10px;
+}
+.application-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 7px;
+}
+.application-actions a,
+.application-actions button {
+  border: 1px solid #d9dde4;
+  background: white;
+  color: #5f46c7;
+  border-radius: 6px;
+  padding: 6px 8px;
+  text-decoration: none;
+  font-size: 8px;
+  cursor: pointer;
+}
+.application-actions button {
+  background: #6d55d9;
+  color: white;
+  border-color: #6d55d9;
+}
+.application-actions time {
+  font-size: 8px;
+  color: #98a2b3;
 }
 .success-pill svg {
   width: 11px;

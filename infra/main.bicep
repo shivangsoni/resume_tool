@@ -76,6 +76,15 @@ module keyVault 'modules/keyvault.bicep' = {
   }
 }
 
+module linkedBackend 'modules/link-backend.bicep' = {
+  name: 'linkedBackend'
+  params: {
+    staticWebAppName: frontend.outputs.name
+    backendResourceId: backend.outputs.id
+    backendRegion: location
+  }
+}
+
 output frontendName string = frontend.outputs.name
 output frontendUrl string = frontend.outputs.url
 output frontendDeploymentTokenCommand string = 'az staticwebapp secrets list --name ${frontend.outputs.name} --query properties.apiKey -o tsv'
