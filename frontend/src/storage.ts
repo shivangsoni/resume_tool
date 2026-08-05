@@ -17,6 +17,17 @@ export const emptyProfile: Profile = {
   preferredLocations: "",
   minSalary: "",
   experienceLevel: "",
+  country: "",
+  state: "",
+  city: "",
+  address: "",
+  postalCode: "",
+  github: "",
+  educationLevel: "",
+  employmentTypes: "",
+  preferredLanguages: "",
+  companiesToExclude: "",
+  additionalInfo: "",
 };
 
 export function loadProfile(): Profile {

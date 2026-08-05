@@ -12,9 +12,11 @@ test("normalizes an upstream job without leaking HTML", () => {
 });
 
 test("normalizes a current Greenhouse job with provenance", () => {
-  const result = normalizeGreenhouseJob({ id: 42, title: "Senior Product Manager", content: "<p>Build products with SQL</p>", location: { name: "Remote - US" }, updated_at: "2026-08-04T20:00:00Z", absolute_url: "https://boards.greenhouse.io/acme/jobs/42" }, { token: "acme", company: "Acme" });
+  const result = normalizeGreenhouseJob({ id: 42, title: "Senior Product Manager", content: "&lt;h2&gt;About us&lt;/h2&gt;&lt;p&gt;Build products with SQL &amp;amp; Azure&lt;/p&gt;", location: { name: "Remote - US" }, updated_at: "2026-08-04T20:00:00Z", absolute_url: "https://boards.greenhouse.io/acme/jobs/42" }, { token: "acme", company: "Acme" });
   assert.equal(result.source, "Greenhouse");
   assert.equal(result.company, "Acme");
   assert.equal(result.remote, true);
   assert.equal(result.sourceUrl, "https://boards.greenhouse.io/acme/jobs/42");
+  assert.match(result.summary, /About us Build products with SQL & Azure/);
+  assert.doesNotMatch(result.summary, /&lt;|<h2>/);
 });

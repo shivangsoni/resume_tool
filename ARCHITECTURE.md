@@ -52,17 +52,17 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 
 1. Azure Functions retrieves current jobs from configured Greenhouse boards and Remotive, normalizes them, and synchronizes searchable metadata to SQL.
 2. The browser queries `/api/jobs`, filters results, and displays source provenance and direct employer URLs.
-3. **Simple Apply** creates a SQL `review` application snapshot before opening the employer form in a new tab.
-4. The candidate reviews and completes employer questions, consent, CAPTCHA, and final submission.
-5. The candidate confirms submission in ApplyPilot, which records timestamps and advances through submitted, interview, offer, rejected, or failed.
+3. **Simple Apply** creates a SQL `review` queue record containing the job and saved profile answers without navigating away from ApplyPilot.
+4. The queue waits for an authorized provider-specific submission channel. Unsupported sources remain queued and are not represented as submitted.
+5. An employer receipt advances the record to submitted; subsequent events advance through interview, offer, rejected, or failed.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Discovered
     Discovered --> Review: candidate selects job
-    Review --> EmployerForm: open supported employer flow
-    EmployerForm --> Review: unresolved question or consent
-    EmployerForm --> Submitted: employer confirms receipt
+    Review --> ProviderQueue: queue saved profile
+    ProviderQueue --> Review: unresolved question or unsupported provider
+    ProviderQueue --> Submitted: employer confirms receipt
     Submitted --> Interview
     Submitted --> Rejected
     Interview --> Offer

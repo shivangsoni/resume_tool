@@ -15,6 +15,17 @@ export type Profile = {
   preferredLocations: string;
   minSalary: string;
   experienceLevel: string;
+  country: string;
+  state: string;
+  city: string;
+  address: string;
+  postalCode: string;
+  github: string;
+  educationLevel: string;
+  employmentTypes: string;
+  preferredLanguages: string;
+  companiesToExclude: string;
+  additionalInfo: string;
 };
 
 export type Application = {

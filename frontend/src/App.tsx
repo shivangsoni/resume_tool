@@ -3,12 +3,16 @@ import {
   BarChart3,
   Briefcase,
   Check,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   FileText,
+  CreditCard,
   LayoutDashboard,
   MapPin,
+  Mail,
   Search,
+  Settings,
   SlidersHorizontal,
   Upload,
   UserRound,
@@ -27,9 +31,9 @@ import {
   uploadResume,
 } from "./api";
 import type { Application, Profile } from "./types";
-import { matchesJob } from "./job-filter";
+import { matchesJob, paginateJobs } from "./job-filter";
 
-type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile";
+type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings";
 type Job = {
   id: number;
   company: string;
@@ -41,7 +45,7 @@ type Job = {
   salary: string;
   level: string;
   remote: boolean;
-  status: "ready" | "applied" | "failed";
+  status: "ready" | "queued" | "applied" | "failed";
   summary: string;
   skills: string[];
   sourceUrl?: string;
@@ -54,11 +58,13 @@ export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [selected, setSelected] = useState(0);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | "ready" | "applied" | "failed">(
+  const [status, setStatus] = useState<"all" | "ready" | "queued" | "applied" | "failed">(
     "all",
   );
   const [source, setSource] = useState("all");
   const [workplace, setWorkplace] = useState("all");
+  const [locationFilter, setLocationFilter] = useState("");
+  const [jobPage, setJobPage] = useState(1);
   const [dismissed, setDismissed] = useState<number[]>([]);
   const [profile, setProfile] = useState(loadProfile);
   const [toast, setToast] = useState("");
@@ -133,6 +139,8 @@ export default function App() {
             application &&
             ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
+              : application?.status === "review"
+                ? ("queued" as const)
               : application?.status === "failed"
                 ? ("failed" as const)
                 : ("ready" as const),
@@ -145,11 +153,13 @@ export default function App() {
       displayJobs.filter(
         (j) =>
           !dismissed.includes(j.id) &&
-          matchesJob(j, query, status, source, workplace),
+          matchesJob(j, query, status, source, workplace, locationFilter),
       ),
-    [dismissed, status, source, workplace, query, displayJobs],
+    [dismissed, status, source, workplace, locationFilter, query, displayJobs],
   );
-  const job = displayJobs.find((j) => j.id === selected) || visible[0];
+  const pagination = paginateJobs(visible, jobPage);
+  const { page: safePage, pageCount, jobs: pagedJobs } = pagination;
+  const job = pagedJobs.find((j) => j.id === selected) || pagedJobs[0];
   return (
     <div className="sa-shell">
       <aside className="sa-side">
@@ -240,6 +250,14 @@ export default function App() {
             <WandSparkles /> ApplyPilot
           </div>
           <div className="header-spacer" />
+          <nav className="top-nav" aria-label="Primary navigation">
+            <button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</button>
+            <button className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")}><Mail /> Email Inbox</button>
+            <button className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</button>
+            <button className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</button>
+            <button className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</button>
+            <button className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</button>
+          </nav>
           {!authReady ? (
             <span className="auth-label">Checking account…</span>
           ) : currentUser ? (
@@ -260,19 +278,25 @@ export default function App() {
         </header>
         {page === "dashboard" && (
           <Dashboard
-            visible={visible}
+            visible={pagedJobs}
             allJobs={displayJobs}
+            filteredCount={visible.length}
+            page={safePage}
+            pageCount={pageCount}
+            setPage={setJobPage}
             selected={selected}
             setSelected={setSelected}
             job={job}
             query={query}
-            setQuery={setQuery}
+            setQuery={(value) => { setQuery(value); setJobPage(1); }}
             status={status}
-            setStatus={setStatus}
+            setStatus={(value) => { setStatus(value); setJobPage(1); }}
             source={source}
-            setSource={setSource}
+            setSource={(value) => { setSource(value); setJobPage(1); }}
             workplace={workplace}
-            setWorkplace={setWorkplace}
+            setWorkplace={(value) => { setWorkplace(value); setJobPage(1); }}
+            locationFilter={locationFilter}
+            setLocationFilter={(value) => { setLocationFilter(value); setJobPage(1); }}
             feedState={feedState}
             feedError={feedError}
             retry={() => {
@@ -290,18 +314,13 @@ export default function App() {
                 return;
               }
               try {
-                const result = await createApplication(j, {
-                  workAuthorization: profile.workAuthorization,
-                  sponsorship: profile.sponsorship,
-                });
+                const result = await createApplication(j, { ...profile });
                 setApplications((items) => [
                   result.application,
                   ...items.filter((item) => item.id !== result.application.id),
                 ]);
-                window.open(j.sourceUrl, "_blank", "noopener,noreferrer");
-                setPage("applications");
                 notify(
-                  "Review saved. Complete the employer form, then confirm submission here.",
+                  "Application queued using your saved profile. It is not marked submitted until an employer confirms receipt.",
                 );
               } catch (error) {
                 notify(
@@ -398,6 +417,12 @@ export default function App() {
             }}
           />
         )}
+        {page === "search" && (
+          <JobSearchPage query={query} setQuery={setQuery} location={locationFilter} setLocation={setLocationFilter} search={() => setPage("dashboard")} />
+        )}
+        {page === "inbox" && <InboxPage />}
+        {page === "credits" && <CreditsPage queued={applications.filter((item) => item.status === "review").length} />}
+        {page === "settings" && <SettingsPage />}
       </main>
       {toast && (
         <div className="toast">
@@ -434,17 +459,23 @@ function Side({
 function Dashboard(p: {
   visible: Job[];
   allJobs: Job[];
+  filteredCount: number;
+  page: number;
+  pageCount: number;
+  setPage: (page: number) => void;
   selected: number;
   setSelected: (n: number) => void;
   job?: Job;
   query: string;
   setQuery: (s: string) => void;
-  status: "all" | "ready" | "applied" | "failed";
-  setStatus: (s: "all" | "ready" | "applied" | "failed") => void;
+  status: "all" | "ready" | "queued" | "applied" | "failed";
+  setStatus: (s: "all" | "ready" | "queued" | "applied" | "failed") => void;
   source: string;
   setSource: (source: string) => void;
   workplace: string;
   setWorkplace: (workplace: string) => void;
+  locationFilter: string;
+  setLocationFilter: (location: string) => void;
   feedState: "loading" | "live" | "error";
   feedError: string;
   retry: () => void;
@@ -469,6 +500,12 @@ function Dashboard(p: {
         </div>
       </section>
       <div className="metric-row">
+        <Metric
+          n={String(p.allJobs.filter((job) => job.status === "queued").length)}
+          label="Queued"
+          color="purple"
+          onClick={() => p.setStatus("queued")}
+        />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
@@ -506,6 +543,10 @@ function Dashboard(p: {
             onChange={(e) => p.setQuery(e.target.value)}
           />
         </div>
+        <div className="searchbox location-filter">
+          <MapPin />
+          <input placeholder="Filter by location" value={p.locationFilter} onChange={(e) => p.setLocationFilter(e.target.value)} />
+        </div>
         <select value={p.source} onChange={(e) => p.setSource(e.target.value)} aria-label="Job source">
           <option value="all">All sources</option>
           {[...new Set(p.allJobs.map((job) => job.source).filter(Boolean))].sort().map((source) => (
@@ -523,6 +564,7 @@ function Dashboard(p: {
         >
           <option value="all">All matches</option>
           <option value="ready">Not applied</option>
+          <option value="queued">Queued</option>
           <option value="applied">Applied</option>
           <option value="failed">Failed</option>
         </select>
@@ -539,7 +581,7 @@ function Dashboard(p: {
       <div className="job-layout">
         <section className="job-list">
           <div className="list-head">
-            <b>{p.visible.length} matches</b>
+            <b>Showing {p.visible.length} of {p.filteredCount} matches</b>
             <span>
               Sorted by best match <ChevronDown />
             </span>
@@ -569,6 +611,13 @@ function Dashboard(p: {
                     ? "Retry the API request above."
                     : "Try changing your search or filters."}
               </span>
+            </div>
+          )}
+          {p.filteredCount > 0 && (
+            <div className="pagination" aria-label="Job pages">
+              <button disabled={p.page === 1} onClick={() => p.setPage(p.page - 1)}><ChevronLeft /> Previous</button>
+              <span>Page {p.page} of {p.pageCount}</span>
+              <button disabled={p.page === p.pageCount} onClick={() => p.setPage(p.page + 1)}>Next <ChevronRight /></button>
             </div>
           )}
         </section>
@@ -767,18 +816,9 @@ function Applications({
             </span>
             <div className="application-actions">
               {application.status === "review" && (
-                <>
-                  <a
-                    href={application.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open employer form
-                  </a>
-                  <button onClick={() => update(application.id, "submitted")}>
-                    Confirm submitted
-                  </button>
-                </>
+                <span className="queued-message">
+                  Queued with your saved profile; awaiting a supported employer submission channel.
+                </span>
               )}
               {application.status === "submitted" && (
                 <button onClick={() => update(application.id, "interview")}>
@@ -861,6 +901,59 @@ function Resume({
     </div>
   );
 }
+
+function JobSearchPage({ query, setQuery, location, setLocation, search }: { query: string; setQuery: (value: string) => void; location: string; setLocation: (value: string) => void; search: () => void }) {
+  return (
+    <div className="simple-page narrow-page">
+      <div className="page-heading"><h1>Job Search <em>BETA</em></h1><p>Search current opportunities using the same live feed as your dashboard.</p></div>
+      <section className="simple-card search-panel">
+        <h2><Search /> Search Jobs</h2>
+        <label>Job title, company, or skill<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Software Engineer, React, Azure…" /></label>
+        <label>Location<input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote, Seattle, United States…" /></label>
+        <button className="orange-action" onClick={search}><Search /> Search jobs</button>
+      </section>
+    </div>
+  );
+}
+
+function InboxPage() {
+  return (
+    <div className="simple-page">
+      <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Application messages received through a connected mailbox appear here.</p></div>
+      <div className="info-banner">A mailbox provider is not connected yet. No emails are fabricated or copied from another account.</div>
+      <section className="simple-card empty-feature"><Mail /><h2>Connect an inbox</h2><p>Add a Gmail or Outlook integration before application confirmations and recruiter replies can be synchronized.</p><button disabled>Mailbox integration required</button></section>
+    </div>
+  );
+}
+
+function CreditsPage({ queued }: { queued: number }) {
+  return (
+    <div className="simple-page narrow-page">
+      <section className="simple-card credits-card"><CreditCard /><h1>Applications & usage</h1><strong>{queued}</strong><p>applications currently queued for review</p><hr /><h2>No artificial credit limit</h2><p>ApplyPilot does not sell or invent credits. Azure usage remains governed by your subscription budget.</p></section>
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const initial = () => {
+    try { return JSON.parse(localStorage.getItem("applypilot.settings") || "{}") as Record<string, boolean>; }
+    catch { return {}; }
+  };
+  const [settings, setSettings] = useState({ jobAlerts: true, weeklySummary: true, profileReminders: true, ...initial() });
+  const toggle = (key: keyof typeof settings) => {
+    const next = { ...settings, [key]: !settings[key] };
+    setSettings(next);
+    localStorage.setItem("applypilot.settings", JSON.stringify(next));
+  };
+  return (
+    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings /> Settings</h1><p>Manage local notification preferences.</p>{([
+      ["jobAlerts", "Daily job alerts", "Show new matching roles when you return"],
+      ["weeklySummary", "Weekly application summary", "Summarize queued and submitted applications"],
+      ["profileReminders", "Profile improvement reminders", "Prompt when important profile fields are blank"],
+    ] as const).map(([key, title, description]) => <div className="setting-row" key={key}><div><b>{title}</b><small>{description}</small></div><button className={`switch ${settings[key] ? "on" : ""}`} onClick={() => toggle(key)} aria-pressed={settings[key]}><i /></button></div>)}</section></div>
+  );
+}
+
 function Preferences({
   profile,
   setProfile,
@@ -934,9 +1027,9 @@ function ProfileView({
   save: () => void;
 }) {
   return (
-    <div className="basic-page">
-      <h1>Application Profile</h1>
-      <p>These details are reused when applications ask common questions.</p>
+    <div className="basic-page screenshot-profile">
+      <h1>Profile Information</h1>
+      <p>These details are reused when applications ask common questions. Review extracted resume data before queueing applications.</p>
       <div className="settings-card profile-grid">
         {(
           [
@@ -945,11 +1038,26 @@ function ProfileView({
             "email",
             "phone",
             "location",
+            "country",
+            "state",
+            "city",
+            "address",
+            "postalCode",
             "linkedin",
+            "github",
             "portfolio",
             "workAuthorization",
             "sponsorship",
             "skills",
+            "targetRoles",
+            "preferredLocations",
+            "employmentTypes",
+            "experienceLevel",
+            "minSalary",
+            "educationLevel",
+            "preferredLanguages",
+            "companiesToExclude",
+            "additionalInfo",
           ] as (keyof Profile)[]
         ).map((k) => (
           <label key={k}>

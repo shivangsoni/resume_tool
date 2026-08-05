@@ -70,8 +70,12 @@ Verified production checks:
 - `/api/health` returns `status: ok` with Azure SQL connected.
 - `/api/jobs` returns current Greenhouse and Remotive listings.
 - The frontend follows paginated job responses (100 per request) until the complete feed is loaded; API responses include `offset`, `limit`, `total`, and `nextOffset`.
+- After combined filtering, the dashboard displays exactly 10 jobs per UI page with Previous/Next navigation and an accurate result count.
 - Job search covers title, company, location, description, skills, and source. Status, source, and workplace filters can be combined.
+- Upstream HTML and encoded Greenhouse markup are normalized into readable plain-text job summaries before rendering.
+- Location text filtering is case-insensitive and combines with every other job filter.
 - Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
+- The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
 - Database migrations `001_initial` through `006_resume_extraction` are applied.
 - The Function App is linked to Static Web Apps; its direct public endpoint is protected.
@@ -82,10 +86,9 @@ Verified production checks:
 
 1. Sign in with Microsoft through Static Web Apps authentication.
 2. Upload a PDF or DOCX resume (maximum 4 MB on the F0 tier). ApplyPilot extracts reusable details into blank profile fields for review.
-3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record and opens the employer's source form.
-4. Review and complete the employer form yourself.
-5. Return to **Applications** and choose **Confirm submitted** only after the employer accepts it.
-6. Track subsequent `interview`, `offer`, or `rejected` states in SQL.
+3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` queue record with the complete saved profile snapshot and stays inside the portal.
+4. The application remains visibly queued until an authorized provider integration returns an employer receipt. A queue record is never represented as a submission.
+5. Track employer-confirmed `submitted`, `interview`, `offer`, or `rejected` states in SQL when a supported channel supplies those events.
 
 ### Deployment documentation policy
 

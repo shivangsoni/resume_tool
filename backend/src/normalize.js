@@ -1,4 +1,7 @@
-const stripHtml = (html = "") => html.replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+const decodeEntities = (value = "") => value
+  .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"')
+  .replace(/&#39;|&apos;/gi, "'").replace(/&nbsp;|&#160;/gi, " ").replace(/&amp;/gi, "&");
+const stripHtml = (html = "") => decodeEntities(decodeEntities(html).replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 const titleCase = (value = "") => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const hash = (value) => [...String(value)].reduce((sum, char) => ((sum << 5) - sum + char.charCodeAt(0)) | 0, 0);
 
