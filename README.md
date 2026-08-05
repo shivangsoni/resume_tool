@@ -52,7 +52,7 @@ The deployment job uses a GitHub environment named `production`, which GitHub cr
 | `AZURE_TENANT_ID` | `80fa3d36-87ac-489f-890a-6f0b55870bc5` |
 | `AZURE_SUBSCRIPTION_ID` | `b5f1fa5f-c39f-4d7d-866c-57836fe7382f` |
 
-These values are not credentials and are safe to track. GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` already has a federated credential for `repo:shivangsoni/resume_tool:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
+These values are not credentials and are safe to track. GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
 
@@ -125,7 +125,7 @@ https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/google/callback
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/facebook/callback
 ```
 
-Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google will use `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` after activation. Static Web Apps custom authentication is Standard-tier only. Verify both redirect chains after every authentication change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
+Client IDs and secrets are stored in Static Web Apps application settings—never in this repository or the frontend bundle. Microsoft uses `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; Google uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; GitHub uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Static Web Apps custom authentication is Standard-tier only. Verify every redirect chain after any auth configuration change. A Google `redirect_uri_mismatch` means the OAuth Web Application is missing the exact callback URI shown above.
 
 Required external inputs:
 
