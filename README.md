@@ -68,6 +68,8 @@ The browser worker is first created with a public bootstrap image. After Azure a
 
 Database migrations are split on `GO` batch separators by `backend/scripts/migrate.js`. When a migration adds a column and then references it in a constraint, keep those statements in separate batches so Azure SQL compiles the constraint after the column exists.
 
+The SQL grant step reads the browser worker's managed-identity principal ID from Azure and creates or repairs its contained database user with an explicit SID. This avoids requiring the GitHub deployment identity to resolve service principals through Microsoft Graph and keeps the database user valid if the Container App is recreated.
+
 Run these commands from the repository root in PowerShell. Bicep provisions Azure resources; the backend and frontend deployment steps upload application code separately.
 
 ### Current development deployment

@@ -87,7 +87,10 @@ jobs:
           AZURE_SQL_SERVER: simplyapply.database.windows.net
           AZURE_SQL_DATABASE: applypilot
           WORKER_IDENTITY_NAME: ${{ env.BROWSER_WORKER }}
-        run: npm run grant-worker --prefix backend
+        run: |
+          worker_principal_id="$(az containerapp show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --query identity.principalId --output tsv)"
+          test -n "$worker_principal_id"
+          WORKER_PRINCIPAL_ID="$worker_principal_id" npm run grant-worker --prefix backend
 
       - name: Remove temporary SQL firewall rule
         if: always() && steps.sql_firewall.outputs.rule_name != ''
