@@ -95,7 +95,7 @@ Verified production checks:
 
 ### Authentication providers
 
-Microsoft delegated sign-in is active at `/.auth/login/aad` through a custom Entra registration. Google remains disabled until its OAuth client allowlists the exact callback URI and its exposed secret has been rotated. Static Web Apps disables every preconfigured provider as soon as one custom registration is configured, so Microsoft must remain in the custom configuration when Google is added. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+Microsoft and Google delegated sign-in are configured at `/.auth/login/aad` and `/.auth/login/google`. Both use custom provider registrations because Static Web Apps disables every preconfigured provider as soon as one custom registration is configured. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
 
 Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until both providers are configured and tested. Register these callbacks with the providers:
 

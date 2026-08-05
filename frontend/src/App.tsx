@@ -932,11 +932,10 @@ function AuthPage() {
           <span className="microsoft-mark"><i /><i /><i /><i /></span>
           Continue with Microsoft
         </a>
-        <button className="provider-button" disabled title="Add the Azure callback URI in Google Cloud and rotate the exposed client secret">
+        <a className="provider-button" href="/.auth/login/google?post_login_redirect_uri=/">
           <span className="provider-letter google">G</span>
           Continue with Google
-          <small>Google callback setup required</small>
-        </button>
+        </a>
         <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
           <span className="provider-letter facebook">f</span>
           Continue with Facebook
