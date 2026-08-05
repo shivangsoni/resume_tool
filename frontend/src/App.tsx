@@ -44,81 +44,9 @@ type Job = {
   postedAt?: string;
 };
 
-const jobs: Job[] = [
-  {
-    id: 1,
-    company: "Clover Health",
-    logo: "C",
-    title: "Product Manager, Ambient Scribing",
-    location: "United States",
-    posted: "Jun 25",
-    match: 85,
-    salary: "$149K – $175K",
-    level: "Mid level",
-    remote: true,
-    status: "ready",
-    summary:
-      "Lead the strategy and execution of ambient clinical documentation products. Partner with engineering, design, and clinical teams to turn complex workflows into intuitive experiences.",
-    skills: [
-      "Product strategy",
-      "Roadmaps",
-      "Healthcare",
-      "Cross-functional leadership",
-    ],
-  },
-  {
-    id: 2,
-    company: "Highmark Health",
-    logo: "H",
-    title: "Senior Product Manager – Digital Health",
-    location: "Pittsburgh, PA",
-    posted: "Jul 2",
-    match: 92,
-    salary: "$126K – $182K",
-    level: "Senior level",
-    remote: true,
-    status: "ready",
-    summary:
-      "Own digital health product outcomes from discovery through launch, using customer insight and measurable experiments to improve member experiences.",
-    skills: ["Product management", "Analytics", "Agile", "B2C"],
-  },
-  {
-    id: 3,
-    company: "Notion",
-    logo: "N",
-    title: "Product Manager, Growth",
-    location: "San Francisco, CA",
-    posted: "Jul 30",
-    match: 89,
-    salary: "$180K – $240K",
-    level: "Mid level",
-    remote: false,
-    status: "applied",
-    summary:
-      "Build product-led growth experiences used by millions of teams. Identify opportunities across activation, engagement, and monetization.",
-    skills: ["Growth", "SQL", "Experimentation", "SaaS"],
-  },
-  {
-    id: 4,
-    company: "Included Health",
-    logo: "I",
-    title: "Product Manager, Member Experience",
-    location: "Remote — US",
-    posted: "Aug 1",
-    match: 81,
-    salary: "$135K – $190K",
-    level: "Mid level",
-    remote: true,
-    status: "ready",
-    summary:
-      "Create accessible member experiences across a fast-growing virtual care platform.",
-    skills: ["User research", "Healthcare", "Mobile", "Metrics"],
-  },
-];
-
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
-  const [selected, setSelected] = useState(1);
+  const [selected, setSelected] = useState(0);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "ready" | "applied" | "failed">(
     "all",
@@ -127,27 +55,37 @@ export default function App() {
   const [dismissed, setDismissed] = useState<number[]>([]);
   const [profile, setProfile] = useState(loadProfile);
   const [toast, setToast] = useState("");
-  const [liveJobs, setLiveJobs] = useState<Job[]>(jobs);
-  const [feedState, setFeedState] = useState<"loading" | "live" | "fallback">("loading");
+  const [liveJobs, setLiveJobs] = useState<Job[]>([]);
+  const [feedState, setFeedState] = useState<"loading" | "live" | "error">(
+    "loading",
+  );
+  const [feedError, setFeedError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${import.meta.env.VITE_API_BASE_URL || "/api"}/jobs?limit=50`, { signal: controller.signal })
+    fetch(`${import.meta.env.VITE_API_BASE_URL || "/api"}/jobs?limit=50`, {
+      signal: controller.signal,
+    })
       .then((response) => {
-        if (!response.ok) throw new Error(`Job API returned ${response.status}`);
+        if (!response.ok)
+          throw new Error(`Job API returned ${response.status}`);
         return response.json();
       })
       .then((result: { jobs?: Job[] }) => {
-        if (result.jobs?.length) {
-          setLiveJobs(result.jobs);
-          setSelected(result.jobs[0].id);
-          setFeedState("live");
-        } else setFeedState("fallback");
+        const incoming = result.jobs || [];
+        setLiveJobs(incoming);
+        setSelected(incoming[0]?.id || 0);
+        setFeedState("live");
       })
       .catch((error: Error) => {
-        if (error.name !== "AbortError") setFeedState("fallback");
+        if (error.name !== "AbortError") {
+          setLiveJobs([]);
+          setFeedError("We couldn't load current jobs from the API.");
+          setFeedState("error");
+        }
       });
     return () => controller.abort();
-  }, []);
+  }, [reloadKey]);
   const visible = useMemo(
     () =>
       liveJobs.filter(
@@ -184,7 +122,7 @@ export default function App() {
             label="Applications"
             active={page === "applications"}
             click={() => setPage("applications")}
-            count={70}
+            count={liveJobs.filter((item) => item.status === "applied").length}
           />
           <Side
             icon={<FileText />}
@@ -209,10 +147,17 @@ export default function App() {
           <div className="usage">
             <div>
               <span>Weekly applications</span>
-              <b>70 / 100</b>
+              <b>
+                {liveJobs.filter((item) => item.status === "applied").length} /
+                100
+              </b>
             </div>
             <i>
-              <em />
+              <em
+                style={{
+                  width: `${Math.min(liveJobs.filter((item) => item.status === "applied").length, 100)}%`,
+                }}
+              />
             </i>
             <small>Resets Monday</small>
           </div>
@@ -252,6 +197,7 @@ export default function App() {
         {page === "dashboard" && (
           <Dashboard
             visible={visible}
+            allJobs={liveJobs}
             selected={selected}
             setSelected={setSelected}
             job={job}
@@ -259,8 +205,14 @@ export default function App() {
             setQuery={setQuery}
             status={status}
             setStatus={setStatus}
-          auto={auto}
-          feedState={feedState}
+            auto={auto}
+            feedState={feedState}
+            feedError={feedError}
+            retry={() => {
+              setFeedState("loading");
+              setFeedError("");
+              setReloadKey((value) => value + 1);
+            }}
             setAuto={setAuto}
             dismiss={(id) => {
               setDismissed([...dismissed, id]);
@@ -271,7 +223,11 @@ export default function App() {
             }
           />
         )}
-        {page === "applications" && <Applications />}
+        {page === "applications" && (
+          <Applications
+            jobs={liveJobs.filter((item) => item.status === "applied")}
+          />
+        )}
         {page === "resume" && <Resume />}
         {page === "preferences" && <Preferences />}
         {page === "profile" && (
@@ -319,6 +275,7 @@ function Side({
 
 function Dashboard(p: {
   visible: Job[];
+  allJobs: Job[];
   selected: number;
   setSelected: (n: number) => void;
   job?: Job;
@@ -327,7 +284,9 @@ function Dashboard(p: {
   status: "all" | "ready" | "applied" | "failed";
   setStatus: (s: "all" | "ready" | "applied" | "failed") => void;
   auto: boolean;
-  feedState: "loading" | "live" | "fallback";
+  feedState: "loading" | "live" | "error";
+  feedError: string;
+  retry: () => void;
   setAuto: (b: boolean) => void;
   dismiss: (n: number) => void;
   apply: (j: Job) => void;
@@ -337,7 +296,16 @@ function Dashboard(p: {
       <section className="dash-top">
         <div>
           <h1>Job Matches</h1>
-          <p>AI-matched opportunities based on your résumé and preferences. <span className={`feed ${p.feedState}`}>{p.feedState === "live" ? "Live data" : p.feedState === "loading" ? "Loading live jobs…" : "Demo data"}</span></p>
+          <p>
+            AI-matched opportunities based on your résumé and preferences.{" "}
+            <span className={`feed ${p.feedState}`}>
+              {p.feedState === "live"
+                ? "Live API data"
+                : p.feedState === "loading"
+                  ? "Loading current jobs…"
+                  : "API unavailable"}
+            </span>
+          </p>
         </div>
         <div className="auto-box">
           <div className="pulse">
@@ -361,19 +329,19 @@ function Dashboard(p: {
       </section>
       <div className="metric-row">
         <Metric
-          n="338"
+          n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
           color="purple"
           onClick={() => p.setStatus("ready")}
         />
         <Metric
-          n="70"
+          n={String(p.allJobs.filter((job) => job.status === "applied").length)}
           label="Applied"
           color="green"
           onClick={() => p.setStatus("applied")}
         />
         <Metric
-          n="5"
+          n={String(p.allJobs.filter((job) => job.status === "failed").length)}
           label="Failed"
           color="red"
           onClick={() => p.setStatus("failed")}
@@ -413,6 +381,15 @@ function Dashboard(p: {
           <option value="failed">Failed</option>
         </select>
       </div>
+      {p.feedState === "error" && (
+        <div className="feed-error">
+          <div>
+            <b>Current jobs are unavailable</b>
+            <span>{p.feedError}</span>
+          </div>
+          <button onClick={p.retry}>Try again</button>
+        </div>
+      )}
       <div className="job-layout">
         <section className="job-list">
           <div className="list-head">
@@ -432,8 +409,20 @@ function Dashboard(p: {
           {!p.visible.length && (
             <div className="no-results">
               <Search />
-              <b>No matching jobs</b>
-              <span>Try changing your search or filters.</span>
+              <b>
+                {p.feedState === "loading"
+                  ? "Loading current jobs"
+                  : p.feedState === "error"
+                    ? "Job API unavailable"
+                    : "No matching jobs"}
+              </b>
+              <span>
+                {p.feedState === "loading"
+                  ? "Fetching the newest employer listings…"
+                  : p.feedState === "error"
+                    ? "Retry the API request above."
+                    : "Try changing your search or filters."}
+              </span>
             </div>
           )}
         </section>
@@ -476,7 +465,9 @@ function JobRow({
 }) {
   return (
     <button className={`job-row ${active ? "active" : ""}`} onClick={click}>
-      <span className="job-logo">{j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}</span>
+      <span className="job-logo">
+        {j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}
+      </span>
       <div className="job-main">
         <div>
           <b>{j.title}</b>
@@ -517,7 +508,9 @@ function JobDetail({
   return (
     <section className="job-detail">
       <div className="detail-top">
-        <span className="big-logo">{job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}</span>
+        <span className="big-logo">
+          {job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}
+        </span>
         <div>
           <h2>{job.title}</h2>
           <p>
@@ -568,7 +561,16 @@ function JobDetail({
           <WandSparkles /> Simple Apply
         </button>
       </div>
-      {job.sourceUrl && <a className="source-link" href={job.sourceUrl} target="_blank" rel="noreferrer">View original listing{job.source ? ` on ${job.source}` : ""}</a>}
+      {job.sourceUrl && (
+        <a
+          className="source-link"
+          href={job.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          View original listing{job.source ? ` on ${job.source}` : ""}
+        </a>
+      )}
       <div className="safe-note">
         <Check /> You’ll review all answers before submission
       </div>
@@ -576,7 +578,7 @@ function JobDetail({
   );
 }
 
-function Applications() {
+function Applications({ jobs: appliedJobs }: { jobs: Job[] }) {
   return (
     <div className="basic-page">
       <h1>Applications</h1>
@@ -587,23 +589,30 @@ function Applications() {
           <span>STATUS</span>
           <span>DATE</span>
         </div>
-        {jobs
-          .filter((j) => j.status === "applied")
-          .map((j) => (
-            <div className="table-row" key={j.id}>
+        {appliedJobs.length === 0 && (
+          <div className="no-results">
+            <Briefcase />
+            <b>No submitted applications yet</b>
+            <span>
+              Applications submitted through the API will appear here.
+            </span>
+          </div>
+        )}
+        {appliedJobs.map((j) => (
+          <div className="table-row" key={j.id}>
+            <div>
+              <span className="job-logo">{j.logo}</span>
               <div>
-                <span className="job-logo">{j.logo}</span>
-                <div>
-                  <b>{j.title}</b>
-                  <small>{j.company}</small>
-                </div>
+                <b>{j.title}</b>
+                <small>{j.company}</small>
               </div>
-              <span className="success-pill">
-                <Check /> Applied
-              </span>
-              <time>Jul 30, 2026</time>
             </div>
-          ))}
+            <span className="success-pill">
+              <Check /> Applied
+            </span>
+            <time>Jul 30, 2026</time>
+          </div>
+        ))}
       </div>
     </div>
   );

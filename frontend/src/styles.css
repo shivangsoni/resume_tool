@@ -230,9 +230,58 @@ select {
   color: #667085;
   font-size: 12px;
 }
-.feed { display: inline-block; margin-left: 7px; padding: 3px 7px; border-radius: 10px; font-size: 8px; font-weight: 700; background: #fff1d6; color: #936000; }
-.feed.live { background: #e7f8ee; color: #168a54; }
-.feed.loading { background: #ede9fe; color: #694fc9; }
+.feed {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 3px 7px;
+  border-radius: 10px;
+  font-size: 8px;
+  font-weight: 700;
+  background: #fff1d6;
+  color: #936000;
+}
+.feed.live {
+  background: #e7f8ee;
+  color: #168a54;
+}
+.feed.loading {
+  background: #ede9fe;
+  color: #694fc9;
+}
+.feed.error {
+  background: #fff0f0;
+  color: #b42318;
+}
+.feed-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 13px 15px;
+  border: 1px solid #f0caca;
+  border-radius: 9px;
+  background: #fff6f6;
+}
+.feed-error b,
+.feed-error span {
+  display: block;
+  font-size: 10px;
+}
+.feed-error span {
+  margin-top: 4px;
+  color: #8b5b5b;
+}
+.feed-error button {
+  border: 1px solid #e3b8b8;
+  border-radius: 7px;
+  background: white;
+  padding: 7px 11px;
+  color: #a22b2b;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
 .auto-box {
   display: flex;
   align-items: center;
@@ -484,7 +533,13 @@ select {
   color: #5f46c7;
   font-weight: 800;
 }
-.job-logo img, .big-logo img { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; }
+.job-logo img,
+.big-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
 .job-main {
   min-width: 0;
   flex: 1;
@@ -571,7 +626,13 @@ select {
   color: #98a2b3;
   margin-top: 17px;
 }
-.source-badge { display: block; margin-top: 4px; font-style: normal; color: #694fc9; font-size: 7px; }
+.source-badge {
+  display: block;
+  margin-top: 4px;
+  font-style: normal;
+  color: #694fc9;
+  font-size: 7px;
+}
 .job-detail {
   overflow: auto;
   position: relative;
@@ -737,8 +798,18 @@ select {
   width: 10px;
   vertical-align: middle;
 }
-.source-link { position: absolute; bottom: 8px; left: 22px; color: #694fc9; font-size: 8px; text-decoration: none; z-index: 1; }
-.source-link:hover { text-decoration: underline; }
+.source-link {
+  position: absolute;
+  bottom: 8px;
+  left: 22px;
+  color: #694fc9;
+  font-size: 8px;
+  text-decoration: none;
+  z-index: 1;
+}
+.source-link:hover {
+  text-decoration: underline;
+}
 .no-results {
   padding: 70px 20px;
   display: flex;
