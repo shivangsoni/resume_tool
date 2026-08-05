@@ -56,6 +56,8 @@ These values are not credentials and are safe to track. GitHub authenticates wit
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
 
+After publishing and restarting the Function App, CI/CD calls Azure's `syncfunctiontriggers` management operation. This is required when a release adds HTTP or queue-triggered Functions; a restart alone can leave the management-plane function index stale.
+
 The workflow is active after it is pushed to `main`. Production protection rules are optional but recommended before additional collaborators receive write access.
 
 ## Complete Azure deployment
