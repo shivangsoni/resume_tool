@@ -34,7 +34,7 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: replace(name, '-', '')
+  name: '${replace(name, '-', '')}w2'
   location: location
   tags: tags
   sku: { name: 'Basic' }

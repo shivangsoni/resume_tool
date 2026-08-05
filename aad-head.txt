@@ -1,0 +1,5 @@
+﻿HTTP/1.1 302 Found
+Date: Wed, 05 Aug 2026 21:00:25 GMT
+Location: https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/aad?post_login_redirect_uri=/.auth/complete&staticWebAppsAuthNonce=lFEhSDv4H9Dm23d06UKLGCdg%2bunsNIBjg%2bikcbzFCI7tfxMRQPQGxuMTPg2VrspygaaZAE5EbarRkGnoFeMIgMU4HnJiudtkHpecOWFOqkqEw13k87oICfgeKr5fdSuL
+Set-Cookie: StaticWebAppsAuthContextCookie=K4b9jW1XT3X9koir37QLfUnZJ/lb/0AcyvYfUmb0k7K7cXSvednDv9E4/rXwF3/OFYsrceKW53e/LQHkGzK/YffntSjNPpSWaGMpiuK869xP8G4XFVJyFFSQxAvq7yJnOqCRn8DfdSRO2a6WOLRB9P12ATm4JDxo6OneEtWWunIw3itUiDvjGE1xzQrVYc6beUFbno6lvjIjXKOQhMncD7QbmWJU9VUf5UWp4PLaeboWRzlQI35m+SufSB6x/1Iml1Xax+XPx9FSKu6e2wPzD2LiKdxBmSMHZGbzdIVEUXohE7p3EC5ZlDiKsHrfbCahGVeopzodXnCuLFDb+0rC1UJMtWiRmcWXBPomzfHqawit6K2w82VxEUyiIl5WJjHGMqHx+fWDLSdCXOezFdNQorReNvEvOTA5sRKEduAnrNpHtxmUOWp7QAZrg3KGRSmjGabU/M/RrGJ/kO4o8BwGeQ==; path=/; secure; HttpOnly; domain=blue-water-0d76ed710.7.azurestaticapps.net; expires=Wed, 05 Aug 2026 21:05:26 GMT; SameSite=None
+
