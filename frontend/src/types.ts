@@ -35,7 +35,15 @@ export type Application = {
   title: string;
   location: string;
   status:
-    "review" | "submitted" | "interview" | "offer" | "rejected" | "failed";
+    | "review"
+    | "queued"
+    | "processing"
+    | "needs_action"
+    | "submitted"
+    | "interview"
+    | "offer"
+    | "rejected"
+    | "failed";
   sourceUrl: string;
   source: string;
   updatedAt: string;

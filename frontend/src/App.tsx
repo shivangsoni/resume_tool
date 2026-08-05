@@ -12,7 +12,9 @@ import {
   LayoutDashboard,
   MapPin,
   Mail,
+  Maximize2,
   Minus,
+  Minimize2,
   Pencil,
   Plus,
   Search,
@@ -152,12 +154,11 @@ export default function App() {
         return {
           ...item,
           status:
-            application &&
-            ["submitted", "interview", "offer"].includes(application.status)
+            application && ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
-              : application?.status === "review"
+              : application && ["review", "queued", "processing"].includes(application.status)
                 ? ("queued" as const)
-              : application?.status === "failed"
+              : application && ["failed", "needs_action"].includes(application.status)
                 ? ("failed" as const)
                 : ("ready" as const),
         };
@@ -463,7 +464,7 @@ export default function App() {
           <JobSearchPage query={query} setQuery={setQuery} location={locationFilter} setLocation={setLocationFilter} search={() => setPage("dashboard")} />
         )}
         {page === "inbox" && <InboxPage />}
-        {page === "credits" && <CreditsPage queued={applications.filter((item) => item.status === "review").length} />}
+        {page === "credits" && <CreditsPage queued={applications.filter((item) => ["review", "queued", "processing"].includes(item.status)).length} />}
         {page === "settings" && <SettingsPage />}
         {page === "auth" && <AuthPage />}
       </main>
@@ -905,6 +906,7 @@ function Resume({
   const [previewError, setPreviewError] = useState("");
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
   const selected = documents.find((item) => item.id === selectedId) || documents[0] || null;
 
   useEffect(() => {
@@ -947,7 +949,7 @@ function Resume({
   };
 
   return (
-    <div className="basic-page">
+    <div className="basic-page resume-page">
       <h1>Résumés</h1>
       <p>Upload, select, rename, download, and review résumé versions. Uploading never changes your profile automatically.</p>
       <div className="resume-library">
@@ -980,12 +982,13 @@ function Resume({
             ))}
           </div>
         </section>
-        <section className="resume-preview simple-card">
+        <section className={`resume-preview simple-card ${fullScreen ? "fullscreen" : ""}`}>
           <div className="resume-preview-toolbar">
             <h2>{selected ? selected.fileName : "Preview"}</h2>
             {selected && <div>
               <button disabled={busy} onClick={() => void renameSelected()}><Pencil /> Rename</button>
               <button disabled={busy} onClick={() => void download()}><Download /> Download</button>
+              <button onClick={() => setFullScreen((value) => !value)} title={fullScreen ? "Exit full screen" : "View full screen"}>{fullScreen ? <Minimize2 /> : <Maximize2 />} {fullScreen ? "Exit" : "Full screen"}</button>
               {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Minus /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Plus /></button></>}
             </div>}
           </div>

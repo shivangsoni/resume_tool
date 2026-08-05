@@ -871,6 +871,7 @@ select {
   padding: 36px;
   max-width: 1000px;
 }
+.resume-page { max-width: none; width: 100%; }
 .table-card,
 .upload-card,
 .settings-card {
@@ -1017,6 +1018,19 @@ select {
 .resume-delete { border: 0; background: transparent; color: #d92d20; padding: 10px; }
 .resume-delete svg { width: 18px; }
 .resume-preview { overflow: auto; min-height: 680px; max-height: calc(100vh - 180px); }
+.resume-preview.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  max-height: none;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 20px;
+  background: #e9edf3;
+}
+.resume-preview.fullscreen .resume-preview-toolbar { top: -20px; padding-inline: 12px; }
 .resume-preview-toolbar {
   display: flex;
   align-items: center;
