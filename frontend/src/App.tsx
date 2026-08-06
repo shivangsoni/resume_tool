@@ -59,6 +59,14 @@ import { matchesJob, paginateJobs } from "./job-filter";
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
+const productTourSteps = [
+  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
+  { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
+  { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
+  { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
+  { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
+  { page: "preferences" as const, title: "Preferences", body: "Set target titles, locations, and workplace types to improve match quality." },
+];
 type Job = {
   id: number;
   company: string;
@@ -88,7 +96,9 @@ type Job = {
 
 export default function App() {
   const routePath = window.location.pathname.toLowerCase();
-  const [page, setPage] = useState<Page>("dashboard");
+  const linkedApplicationId = new URLSearchParams(window.location.search).get("application");
+  const [page, setPage] = useState<Page>(linkedApplicationId ? "applications" : "dashboard");
+  const [focusedApplicationId, setFocusedApplicationId] = useState(linkedApplicationId);
   const [selected, setSelected] = useState(0);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "ready" | "queued" | "applied" | "failed">(
@@ -337,7 +347,7 @@ export default function App() {
                 if (!import.meta.env.DEV) return;
                 event.preventDefault();
                 setDevSignedIn(false);
-                location.href = "/logged-out";
+                window.location.assign("/logged-out");
               }}
             >
               Sign out
@@ -345,7 +355,7 @@ export default function App() {
           ) : (
             <button
               className="upgrade"
-              onClick={() => { location.href = "/login"; }}
+              onClick={() => { window.location.assign("/login"); }}
             >
               <UserRound /> Sign in
             </button>
@@ -385,7 +395,7 @@ export default function App() {
             }}
             apply={async (j) => {
               if (!currentUser) {
-                location.href = "/.auth/login/aad?post_login_redirect_uri=/dashboard";
+                window.location.assign("/.auth/login/aad?post_login_redirect_uri=/dashboard");
                 return;
               }
               try {
@@ -415,6 +425,7 @@ export default function App() {
         {page === "applications" && (
           <Applications
             applications={applications}
+            focusedApplicationId={focusedApplicationId}
             update={async (id, nextStatus) => {
               try {
                 const result = await updateApplication(id, nextStatus);
@@ -439,7 +450,7 @@ export default function App() {
             documents={resumeDocuments}
             upload={async (file) => {
               if (!currentUser) {
-                location.href = "/.auth/login/aad?post_login_redirect_uri=/dashboard";
+                window.location.assign("/.auth/login/aad?post_login_redirect_uri=/dashboard");
                 return;
               }
               try {
@@ -520,7 +531,10 @@ export default function App() {
         {page === "search" && (
           <JobSearchPage query={query} setQuery={setQuery} location={locationFilter} setLocation={setLocationFilter} search={() => setPage("dashboard")} />
         )}
-        {page === "inbox" && <InboxPage />}
+        {page === "inbox" && <InboxPage openApplication={(applicationId) => {
+          setFocusedApplicationId(applicationId);
+          setPage("applications");
+        }} />}
         {page === "credits" && <CreditsPage queued={applications.filter((item) => ["review", "queued", "processing"].includes(item.status)).length} />}
         {page === "settings" && <SettingsPage />}
         {page === "auth" && <AuthPage />}
@@ -967,15 +981,22 @@ function JobDetail({
 
 function Applications({
   applications,
+  focusedApplicationId,
   update,
   resolve,
   profile,
 }: {
   applications: Application[];
+  focusedApplicationId: string | null;
   update: (id: string, status: Application["status"]) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   profile: Profile;
 }) {
+  useEffect(() => {
+    if (!focusedApplicationId) return;
+    document.getElementById(`application-${focusedApplicationId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedApplicationId]);
+
   return (
     <div className="basic-page">
       <h1>Applications</h1>
@@ -994,7 +1015,7 @@ function Applications({
           </div>
         )}
         {applications.map((application) => (
-          <div className="table-row application-row" key={application.id}>
+          <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
               <span className="job-logo">
                 {application.company?.slice(0, 1) || "?"}
@@ -1330,10 +1351,10 @@ function AuthPage() {
   const continueWith = (provider: { id: string; href: string }) => {
     if (import.meta.env.DEV) {
       setDevSignedIn(true);
-      location.href = "/dashboard";
+      window.location.assign("/dashboard");
       return;
     }
-    location.href = provider.href;
+    window.location.assign(provider.href);
   };
   return (
     <div className="auth-page">
@@ -1373,14 +1394,6 @@ function ProductTour({
   page: Page;
   setPage: (page: Page) => void;
 }) {
-  const steps = [
-    { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
-    { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
-    { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
-    { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
-    { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
-    { page: "preferences" as const, title: "Preferences", body: "Set target titles, locations, and workplace types to improve match quality." },
-  ];
   const [open, setOpen] = useState(() => {
     try { return localStorage.getItem("applypilot.tour.done") !== "1"; } catch { return true; }
   });
@@ -1391,10 +1404,10 @@ function ProductTour({
     return () => window.removeEventListener("applypilot:start-tour", start);
   }, []);
   useEffect(() => {
-    if (open) setPage(steps[index].page);
-  }, [open, index]);
+    if (open) setPage(productTourSteps[index].page);
+  }, [open, index, setPage]);
   if (!open) return null;
-  const step = steps[index];
+  const step = productTourSteps[index];
   const finish = () => {
     try { localStorage.setItem("applypilot.tour.done", "1"); } catch { /* ignore */ }
     setOpen(false);
@@ -1402,13 +1415,13 @@ function ProductTour({
   return (
     <div className="tour-overlay" role="dialog" aria-modal="true" aria-label="ApplyPilot walkthrough">
       <div className="tour-card">
-        <small>Step {index + 1} of {steps.length}</small>
+        <small>Step {index + 1} of {productTourSteps.length}</small>
         <h2>{step.title}</h2>
         <p>{step.body}</p>
         <div className="tour-actions">
           <button className="not" onClick={finish}>Skip</button>
           {index > 0 && <button className="not" onClick={() => setIndex((value) => value - 1)}>Back</button>}
-          {index < steps.length - 1 ? (
+          {index < productTourSteps.length - 1 ? (
             <button className="apply" onClick={() => setIndex((value) => value + 1)}>Next</button>
           ) : (
             <button className="apply" onClick={finish}>Done</button>
@@ -1440,14 +1453,14 @@ function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
     if (!import.meta.env.DEV) return;
     event.preventDefault();
     setDevSignedIn(false);
-    location.href = "/logged-out";
+    window.location.assign("/logged-out");
   };
   return (
     <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><WandSparkles /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Check /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href={logoutHref} onClick={onDevLogout}>Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
   );
 }
 
-function InboxPage() {
+function InboxPage({ openApplication }: { openApplication: (applicationId: string) => void }) {
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [address, setAddress] = useState<string | null>(null);
   const [routingNote, setRoutingNote] = useState("");
@@ -1480,7 +1493,7 @@ function InboxPage() {
       {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
-          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p><pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
+          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
         </section>
       )}
     </div>

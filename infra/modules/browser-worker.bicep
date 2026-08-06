@@ -8,6 +8,10 @@ param storageAccountName string
 param image string
 param postmarkInboundAddress string = ''
 param mailboxDomain string = ''
+param emailEndpoint string
+param emailSenderAddress string
+param deploymentEnvironment string = 'production'
+param applicationBaseUrl string
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -82,6 +86,10 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           { name: 'AZURE_CLIENT_ID', value: workerIdentity.properties.clientId }
           { name: 'POSTMARK_INBOUND_ADDRESS', value: postmarkInboundAddress }
           { name: 'MAILBOX_DOMAIN', value: mailboxDomain }
+          { name: 'EMAIL_COMMUNICATION_ENDPOINT', value: emailEndpoint }
+          { name: 'EMAIL_SENDER_ADDRESS', value: emailSenderAddress }
+          { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
+          { name: 'APPLICATION_BASE_URL', value: applicationBaseUrl }
         ]
         resources: {
           cpu: json('1.0')

@@ -58,6 +58,11 @@ function environmentMarker() {
   };
 }
 
+function applicationUrl(applicationId) {
+  const baseUrl = process.env.APPLICATION_BASE_URL || "";
+  return baseUrl ? `${baseUrl.replace(/\/$/, "")}/dashboard?application=${encodeURIComponent(applicationId)}` : "";
+}
+
 async function sendStatusEmail({ to, subject, plainText }) {
   const endpoint = process.env.EMAIL_COMMUNICATION_ENDPOINT;
   const senderAddress = process.env.EMAIL_SENDER_ADDRESS;
@@ -124,6 +129,7 @@ async function notifySubmissionOutcome(applicationId, outcome, notify) {
       : `Your ApplyPilot application for ${title} at ${company} needs attention.`,
     outcome.detail || "",
     "Open ApplyPilot → Email Inbox or Applications for the latest details.",
+    applicationUrl(applicationId),
   ].filter(Boolean).join("\n\n");
 
   let mailboxId = row.MailboxId || notify.mailboxId;
@@ -137,9 +143,10 @@ async function notifySubmissionOutcome(applicationId, outcome, notify) {
       .input("senderEmail", sql.NVarChar(320), process.env.EMAIL_SENDER_ADDRESS || "donotreply@applypilot.local")
       .input("subject", sql.NVarChar(500), subject.slice(0, 500))
       .input("body", sql.NVarChar(sql.MAX), plainText.slice(0, 250000))
+      .input("applicationId", sql.UniqueIdentifier, applicationId)
       .query(`
-        INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ReceivedAt,AttachmentCount)
-        SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,SYSUTCDATETIME(),0
+        INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ApplicationId,ReceivedAt,AttachmentCount)
+        SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,@applicationId,SYSUTCDATETIME(),0
         WHERE NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
       `);
   }

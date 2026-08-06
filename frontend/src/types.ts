@@ -56,6 +56,7 @@ export type Application = {
 
 export type MailMessage = {
   id: string;
+  applicationId?: string;
   from: { name?: string | null; email: string };
   subject: string;
   textBody: string;

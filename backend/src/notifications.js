@@ -15,8 +15,14 @@ function environmentMarker(environment = process.env.DEPLOYMENT_ENVIRONMENT || "
   };
 }
 
-export function applicationQueuedContent(application, environment = process.env.DEPLOYMENT_ENVIRONMENT || "production") {
+function applicationUrl(application, baseUrl = process.env.APPLICATION_BASE_URL || "") {
+  if (!application.id || !baseUrl) return "";
+  return `${baseUrl.replace(/\/$/, "")}/dashboard?application=${encodeURIComponent(application.id)}`;
+}
+
+export function applicationQueuedContent(application, environment = process.env.DEPLOYMENT_ENVIRONMENT || "production", baseUrl) {
   const { subjectPrefix, bodyPrefix } = environmentMarker(environment);
+  const url = applicationUrl(application, baseUrl);
   return {
     subject: `${subjectPrefix}Application queued: ${application.title} at ${application.company}`,
     plainText: [
@@ -25,12 +31,14 @@ export function applicationQueuedContent(application, environment = process.env.
       "A browser worker will submit it when capacity is available (usually within a minute after cold start).",
       `Location: ${application.location || "Not specified"}`,
       "Sign in to ApplyPilot to review its status in Applications and Email Inbox.",
-    ].join("\n\n"),
+      url,
+    ].filter(Boolean).join("\n\n"),
   };
 }
 
-export function applicationStatusContent(application, statusLabel, detail, environment = process.env.DEPLOYMENT_ENVIRONMENT || "production") {
+export function applicationStatusContent(application, statusLabel, detail, environment = process.env.DEPLOYMENT_ENVIRONMENT || "production", baseUrl) {
   const { subjectPrefix, bodyPrefix } = environmentMarker(environment);
+  const url = applicationUrl(application, baseUrl);
   return {
     subject: `${subjectPrefix}Application ${statusLabel}: ${application.title} at ${application.company}`,
     plainText: [
@@ -38,6 +46,7 @@ export function applicationStatusContent(application, statusLabel, detail, envir
       `Your ApplyPilot application for ${application.title} at ${application.company} is now ${statusLabel}.`,
       detail || "",
       "Open ApplyPilot → Email Inbox or Applications for the latest details.",
+      url,
     ].filter(Boolean).join("\n\n"),
   };
 }
@@ -58,7 +67,7 @@ async function sendEmail({ to, subject, plainText }) {
   return { sent: result.status === "Succeeded", id: result.id, status: result.status };
 }
 
-async function mirrorToInbox(principal, { subject, plainText, providerMessageId, senderName, senderEmail }) {
+async function mirrorToInbox(principal, { subject, plainText, providerMessageId, senderName, senderEmail, applicationId }) {
   const mailbox = await ensureMailbox(principal);
   await appendMailboxMessage({
     mailboxId: mailbox.Id,
@@ -67,11 +76,12 @@ async function mirrorToInbox(principal, { subject, plainText, providerMessageId,
     senderEmail: senderEmail || process.env.EMAIL_SENDER_ADDRESS || "noreply@applypilot.local",
     subject,
     textBody: plainText,
+    applicationId,
     receivedAt: new Date(),
   });
 }
 
-async function deliverAndMirror(principal, content, providerMessageId) {
+async function deliverAndMirror(principal, content, providerMessageId, applicationId) {
   let mirrored = false;
   try {
     await mirrorToInbox(principal, {
@@ -79,6 +89,7 @@ async function deliverAndMirror(principal, content, providerMessageId) {
       providerMessageId,
       senderName: "ApplyPilot",
       senderEmail: process.env.EMAIL_SENDER_ADDRESS || "donotreply@applypilot.local",
+      applicationId,
     });
     mirrored = true;
   } catch (error) {
@@ -98,6 +109,7 @@ export async function sendApplicationQueuedEmail(principal, application) {
     principal,
     applicationQueuedContent(application),
     `outbound:queued:${application.id}:${Date.now()}`,
+    application.id,
   );
 }
 
@@ -106,6 +118,7 @@ export async function notifyApplicationStatus(principal, application, statusLabe
     principal,
     applicationStatusContent(application, statusLabel, detail),
     `outbound:${statusLabel}:${application.id}:${Date.now()}`,
+    application.id,
   );
 }
 

@@ -13,6 +13,15 @@ test("does not mark production notifications as TEST", () => {
   assert.doesNotMatch(content.subject, /TEST/);
 });
 
+test("includes an absolute application link when the frontend URL is configured", () => {
+  const content = applicationQueuedContent(
+    { id: "2e7923fd-9732-45a8-994e-a2c12862571e", title: "Engineer", company: "Acme" },
+    "production",
+    "https://applypilot.example/",
+  );
+  assert.match(content.plainText, /https:\/\/applypilot\.example\/dashboard\?application=2e7923fd-9732-45a8-994e-a2c12862571e/);
+});
+
 test("does not attempt delivery without a configured endpoint or valid identity email", async () => {
   const endpoint = process.env.EMAIL_COMMUNICATION_ENDPOINT;
   const sender = process.env.EMAIL_SENDER_ADDRESS;

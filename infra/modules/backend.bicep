@@ -15,6 +15,7 @@ param mailboxDomain string = ''
 param serviceBusNamespace string
 param submissionQueueName string
 param deploymentEnvironment string = 'production'
+param applicationBaseUrl string
 param packageUrl string = ''
 param opsAlertEmail string = 'shivangsoni22@gmail.com'
 param authProviders string = 'aad'
@@ -116,6 +117,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SERVICE_BUS__fullyQualifiedNamespace', value: serviceBusNamespace }
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
         { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
+        { name: 'APPLICATION_BASE_URL', value: applicationBaseUrl }
         { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
         { name: 'OPS_ALERT_EMAIL', value: opsAlertEmail }
         { name: 'AUTH_PROVIDERS', value: authProviders }

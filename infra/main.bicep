@@ -196,6 +196,7 @@ module backend 'modules/backend.bicep' = {
     serviceBusNamespace: serviceBus.outputs.namespace
     submissionQueueName: serviceBus.outputs.queueName
     deploymentEnvironment: deploymentEnvironment
+    applicationBaseUrl: frontend.outputs.url
     packageUrl: backendPackageUrl
     opsAlertEmail: opsAlertEmail
     authProviders: enabledAuthProviders
@@ -216,6 +217,10 @@ module browserWorker 'modules/browser-worker.bicep' = {
     image: browserWorkerImage
     postmarkInboundAddress: postmarkInboundAddress
     mailboxDomain: mailboxDomain
+    emailEndpoint: email.outputs.endpoint
+    emailSenderAddress: email.outputs.senderAddress
+    deploymentEnvironment: deploymentEnvironment
+    applicationBaseUrl: frontend.outputs.url
     tags: tags
   }
 }

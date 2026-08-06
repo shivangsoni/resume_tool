@@ -333,7 +333,7 @@ export async function checkDatabase() {
 }
 
 const mailboxAlias = (subject) => `u${createHash("sha256").update(subject).digest("hex").slice(0, 20)}`;
-const mapMessage = (row) => ({ id: row.Id, from: { name: row.SenderName, email: row.SenderEmail }, subject: row.Subject, textBody: row.TextBody || "", receivedAt: row.ReceivedAt, isRead: Boolean(row.IsRead), attachmentCount: row.AttachmentCount });
+const mapMessage = (row) => ({ id: row.Id, applicationId: row.ApplicationId || undefined, from: { name: row.SenderName, email: row.SenderEmail }, subject: row.Subject, textBody: row.TextBody || "", receivedAt: row.ReceivedAt, isRead: Boolean(row.IsRead), attachmentCount: row.AttachmentCount });
 
 export async function ensureMailbox(principal) {
   const userId = await ensureUser(principal);
@@ -392,6 +392,7 @@ export async function appendMailboxMessage({
   senderEmail,
   subject,
   textBody,
+  applicationId = null,
   receivedAt = new Date(),
   attachmentCount = 0,
 }) {
@@ -403,11 +404,12 @@ export async function appendMailboxMessage({
     .input("senderEmail", sql.NVarChar(320), String(senderEmail || "").slice(0, 320))
     .input("subject", sql.NVarChar(500), String(subject || "(no subject)").slice(0, 500))
     .input("body", sql.NVarChar(sql.MAX), String(textBody || "").slice(0, 250000))
+    .input("applicationId", sql.UniqueIdentifier, applicationId)
     .input("receivedAt", sql.DateTime2, receivedAt)
     .input("attachments", sql.Int, Math.min(Number(attachmentCount) || 0, 100)).query(`
-      INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ReceivedAt,AttachmentCount)
+      INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ApplicationId,ReceivedAt,AttachmentCount)
       OUTPUT inserted.*
-      SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,@receivedAt,@attachments
+      SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,@applicationId,@receivedAt,@attachments
       WHERE NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
     `);
   return result.recordset.length ? mapMessage(result.recordset[0]) : null;
