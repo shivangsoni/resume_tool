@@ -380,6 +380,31 @@ select {
 .metric {
   cursor: pointer;
   text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.metric.active {
+  box-shadow: inset 0 -3px 0 currentColor;
+}
+.metric.active.purple {
+  background: #f0ecff;
+  border-color: #c4b5fd;
+  color: #6c50d8;
+}
+.metric.active.green {
+  background: #e9f8ef;
+  border-color: #86efac;
+  color: #168a54;
+}
+.metric.active.red {
+  background: #fff0f0;
+  border-color: #f5a3a3;
+  color: #d34848;
+}
+.metric.active b {
+  color: inherit;
+}
+.metric.active svg {
+  color: inherit;
 }
 .metric > span {
   font-size: 20px;
@@ -607,18 +632,94 @@ select {
   padding: 4px 7px;
   border-radius: 4px;
 }
-.applied {
+.applied,
+.status-tag {
   font-style: normal;
   font-size: 8px;
   color: #168a54;
   background: #e9f8ef;
   padding: 3px 6px;
   border-radius: 10px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  vertical-align: middle;
 }
-.applied svg {
+.status-tag.queued {
+  color: #6c50d8;
+  background: #f0ecff;
+}
+.status-tag.failed {
+  color: #d34848;
+  background: #fff0f0;
+}
+.applied svg,
+.status-tag svg {
   width: 10px;
+}
+.job-error {
+  margin: 8px 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  padding: 7px 9px;
+  text-align: left;
+}
+.job-error svg {
+  flex: none;
+  width: 13px;
+  margin-top: 1px;
+}
+.submission-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid transparent;
+}
+.submission-banner svg {
+  flex: none;
+  width: 18px;
+  margin-top: 2px;
+}
+.submission-banner b,
+.submission-banner p {
+  display: block;
+  margin: 0;
+}
+.submission-banner b {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.submission-banner p {
+  font-size: 12px;
+  line-height: 1.4;
+  color: inherit;
+  opacity: 0.9;
+}
+.submission-banner.queued {
+  background: #f0ecff;
+  border-color: #d9d1ff;
+  color: #5b41c4;
+}
+.submission-banner.failed {
+  background: #fef3f2;
+  border-color: #fecdca;
+  color: #b42318;
+}
+.submission-banner.applied {
+  background: #e9f8ef;
+  border-color: #abefc6;
+  color: #168a54;
 }
 .job-score {
   text-align: center;
@@ -942,6 +1043,16 @@ select {
 .status-pill.review {
   background: #fff6df;
   color: #946200;
+}
+.status-pill.queued,
+.status-pill.processing {
+  background: #f0ecff;
+  color: #6c50d8;
+}
+.status-pill.failed,
+.status-pill.needs_action {
+  background: #fff0f0;
+  color: #d34848;
 }
 .status-pill svg {
   width: 10px;

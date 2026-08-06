@@ -48,6 +48,7 @@ export type Application = {
   source: string;
   updatedAt: string;
   appliedAt?: string;
+  submissionQueuedAt?: string;
   lastSubmissionError?: string;
   requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "blocking"; options?: string[]; required: boolean }>;
 };

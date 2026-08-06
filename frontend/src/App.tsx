@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
+  Clock,
   FileText,
   CreditCard,
   Download,
@@ -73,6 +75,10 @@ type Job = {
   logoUrl?: string;
   source?: string;
   postedAt?: string;
+  applicationStatus?: Application["status"];
+  applicationError?: string;
+  applicationUpdatedAt?: string;
+  submissionQueuedAt?: string;
 };
 
 export default function App() {
@@ -130,6 +136,20 @@ export default function App() {
       .finally(() => setAuthReady(true));
   }, []);
   useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+    const refreshApplications = async () => {
+      try {
+        const result = await getApplications();
+        if (active) setApplications(result.applications);
+      } catch {
+        // Keep the last known state; the next poll retries automatically.
+      }
+    };
+    const interval = window.setInterval(refreshApplications, 10_000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [currentUser]);
+  useEffect(() => {
     const controller = new AbortController();
     getAllJobs(controller.signal)
       .then((result) => {
@@ -155,6 +175,10 @@ export default function App() {
         );
         return {
           ...item,
+          applicationStatus: application?.status,
+          applicationError: application?.lastSubmissionError,
+          applicationUpdatedAt: application?.updatedAt,
+          submissionQueuedAt: application?.submissionQueuedAt,
           status:
             application && ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
@@ -558,25 +582,29 @@ function Dashboard(p: {
           n={String(p.allJobs.filter((job) => job.status === "queued").length)}
           label="Queued"
           color="purple"
-          onClick={() => p.setStatus("queued")}
+          active={p.status === "queued"}
+          onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
           color="purple"
-          onClick={() => p.setStatus("ready")}
+          active={p.status === "ready"}
+          onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "applied").length)}
           label="Applied"
           color="green"
-          onClick={() => p.setStatus("applied")}
+          active={p.status === "applied"}
+          onClick={() => p.setStatus(p.status === "applied" ? "all" : "applied")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "failed").length)}
           label="Failed"
           color="red"
-          onClick={() => p.setStatus("failed")}
+          active={p.status === "failed"}
+          onClick={() => p.setStatus(p.status === "failed" ? "all" : "failed")}
         />
         <div className="ready-card">
           <span>
@@ -685,15 +713,17 @@ function Metric({
   n,
   label,
   color,
+  active,
   onClick,
 }: {
   n: string;
   label: string;
   color: string;
+  active: boolean;
   onClick: () => void;
 }) {
   return (
-    <button className="metric" onClick={onClick}>
+    <button className={`metric ${active ? `active ${color}` : ""}`} onClick={onClick} aria-pressed={active}>
       <span className={color}>{n}</span>
       <div>
         <b>{label}</b>
@@ -721,8 +751,18 @@ function JobRow({
         <div>
           <b>{j.title}</b>
           {j.status === "applied" && (
-            <em className="applied">
+            <em className="status-tag applied">
               <Check /> Applied
+            </em>
+          )}
+          {j.status === "queued" && (
+            <em className="status-tag queued">
+              <Clock /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
+            </em>
+          )}
+          {j.status === "failed" && (
+            <em className="status-tag failed">
+              <X /> Failed
             </em>
           )}
         </div>
@@ -735,6 +775,12 @@ function JobRow({
           {j.remote && <i>Remote</i>}
           <i>{j.salary}</i>
         </div>
+        {j.status === "failed" && (
+          <p className="job-error">
+            <CircleAlert />
+            {j.applicationError || "Submission failed. Open the job for details or retry from Applications."}
+          </p>
+        )}
       </div>
       <div className="job-score">
         <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
@@ -781,6 +827,37 @@ function JobDetail({
           <p>Your experience and skills align with this role.</p>
         </div>
       </div>
+      {job.status === "queued" && (
+        <div className="submission-banner queued">
+          <Clock />
+          <div>
+            <b>{job.applicationStatus === "processing" ? "Submitting now" : "Queued for submission"}</b>
+            <p>
+              {job.applicationStatus === "processing"
+                ? "A browser worker is filling out the employer application."
+                : "Waiting for a browser worker. Submissions start when a message is waiting on the queue (scale-from-zero; usually within a minute)."}
+            </p>
+          </div>
+        </div>
+      )}
+      {job.status === "failed" && (
+        <div className="submission-banner failed">
+          <CircleAlert />
+          <div>
+            <b>Application failed</b>
+            <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
+          </div>
+        </div>
+      )}
+      {job.status === "applied" && (
+        <div className="submission-banner applied">
+          <Check />
+          <div>
+            <b>Applied</b>
+            <p>This application was submitted successfully.</p>
+          </div>
+        </div>
+      )}
       <div className="detail-tags">
         <span>
           <MapPin /> {job.remote ? "Remote" : "On-site"}
@@ -811,7 +888,16 @@ function JobDetail({
           setApplying(true);
           try { await apply(job); } finally { setApplying(false); }
         }}>
-          <WandSparkles /> {applying ? "Queuing..." : job.status === "ready" ? "Simple Apply" : "Already queued"}
+          <WandSparkles />{" "}
+          {applying
+            ? "Queuing..."
+            : job.status === "ready"
+              ? "Simple Apply"
+              : job.status === "failed"
+                ? "Failed — see Applications"
+                : job.status === "applied"
+                  ? "Already applied"
+                  : "Queued"}
         </button>
       </div>
       {job.sourceUrl && (
@@ -880,6 +966,13 @@ function Applications({
                   Queued with your saved profile; awaiting a supported employer submission channel.
                 </span>
               )}
+              {(application.status === "queued" || application.status === "processing") && (
+                <span className="queued-message">
+                  {application.status === "processing"
+                    ? "Browser worker is submitting this application now."
+                    : "Waiting in the submission queue for a browser worker."}
+                </span>
+              )}
               {application.status === "submitted" && (
                 <button onClick={() => update(application.id, "interview")}>
                   Mark interview
@@ -894,7 +987,7 @@ function Applications({
                 {new Date(application.updatedAt).toLocaleDateString()}
               </time>
             </div>
-            {application.status === "needs_action" && <ApplicationQuestions application={application} resolve={resolve} />}
+            {(application.status === "needs_action" || application.status === "failed") && <ApplicationQuestions application={application} resolve={resolve} />}
           </div>
         ))}
       </div>
