@@ -124,7 +124,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 }
 
 resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionApp.name, 'StorageBlobDataContributor')
+  // Include principalId so identity swaps create a new assignment instead of updating an immutable one.
+  name: guid(storage.id, functionIdentity.properties.principalId, 'StorageBlobDataContributor')
   scope: storage
   properties: {
     principalId: functionIdentity.properties.principalId
@@ -134,7 +135,7 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 resource packageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionApp.name, 'PackageStorageBlobDataReader')
+  name: guid(storage.id, functionApp.identity.principalId, 'PackageStorageBlobDataReader')
   scope: storage
   properties: {
     principalId: functionApp.identity.principalId
