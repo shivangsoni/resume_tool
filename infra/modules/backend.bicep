@@ -123,7 +123,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AUTH_PROVIDERS', value: authProviders }
       ], empty(packageUrl) ? [] : [
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: packageUrl }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: 'SystemAssigned' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: functionIdentity.id }
       ])
     }
   }
@@ -142,10 +142,13 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 resource packageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionAppName, 'PackageStorageBlobDataReader-system')
+  // Use the stable user-assigned identity (same pattern as blobContributor). A fixed name bound to
+  // functionApp.identity.principalId fails with RoleAssignmentUpdateNotPermitted when the
+  // system-assigned MI is recreated.
+  name: guid(storage.id, functionAppName, functionIdentity.name, 'PackageStorageBlobDataReader')
   scope: storage
   properties: {
-    principalId: functionApp.identity.principalId
+    principalId: functionIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
   }

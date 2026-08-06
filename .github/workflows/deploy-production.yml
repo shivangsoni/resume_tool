@@ -134,7 +134,9 @@ jobs:
           blob_name="github/${GITHUB_SHA}/backend.zip"
           az storage blob upload --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" --container-name function-releases --name "$blob_name" --file backend.zip --overwrite true
           package_url="https://${STORAGE_ACCOUNT}.blob.core.windows.net/function-releases/${blob_name}"
-          az functionapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --settings WEBSITE_RUN_FROM_PACKAGE="$package_url" WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned
+          package_mi_id="$(az identity show --resource-group "$RESOURCE_GROUP" --name "${FUNCTION_APP}-id" --query id --output tsv)"
+          test -n "$package_mi_id"
+          az functionapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --settings WEBSITE_RUN_FROM_PACKAGE="$package_url" WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID="$package_mi_id"
           az functionapp restart --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP"
           function_resource="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNCTION_APP}"
           az rest --method post --uri "https://management.azure.com${function_resource}/syncfunctiontriggers?api-version=2023-12-01"

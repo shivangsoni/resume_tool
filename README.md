@@ -366,11 +366,12 @@ $packageBlob = 'releases/backend.zip'
 $storageKey = az storage account keys list --resource-group $resourceGroup --account-name $storageAccountName --query '[0].value' -o tsv
 az storage blob upload --account-name $storageAccountName --account-key $storageKey --container-name function-releases --name $packageBlob --file backend.zip --overwrite true
 $packageUrl = "https://$storageAccountName.blob.core.windows.net/function-releases/$packageBlob"
-az functionapp config appsettings set --resource-group $resourceGroup --name $backendName --settings WEBSITE_RUN_FROM_PACKAGE=$packageUrl WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned --output none
+$packageMiId = az identity show --resource-group $resourceGroup --name "$backendName-id" --query id -o tsv
+az functionapp config appsettings set --resource-group $resourceGroup --name $backendName --settings WEBSITE_RUN_FROM_PACKAGE=$packageUrl WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=$packageMiId --output none
 az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
-The Function's system identity has the Storage Blob Data Reader role for private package loading; its user-assigned runtime identity separately has Storage Blob Data Contributor for application data. Do not make the package container public.
+The Function's user-assigned identity has Storage Blob Data Reader for private package loading and Storage Blob Data Contributor for application data. Do not make the package container public.
 
 After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 
