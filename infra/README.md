@@ -24,13 +24,13 @@ az deployment group create --resource-group apply --parameters infra/dev.biceppa
 ```powershell
 $secret = az keyvault secret show --vault-name applypilotcentralvaultkh --name azure-client-secret --query value -o tsv
 try {
-  az deployment group create --resource-group apply --template-file infra/main.bicep --parameters infra/nonprod.bicepparam azureClientSecretValue=$secret
+  az deployment group create --resource-group apply-nonprod --template-file infra/main.bicep --parameters infra/nonprod.bicepparam azureClientSecretValue=$secret
 } finally {
   $secret = $null
 }
 ```
 
-Review `what-if` before creating resources. If `apply` is not the intended resource group, substitute its actual resource-group name.
+Review `what-if` before creating resources. The non-production application resources are deployed to `apply-nonprod`; its database remains beneath the existing `simplyapply` SQL logical server in `apply`, because Azure SQL databases are children of their logical server.
 
 After deployment, execute the scripts in `db/migrations/` as a Microsoft Entra SQL administrator, then replace the placeholder in `db/bootstrap/001_function_identity.sql` with the `backendName` output and execute it. This grants the Function App managed identity data access without a database password.
 

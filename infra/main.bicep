@@ -29,8 +29,11 @@ param azureClientSecretValue string = ''
 @allowed(['F0', 'S0'])
 param documentIntelligenceSku string = 'F0'
 
-@description('Name of the existing Azure SQL logical server in this resource group.')
+@description('Name of the existing Azure SQL logical server.')
 param sqlServerName string
+
+@description('Resource group containing the existing Azure SQL logical server.')
+param sqlServerResourceGroupName string = resourceGroup().name
 
 @description('Database name created on the existing SQL server.')
 param sqlDatabaseName string = 'applypilot'
@@ -117,6 +120,7 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
 
 module database 'modules/database.bicep' = {
   name: 'database'
+  scope: resourceGroup(sqlServerResourceGroupName)
   params: {
     sqlServerName: sqlServerName
     databaseName: sqlDatabaseName
