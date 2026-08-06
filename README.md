@@ -91,7 +91,7 @@ Migration 010 maps changing provider subjects to a canonical user by trusted sig
 
 The SQL grant step reads the browser worker's managed-identity principal ID from Azure and creates or repairs its contained database user with an explicit SID. This avoids requiring the GitHub deployment identity to resolve service principals through Microsoft Graph and keeps the database user valid if the Container App is recreated.
 
-The GitHub SQL principal also requires `ALTER ANY USER` and `ALTER ANY ROLE`, provisioned by `db/bootstrap/002_github_identity.sql`, to create or repair that contained worker user and its fixed-role memberships. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
+The GitHub SQL principal also requires `ALTER ANY USER` and grant-option authority for the runtime application's `SELECT`, `INSERT`, `UPDATE`, `DELETE`, and `EXECUTE` permissions. These are provisioned by `db/bootstrap/002_github_identity.sql`, allowing CI to create or repair contained runtime users without the `db_owner` permission required to change fixed-role memberships. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
 
 The browser worker uses a Bicep-managed user-assigned identity so its application/client ID is stable and available without Microsoft Graph. That client ID is converted through SQL Server's `uniqueidentifier` representation before it is used as the contained user's SID; using the identity's principal/object ID causes token-based worker logins to fail. The Container Apps Service Bus scaler receives the bare namespace name, while the worker process receives the fully qualified namespace hostname.
 
