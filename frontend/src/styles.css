@@ -711,6 +711,9 @@ select {
   border-color: #d9d1ff;
   color: #5b41c4;
 }
+.submission-banner .apply {
+  margin-top: 10px;
+}
 .submission-banner.failed {
   background: #fef3f2;
   border-color: #fecdca;
@@ -1704,6 +1707,18 @@ a.orange-action, button.orange-action { background: #ff8500; color: #fff; }
   padding: 8px 10px;
   max-width: 420px;
   font-size: 11px;
+  display: grid;
+  gap: 8px;
+}
+.queued-message button {
+  justify-self: start;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #ff8500;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
 }
 .screenshot-profile .settings-card {
   background: white;

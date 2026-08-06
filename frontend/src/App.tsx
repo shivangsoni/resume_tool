@@ -137,6 +137,15 @@ export default function App() {
       notify(error instanceof Error ? error.message : "Answers could not be saved");
     }
   };
+  const requeueApplication = async (id: string) => {
+    try {
+      const queued = await submitApplication(id);
+      setApplications((items) => items.map((item) => (item.id === id ? queued.application : item)));
+      notify("Application re-queued for the browser worker.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not re-queue application");
+    }
+  };
   useEffect(() => {
     getCurrentUser()
       .then(async (user) => {
@@ -395,7 +404,7 @@ export default function App() {
             }}
             apply={async (j) => {
               if (!currentUser) {
-                window.location.assign("/.auth/login/aad?post_login_redirect_uri=/dashboard");
+                window.location.assign("/login");
                 return;
               }
               try {
@@ -419,6 +428,7 @@ export default function App() {
               }
             }}
             resolve={resolveAnswers}
+            requeue={requeueApplication}
             profile={profile}
           />
         )}
@@ -442,6 +452,7 @@ export default function App() {
               }
             }}
             resolve={resolveAnswers}
+            requeue={requeueApplication}
             profile={profile}
           />
         )}
@@ -450,7 +461,7 @@ export default function App() {
             documents={resumeDocuments}
             upload={async (file) => {
               if (!currentUser) {
-                window.location.assign("/.auth/login/aad?post_login_redirect_uri=/dashboard");
+                window.location.assign("/login");
                 return;
               }
               try {
@@ -597,6 +608,7 @@ function Dashboard(p: {
   dismiss: (n: number) => void;
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
   return (
@@ -650,8 +662,8 @@ function Dashboard(p: {
             <Check />
           </span>
           <div>
-            <b>Review-first application workflow</b>
-            <small>Every submission requires your confirmation</small>
+            <b>One-click application workflow</b>
+            <small>Simple Apply queues a background worker to submit for you</small>
           </div>
         </div>
       </div>
@@ -742,7 +754,7 @@ function Dashboard(p: {
             </div>
           )}
         </section>
-        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} profile={p.profile} />}
+        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} requeue={p.requeue} profile={p.profile} />}
       </div>
     </div>
   );
@@ -835,15 +847,18 @@ function JobDetail({
   dismiss,
   apply,
   resolve,
+  requeue,
   profile,
 }: {
   job: Job;
   dismiss: (n: number) => void;
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
   const [applying, setApplying] = useState(false);
+  const [requeuing, setRequeuing] = useState(false);
   const failedApplication = job.status === "failed" && job.applicationId
     ? {
         id: job.applicationId,
@@ -894,8 +909,20 @@ function JobDetail({
             <p>
               {job.applicationStatus === "processing"
                 ? "A browser worker is filling out the employer application."
-                : "Waiting for a browser worker. Submissions start when a message is waiting on the queue (scale-from-zero; usually within a minute)."}
+                : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
             </p>
+            {job.applicationId && job.applicationStatus !== "processing" && (
+              <button
+                className="apply"
+                disabled={requeuing}
+                onClick={async () => {
+                  setRequeuing(true);
+                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                }}
+              >
+                {requeuing ? "Re-queuing…" : "Retry queue"}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -973,7 +1000,7 @@ function JobDetail({
         </a>
       )}
       <div className="safe-note">
-        <Check /> You’ll review all answers before submission
+        <Check /> One click queues the application; a background worker fills and submits the employer form
       </div>
     </section>
   );
@@ -984,12 +1011,14 @@ function Applications({
   focusedApplicationId,
   update,
   resolve,
+  requeue,
   profile,
 }: {
   applications: Application[];
   focusedApplicationId: string | null;
   update: (id: string, status: Application["status"]) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
   useEffect(() => {
@@ -1011,7 +1040,7 @@ function Applications({
           <div className="no-results">
             <Briefcase />
             <b>No applications in progress</b>
-            <span>Choose Simple Apply on a job match to start a review.</span>
+            <span>Choose Simple Apply on a job match to queue submission.</span>
           </div>
         )}
         {applications.map((application) => (
@@ -1032,17 +1061,19 @@ function Applications({
               {application.status}
             </span>
             <div className="application-actions">
-              {application.status === "review" && (
-                <span className="queued-message">
-                  Queued with your saved profile; awaiting a supported employer submission channel.
-                </span>
-              )}
-              {(application.status === "queued" || application.status === "processing") && (
-                <span className="queued-message">
-                  {application.status === "processing"
-                    ? "Browser worker is submitting this application now."
-                    : "Waiting in the submission queue for a browser worker."}
-                </span>
+              {(application.status === "queued" || application.status === "processing" || application.status === "review") && (
+                <div className="queued-message">
+                  <span>
+                    {application.status === "processing"
+                      ? "Browser worker is submitting this application now."
+                      : application.status === "review"
+                        ? "Ready to queue. Submission was not accepted by the queue yet."
+                        : "Waiting in the submission queue for a browser worker."}
+                  </span>
+                  {application.status !== "processing" && (
+                    <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                  )}
+                </div>
               )}
               {application.status === "submitted" && (
                 <button onClick={() => update(application.id, "interview")}>
@@ -1070,22 +1101,40 @@ function Applications({
 
 function profileAnswerForLabel(label: string, profile: Profile) {
   const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  if (/first name/.test(text)) return profile.firstName;
-  if (/last name/.test(text)) return profile.lastName;
-  if (/full name|legal name/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
-  if (/email/.test(text)) return profile.email;
-  if (/phone|mobile/.test(text)) return profile.phone;
-  if (/linkedin/.test(text)) return profile.linkedin;
-  if (/github/.test(text)) return profile.github;
-  if (/portfolio|website/.test(text)) return profile.portfolio;
-  if (/city/.test(text)) return profile.city;
-  if (/state/.test(text)) return profile.state;
-  if (/postal|zip/.test(text)) return profile.postalCode;
-  if (/address/.test(text)) return profile.address;
-  if (/country/.test(text)) return profile.country;
-  if (/work authorization|authorized to work/.test(text)) return profile.workAuthorization;
-  if (/sponsor/.test(text)) return profile.sponsorship;
+  if (/\bfirst name\b/.test(text)) return profile.firstName;
+  if (/\blast name\b/.test(text)) return profile.lastName;
+  if (/\bfull name\b|\blegal name\b/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
+  if (/\bemail\b/.test(text)) return profile.email;
+  if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
+  if (/\blinkedin\b/.test(text)) return profile.linkedin;
+  if (/\bgithub\b/.test(text)) return profile.github;
+  if (/\bportfolio\b|\bwebsite\b/.test(text)) return profile.portfolio;
+  if (/\bcountry\b/.test(text)) return profile.country;
+  if (/\bcity\b/.test(text)) return profile.city;
+  if (/\bstate\b/.test(text)) return profile.state;
+  if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
+  if (/\baddress\b/.test(text)) return profile.address;
+  if (/\bwork authorization\b|\bauthorized to work\b/.test(text)) return profile.workAuthorization;
+  if (/\bsponsor/.test(text)) return profile.sponsorship;
   return "";
+}
+
+function displayQuestionLabel(question: { key: string; label: string }, index: number) {
+  const label = String(question.label || "").replace(/\s+/g, " ").trim();
+  if (label && !/^required question$/i.test(label)) return label;
+  const key = String(question.key || "");
+  const leaf = key.includes("[")
+    ? (key.match(/\[([^\]]+)\]/g) || []).map((part) => part.slice(1, -1)).filter(Boolean).pop() || key
+    : key.replace(/__\d+$/, "").split(/[./#]/).pop() || key;
+  const humanized = leaf
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (humanized && !/^(input|field|select|textarea|question|required question)\d*$/i.test(humanized)) {
+    return humanized.replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+  return `Question ${index + 1}`;
 }
 
 function ApplicationQuestions({
@@ -1098,23 +1147,44 @@ function ApplicationQuestions({
   profile: Profile;
 }) {
   const questions = application.requiredQuestions;
+  const answersSignature = JSON.stringify(application.answers || {});
+  const questionsSignature = JSON.stringify(
+    (questions || []).map((question) => [question.key, question.label, question.type, question.options || []]),
+  );
+  const profileSignature = JSON.stringify({
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    email: profile.email,
+    phone: profile.phone,
+    linkedin: profile.linkedin,
+    github: profile.github,
+    portfolio: profile.portfolio,
+    city: profile.city,
+    state: profile.state,
+    postalCode: profile.postalCode,
+    address: profile.address,
+    country: profile.country,
+    workAuthorization: profile.workAuthorization,
+    sponsorship: profile.sponsorship,
+  });
   const seedAnswers = useMemo(() => {
     const list = questions || [];
     const next: Record<string, string> = { ...(application.answers || {}) };
-    for (const question of list) {
+    for (const [index, question] of list.entries()) {
       if (String(next[question.key] || "").trim()) continue;
-      const guessed = profileAnswerForLabel(question.label, profile);
+      const guessed = profileAnswerForLabel(displayQuestionLabel(question, index), profile);
       if (guessed) next[question.key] = guessed;
     }
     return next;
-  }, [application.answers, application.id, profile, questions]);
+    // Signatures keep seed stable across poll-driven object identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [application.id, answersSignature, questionsSignature, profileSignature]);
   const [answers, setAnswers] = useState(seedAnswers);
-  const [seededFrom, setSeededFrom] = useState(seedAnswers);
   const [saving, setSaving] = useState(false);
-  if (seededFrom !== seedAnswers) {
-    setSeededFrom(seedAnswers);
+
+  useEffect(() => {
     setAnswers(seedAnswers);
-  }
+  }, [seedAnswers]);
 
   if (!questions?.length) {
     return (
@@ -1131,6 +1201,9 @@ function ApplicationQuestions({
 
   const blocking = questions.some((question) => question.type === "blocking");
   const answeredCount = questions.filter((question) => String(answers[question.key] || "").trim()).length;
+  const setAnswer = (key: string, value: string) => {
+    setAnswers((prev) => ({ ...prev, [key]: value }));
+  };
 
   return (
     <form
@@ -1152,25 +1225,28 @@ function ApplicationQuestions({
       </div>
       <p>{application.lastSubmissionError}</p>
       <div className="action-required-fields">
-        {questions.map((question) => (
-          <label key={question.key}>
-            <span>{question.label}</span>
+        {questions.map((question, index) => {
+          const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
+          const label = displayQuestionLabel(question, index);
+          return (
+          <label key={`${question.key}__${index}`}>
+            <span>{label}</span>
             {question.type === "blocking" ? (
               <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
             ) : question.type === "select" ? (
               <select
                 required={question.required !== false}
                 value={answers[question.key] || ""}
-                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
-                {question.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                {selectOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
             ) : question.type === "checkbox" ? (
               <select
                 required={question.required !== false}
                 value={answers[question.key] || ""}
-                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
                 <option value="yes">Yes</option>
@@ -1180,17 +1256,18 @@ function ApplicationQuestions({
               <textarea
                 required={question.required !== false}
                 value={answers[question.key] || ""}
-                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
               />
             ) : (
               <input
                 required={question.required !== false}
                 value={answers[question.key] || ""}
-                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
               />
             )}
           </label>
-        ))}
+          );
+        })}
       </div>
       {!blocking && (
         <button className="apply" disabled={saving}>
@@ -1443,7 +1520,7 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="public-shell">
       <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Secure Microsoft delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
+      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
       <section className="landing-features" id="features"><article><Search /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><FileText /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
     </main>
   );

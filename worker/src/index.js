@@ -16,8 +16,14 @@ const blobs = new BlobServiceClient(`https://${process.env.AZURE_STORAGE_ACCOUNT
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function load(id) {
+  // Claim queued apps, or reclaim processing rows stuck longer than 10 minutes
+  // (worker crash / auto-complete left SQL in processing with no consumer).
   const result = await pool.request().input("id", sql.UniqueIdentifier, id).query(`
-    UPDATE dbo.Applications SET Status='processing',UpdatedAt=SYSUTCDATETIME() OUTPUT inserted.* WHERE Id=@id AND Status='queued';
+    UPDATE dbo.Applications SET Status='processing',UpdatedAt=SYSUTCDATETIME() OUTPUT inserted.*
+    WHERE Id=@id AND (
+      Status='queued'
+      OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+    );
     SELECT a.Id,a.UserId,u.Email,p.ProfileJson,d.BlobName,d.FileName,m.Alias AS MailboxAlias,m.Id AS MailboxId
     FROM dbo.Applications a
     JOIN dbo.Users u ON u.Id=a.UserId
@@ -39,6 +45,13 @@ async function load(id) {
     document: context.BlobName ? { blobName: context.BlobName, fileName: context.FileName } : null,
     notify: { userId: context.UserId || app.UserId, email: context.Email, mailboxId: context.MailboxId, mailboxAlias: context.MailboxAlias, title: app.Title, company: app.Company },
   };
+}
+
+async function applicationStatus(id) {
+  if (!id) return null;
+  const result = await pool.request().input("id", sql.UniqueIdentifier, id)
+    .query("SELECT Status FROM dbo.Applications WHERE Id=@id");
+  return result.recordset[0]?.Status || null;
 }
 
 function addressForAlias(alias) {
@@ -154,12 +167,42 @@ async function notifySubmissionOutcome(applicationId, outcome, notify) {
   await sendStatusEmail({ to: row.Email || notify.email, subject, plainText });
 }
 
+console.log("ApplyPilot browser worker listening", {
+  queue: process.env.APPLICATION_SUBMISSION_QUEUE || "application-submissions",
+  namespace: process.env.SERVICE_BUS_NAMESPACE,
+  environment: process.env.DEPLOYMENT_ENVIRONMENT || "production",
+});
+
 receiver.subscribe({ processMessage: async (message) => {
-  const id = String(message.body?.applicationId || ""); const data = await load(id); if (!data) return;
+  const id = String(message.body?.applicationId || "");
+  const data = await load(id);
+  if (!data) {
+    const status = await applicationStatus(id);
+    // Terminal or unknown: drop the message. Still-active rows: abandon so another delivery can reclaim.
+    if (!status || ["submitted", "needs_action", "failed", "interview", "offer", "rejected", "review"].includes(status)) {
+      await receiver.completeMessage(message);
+    } else {
+      console.warn("Deferring application message; claim unavailable", { id, status });
+      await receiver.abandonMessage(message);
+    }
+    return;
+  }
   let resumePath;
   try {
-    if (data.document) { resumePath = path.join(os.tmpdir(), `${id}-${data.document.fileName.replace(/[^a-z0-9._-]/gi, "_")}`); await blobs.getBlobClient(data.document.blobName).downloadToFile(resumePath); }
+    if (data.document) {
+      resumePath = path.join(os.tmpdir(), `${id}-${data.document.fileName.replace(/[^a-z0-9._-]/gi, "_")}`);
+      await blobs.getBlobClient(data.document.blobName).downloadToFile(resumePath);
+    }
     await record(id, await runApplication({ ...data, resumePath }), data.notify);
-  } catch (error) { await record(id, { outcome: "needs_action", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify); }
-  finally { if (resumePath) await fs.unlink(resumePath).catch(() => {}); }
-}, processError: async (args) => console.error("Service Bus worker error", args.error) }, { autoCompleteMessages: true, maxConcurrentCalls: 1, maxAutoLockRenewalDurationInMs: 10 * 60 * 1000 });
+    await receiver.completeMessage(message);
+  } catch (error) {
+    await record(id, { outcome: "needs_action", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify);
+    await receiver.completeMessage(message).catch(() => {});
+  } finally {
+    if (resumePath) await fs.unlink(resumePath).catch(() => {});
+  }
+}, processError: async (args) => console.error("Service Bus worker error", args.error) }, {
+  autoCompleteMessages: false,
+  maxConcurrentCalls: 1,
+  maxAutoLockRenewalDurationInMs: 10 * 60 * 1000,
+});

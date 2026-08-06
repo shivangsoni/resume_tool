@@ -1,6 +1,6 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { createApplication, listApplications, queueApplicationSubmission, saveApplicationAnswers, updateApplication } from "../database.js";
+import { createApplication, listApplications, queueApplicationSubmission, revertApplicationQueue, saveApplicationAnswers, updateApplication } from "../database.js";
 import { notifyApplicationStatus, resolveApplyEmail, sendApplicationQueuedEmail, sendOpsAlertEmail } from "../notifications.js";
 import { enqueueApplicationSubmission } from "../submission-queue.js";
 
@@ -39,7 +39,12 @@ app.http("submitApplication", {
     try {
       const application = await queueApplicationSubmission(principal, request.params.id);
       if (!application) return { status: 404, jsonBody: { error: "Application not found or cannot be queued." } };
-      await enqueueApplicationSubmission(application);
+      try {
+        await enqueueApplicationSubmission(application);
+      } catch (enqueueError) {
+        await revertApplicationQueue(principal, request.params.id, enqueueError instanceof Error ? enqueueError.message : "Submission queue unavailable.");
+        throw enqueueError;
+      }
       return { status: 202, jsonBody: { application, queue: { accepted: true } } };
     } catch (error) {
       context.error("Application enqueue failed", error);
@@ -74,7 +79,13 @@ app.http("applicationAnswers", {
       const saved = await saveApplicationAnswers(principal, request.params.id, answers);
       if (!saved) return { status: 404, jsonBody: { error: "Application not found." } };
       const application = await queueApplicationSubmission(principal, saved.id);
-      await enqueueApplicationSubmission(application);
+      if (!application) return { status: 409, jsonBody: { error: "Application could not be re-queued yet. Try again shortly." } };
+      try {
+        await enqueueApplicationSubmission(application);
+      } catch (enqueueError) {
+        await revertApplicationQueue(principal, saved.id, enqueueError instanceof Error ? enqueueError.message : "Submission queue unavailable.");
+        throw enqueueError;
+      }
       try { await notifyApplicationStatus(principal, application, "re-queued after answers", "Your answers were saved and the application was queued again."); } catch { /* ignore */ }
       return { status: 202, jsonBody: { application } };
     } catch (error) { context.error("Application answers failed", error); return { status: 500, jsonBody: { error: "Answers could not be saved and queued." } }; }

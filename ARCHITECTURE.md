@@ -65,7 +65,7 @@ sequenceDiagram
     SQL-->>API: Internal user ID
 ```
 
-Microsoft is currently enabled through the platform registration. Google and Facebook require separate developer registrations and secrets. They remain disabled in the UI until those external credentials and callbacks are configured; the app never simulates a successful provider.
+Microsoft, Google, and GitHub are registered in `staticwebapp.config.json` and enabled in the UI when listed in `AUTH_PROVIDERS` (for example `aad,google,github`). Facebook requires a separate developer registration and remains disabled until those credentials and callbacks are configured; the app never simulates a successful provider.
 
 ### Email notification and future inbound alias flow
 

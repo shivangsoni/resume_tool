@@ -131,8 +131,8 @@ Verified production checks:
 - Job search covers title, company, location, description, skills, and source. Status, source, and workplace filters can be combined.
 - Upstream HTML and encoded Greenhouse markup are normalized into readable plain-text job summaries before rendering.
 - Location text filtering is case-insensitive and combines with every other job filter.
-- Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
-- The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
+- Signed-out users see sign-in actions in both the persistent header and desktop account card.
+- The account screen creates an ApplyPilot user automatically on first successful sign-in. Microsoft, Google, and GitHub are enabled when listed in `AUTH_PROVIDERS` and registered in `staticwebapp.config.json`; Facebook stays unavailable until its OAuth credentials are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - The persistent top navigation exposes the Résumé page at every viewport width. It lists current and past PDF/DOCX uploads, previews PDFs with React PDF, downloads DOCX files, and removes individual documents.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
@@ -144,9 +144,9 @@ Verified production checks:
 
 ### Application lifecycle
 
-1. Sign in with Microsoft through Static Web Apps authentication.
+1. Sign in with Microsoft, Google, or GitHub through Static Web Apps authentication.
 2. Upload one or more PDF or DOCX résumés (maximum 4 MB each on the F0 tier). ApplyPilot retains past versions in private Blob Storage. Extraction is stored as document metadata and never changes the user profile or queued answers.
-3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record with the complete saved profile snapshot and stays inside the portal.
+3. Choose **Simple Apply** on a live job. ApplyPilot saves the profile snapshot, queues the application immediately, and a background browser worker fills and submits the employer form.
 4. When your résumé or profile changes, queued `review` applications are refreshed automatically with the latest answers.
 5. `POST /api/applications/{id}/submit` verifies ownership and sends the application ID to Azure Service Bus using managed identity.
 6. The queue-triggered Function calls only explicitly allowlisted employer providers. Unsupported integrations move to `needs_action`; transient errors retry five times and then dead-letter.
@@ -159,9 +159,9 @@ Official write APIs exist for Greenhouse, Lever, and SmartRecruiters, but requir
 
 ### Authentication providers
 
-Microsoft delegated sign-in is configured at `/.auth/login/aad`. The login page loads `/api/auth/providers` and enables only providers listed in the Function App setting `AUTH_PROVIDERS` (comma-separated: `aad`, `google`, `github`, `facebook`). Incomplete social providers must not be added to `staticwebapp.config.json` until their client IDs/secrets are present in Static Web Apps app settings—one invalid custom provider can disable platform auth routes.
+Microsoft, Google, and GitHub are registered in `frontend/public/staticwebapp.config.json`. The login page loads `/api/auth/providers` and enables only providers listed in the Function App setting `AUTH_PROVIDERS` (comma-separated, e.g. `aad,google,github`). Set `AUTH_PROVIDERS=aad,google,github` when those SWA app settings (`GOOGLE_CLIENT_*`, `GITHUB_CLIENT_*`) are present. Incomplete providers must not remain in `staticwebapp.config.json` without matching secrets—one invalid custom provider can disable platform auth routes.
 
-To enable Google, GitHub, or Facebook after creating those OAuth apps, pass their credentials as Bicep parameters (`googleClientId` / `googleClientSecret`, `githubClientId` / `githubClientSecret`, `facebookAppId` / `facebookAppSecret`) or run `scripts/enable-social-auth.ps1`, then redeploy the frontend so the updated `staticwebapp.config.json` is published. The first authenticated profile/API request maps the provider subject to a SQL user (with email-based identity merge), so sign-up and sign-in use the same secure flow.
+To add Facebook (or refresh social secrets), pass credentials as Bicep parameters (`googleClientId` / `googleClientSecret`, `githubClientId` / `githubClientSecret`, `facebookAppId` / `facebookAppSecret`) or run `scripts/enable-social-auth.ps1`, then redeploy the frontend so the updated `staticwebapp.config.json` is published. The first authenticated profile/API request maps the provider subject to a SQL user (with email-based identity merge), so sign-up and sign-in use the same secure flow.
 
 Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations.
 

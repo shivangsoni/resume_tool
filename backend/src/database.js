@@ -161,8 +161,27 @@ export async function queueApplicationSubmission(principal, id) {
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id).query(`
     UPDATE dbo.Applications SET Status='queued', SubmissionQueuedAt=SYSUTCDATETIME(), LastSubmissionError=NULL, UpdatedAt=SYSUTCDATETIME()
     OUTPUT inserted.*
-    WHERE Id=@id AND UserId=@userId AND Status IN ('review','needs_action','failed','queued');
+    WHERE Id=@id AND UserId=@userId AND (
+      Status IN ('review','needs_action','failed','queued')
+      OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+    );
   `);
+  return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function revertApplicationQueue(principal, id, detail) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request()
+    .input("userId", sql.UniqueIdentifier, userId)
+    .input("id", sql.UniqueIdentifier, id)
+    .input("detail", sql.NVarChar(2000), String(detail || "Submission queue unavailable.").slice(0, 2000))
+    .query(`
+      UPDATE dbo.Applications
+      SET Status='review', LastSubmissionError=@detail, UpdatedAt=SYSUTCDATETIME()
+      OUTPUT inserted.*
+      WHERE Id=@id AND UserId=@userId AND Status='queued';
+    `);
   return result.recordset.length ? mapApplication(result.recordset[0]) : null;
 }
 
