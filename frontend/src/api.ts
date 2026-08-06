@@ -14,12 +14,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
+const DEV_AUTH_KEY = "applypilot.devAuth";
+const DEV_USER = {
+  userId: "local-development-user",
+  userDetails: "local@example.test",
+};
+
+/** Local-only sign-in so the landing page stays public until you click Sign in. */
+export function setDevSignedIn(signedIn: boolean) {
+  if (!import.meta.env.DEV) return;
+  if (signedIn) localStorage.setItem(DEV_AUTH_KEY, "1");
+  else localStorage.removeItem(DEV_AUTH_KEY);
+}
+
 export async function getCurrentUser() {
-  if (import.meta.env.DEV)
-    return {
-      userId: "local-development-user",
-      userDetails: "local@example.test",
-    };
+  if (import.meta.env.DEV) {
+    return localStorage.getItem(DEV_AUTH_KEY) === "1" ? DEV_USER : null;
+  }
   const response = await fetch("/.auth/me");
   if (!response.ok) return null;
   const body = await response.json();

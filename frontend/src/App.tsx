@@ -51,6 +51,7 @@ import {
   deleteResume,
   renameResume,
   getAuthProviders,
+  setDevSignedIn,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
@@ -317,6 +318,12 @@ export default function App() {
             <a
               className="upgrade"
               href="/.auth/logout?post_logout_redirect_uri=/logged-out"
+              onClick={(event) => {
+                if (!import.meta.env.DEV) return;
+                event.preventDefault();
+                setDevSignedIn(false);
+                location.href = "/logged-out";
+              }}
             >
               Sign out
             </a>
@@ -1164,6 +1171,14 @@ function AuthPage() {
     if (id === "github") return <span className="provider-letter github">GH</span>;
     return <span className="provider-letter facebook">f</span>;
   };
+  const continueWith = (provider: { id: string; href: string }) => {
+    if (import.meta.env.DEV) {
+      setDevSignedIn(true);
+      location.href = "/dashboard";
+      return;
+    }
+    location.href = provider.href;
+  };
   return (
     <div className="auth-page">
       <section className="auth-card">
@@ -1172,10 +1187,15 @@ function AuthPage() {
         <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
         {providers.map((provider) =>
           provider.enabled ? (
-            <a key={provider.id} className={`provider-button ${provider.id === "aad" ? "microsoft" : provider.id}`} href={provider.href}>
+            <button
+              key={provider.id}
+              type="button"
+              className={`provider-button ${provider.id === "aad" ? "microsoft" : provider.id}`}
+              onClick={() => continueWith(provider)}
+            >
               {mark(provider.id)}
               Continue with {provider.label}
-            </a>
+            </button>
           ) : (
             <button key={provider.id} className={`provider-button ${provider.id}`} disabled title={`${provider.label} OAuth registration is not configured in Azure yet`}>
               {mark(provider.id)}
@@ -1259,8 +1279,15 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
 }
 
 function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
+  const logoutHref = "/.auth/logout?post_logout_redirect_uri=/logged-out";
+  const onDevLogout = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!import.meta.env.DEV) return;
+    event.preventDefault();
+    setDevSignedIn(false);
+    location.href = "/logged-out";
+  };
   return (
-    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><WandSparkles /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Check /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href="/.auth/logout?post_logout_redirect_uri=/logged-out">Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
+    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><WandSparkles /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Check /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href={logoutHref} onClick={onDevLogout}>Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
   );
 }
 
