@@ -3,10 +3,11 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ['**']
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -59,3 +60,11 @@ jobs:
       - uses: azure/CLI@v3
         with:
           inlineScript: az bicep build --file infra/main.bicep
+
+  deploy-nonproduction:
+    if: github.event_name == 'push' && github.ref_name != 'main'
+    needs: [frontend, backend, browser-worker, infrastructure]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-nonproduction.yml

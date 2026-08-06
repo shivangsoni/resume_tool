@@ -2,6 +2,8 @@
 
 ApplyPilot is a production-oriented React job search and application tracker. It retrieves current listings, stores a signed-in user's profile and application history in Azure SQL, uploads resumes to private Blob Storage, opens the employer's real application form, and requires the user to confirm the final submission.
 
+The React portal runs inside Fluent UI v9 and uses Fluent design tokens for typography, color, focus, elevation, controls, and responsive layout. The résumé workspace reserves one third of its desktop width for upload/history and two thirds for the selected PDF viewer; it collapses to one column on small screens.
+
 The product deliberately uses a review-first workflow. It does not claim an application was submitted merely because an employer page was opened, and it does not bypass employer consent, CAPTCHA, screening questions, or terms of service.
 
 ## Repository structure
@@ -42,7 +44,24 @@ npm run build --prefix frontend
 
 ## GitHub CI/CD
 
-GitHub Actions now validates every pull request and every push to `main` with [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It installs locked dependencies, runs frontend lint/tests/build, runs backend tests, and compiles the Bicep template. A successful `main` run triggers [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml), which deploys Bicep, applies pending SQL migrations, publishes the Function package and frontend independently, and smoke-tests production. The production workflow can also be started manually from **Actions → Deploy production → Run workflow**.
+### Promotion flow
+
+```mermaid
+flowchart LR
+    Feature[User feature branch] --> CI[CI: frontend, API, worker, Bicep]
+    CI --> NonProd[Isolated non-production deployment]
+    NonProd --> Test[User acceptance testing]
+    Test --> PR[Pull request to main]
+    PR --> Approval[Owner acceptance + required checks]
+    Approval --> Main[Manual merge to protected main]
+    Main --> Production[Production deployment]
+```
+
+Never push changes directly to `main`. Work on a user/feature branch; the existing CI workflow invokes the reusable non-production deployment after all four validation jobs pass. That deployment provisions infrastructure first, then runs backend/worker and frontend deployment jobs independently in parallel. A failure in either application job is reported without preventing the other application job from completing; an infrastructure failure blocks both because their resource outputs would be unavailable. Test the non-production URL, then open a pull request. Repository protection requires a pull request, resolved conversations, linear history, and passing CI before your manual merge. Formal approving reviews are not required because GitHub does not permit the PR author to approve their own PR in a single-owner repository (a collaborator may still review and approve). Only the resulting protected `main` commit can start `Deploy production`.
+
+The non-production stack has a separate Static Web App, Function App, Blob Storage, Azure SQL database (`applypilot_nonprod`), Service Bus namespace/queue, browser worker, registry, telemetry, and managed identities. The API and worker use stable Bicep-managed user-assigned identities, allowing SQL bootstrap without Microsoft Graph directory reads. It temporarily reuses the current Postmark inbound address. Outbound staging email uses the staging Communication Service and both its subject and body begin with `TEST`; production email remains unchanged.
+
+GitHub Actions now validates every pull request and every push to `main` with [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It installs locked dependencies, runs frontend lint/tests/build, runs backend tests, and compiles the Bicep template. A successful `main` run triggers [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml), which deploys infrastructure first and then runs independently verified backend/worker and frontend jobs in parallel. A failure in one application job does not stop the other, while an infrastructure failure blocks both. The production workflow can also be started manually from **Actions → Deploy production → Run workflow**.
 
 The deployment job uses a GitHub environment named `production`, which GitHub creates when the workflow first runs. Under **Repository Settings → Environments**, restrict its deployment branch to `main` and optionally add required reviewers. Azure login uses these non-secret identifiers from the workflow:
 
@@ -54,7 +73,7 @@ The deployment job uses a GitHub environment named `production`, which GitHub cr
 
 These values are not credentials and are safe to track. This `AZURE_CLIENT_ID` is used by GitHub Actions for Azure login via OIDC and is separate from the custom Azure AD application used by Static Web Apps auth. The SWA auth app ID is configured through `infra/dev.bicepparam` as `azureClientId` and should be the Microsoft login client ID `35bf98bd-ec76-42b8-8fd5-db32455d2b00`.
 
-GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource group `apply`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
+GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource groups `apply` and `apply-nonprod`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
 
@@ -64,7 +83,7 @@ The workflow is active after it is pushed to `main`. Production protection rules
 
 ## Complete Azure deployment
 
-The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. Keep this order to avoid an identity/registry dependency cycle on first deployment.
+The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. On later runs, the infrastructure job passes both the currently deployed worker image and backend package URL back to Bicep, so a backend-stage failure cannot roll back the worker or remove the active Function package. Keep this order to avoid an identity/registry dependency cycle on first deployment.
 
 Database migrations are split on `GO` batch separators by `backend/scripts/migrate.js`. When a migration adds a column and then references it in a constraint, keep those statements in separate batches so Azure SQL compiles the constraint after the column exists.
 
@@ -72,7 +91,7 @@ Migration 010 maps changing provider subjects to a canonical user by trusted sig
 
 The SQL grant step reads the browser worker's managed-identity principal ID from Azure and creates or repairs its contained database user with an explicit SID. This avoids requiring the GitHub deployment identity to resolve service principals through Microsoft Graph and keeps the database user valid if the Container App is recreated.
 
-The GitHub SQL principal also requires `ALTER ANY USER` and `ALTER ANY ROLE`, provisioned by `db/bootstrap/002_github_identity.sql`, to create or repair that contained worker user and its fixed-role memberships. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
+The GitHub SQL principal also requires `ALTER ANY USER` and grant-option authority for the runtime application's `SELECT`, `INSERT`, `UPDATE`, `DELETE`, and `EXECUTE` permissions. These are provisioned by `db/bootstrap/002_github_identity.sql`, allowing CI to create or repair contained runtime users without the `db_owner` permission required to change fixed-role memberships. Re-run the bootstrap as the Microsoft Entra SQL administrator whenever its permissions change.
 
 The browser worker uses a Bicep-managed user-assigned identity so its application/client ID is stable and available without Microsoft Graph. That client ID is converted through SQL Server's `uniqueidentifier` representation before it is used as the contained user's SID; using the identity's principal/object ID causes token-based worker logins to fail. The Container Apps Service Bus scaler receives the bare namespace name, while the worker process receives the fully qualified namespace hostname.
 
@@ -337,7 +356,7 @@ az functionapp config appsettings set --resource-group $resourceGroup --name $ba
 az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
-The Function's existing Storage Blob Data Contributor role permits this private read; do not make the package container public.
+The Function's system identity has the Storage Blob Data Reader role for private package loading; its user-assigned runtime identity separately has Storage Blob Data Contributor for application data. Do not make the package container public.
 
 After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 

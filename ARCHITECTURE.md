@@ -183,7 +183,7 @@ Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can s
 | Component | Purpose | Security boundary |
 | --- | --- | --- |
 | Static Web Apps Standard | React hosting, Microsoft authentication, linked `/api` proxy | Personal API routes require the `authenticated` role |
-| Azure Functions Consumption | API and orchestration | System-assigned managed identity; direct linked backend protected |
+| Azure Functions Consumption | API and orchestration | Stable user-assigned runtime identity plus system identity for private package loading; direct linked backend protected |
 | Azure SQL Basic | Users, profiles, jobs, applications, document metadata | Entra app access; personal queries include the internal user ID |
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |
@@ -196,6 +196,23 @@ Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can s
 Traffic uses HTTPS/TLS and Azure-managed services encrypt stored data. No storage or Document Intelligence credential is exposed to the browser.
 
 ## Deployment boundaries
+
+```mermaid
+flowchart TB
+    Branch[Feature branch] --> StageCI[CI]
+    StageCI --> Stage[Non-production]
+    Stage -->|user acceptance| PR[Approved pull request]
+    PR --> Main[Protected main]
+    Main --> Prod[Production]
+    subgraph Isolated data planes
+      Stage --> StageData[(Staging SQL, Blob, Queue)]
+      Prod --> ProdData[(Production SQL, Blob, Queue)]
+    end
+    Mail[Current inbound Postmark stream] -. temporary shared configuration .-> Stage
+    Mail -. inbound configuration .-> Prod
+```
+
+Non-production mirrors production compute and persistence but never shares candidate data, résumé blobs, application queues, or worker state. The current inbound mailbox configuration is temporarily reused. Non-production outbound messages are marked `TEST` in both subject and body so recipients cannot mistake acceptance testing for a production application event.
 
 - `frontend/` builds and deploys independently to Static Web Apps.
 - `backend/` packages and deploys independently to Azure Functions.

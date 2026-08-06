@@ -11,6 +11,12 @@ param location string = resourceGroup().location
 @description('Region for the isolated browser worker; separated to avoid Container Apps capacity constraints.')
 param browserWorkerLocation string = 'westus2'
 
+@description('Container image retained by infrastructure deployments until the application deployment publishes a new worker revision.')
+param browserWorkerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('Existing backend release package URL retained during infrastructure-only deployments.')
+param backendPackageUrl string = ''
+
 @description('Static Web Apps plan. Free is appropriate for development.')
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
@@ -29,8 +35,11 @@ param azureClientSecretValue string = ''
 @allowed(['F0', 'S0'])
 param documentIntelligenceSku string = 'F0'
 
-@description('Name of the existing Azure SQL logical server in this resource group.')
+@description('Name of the existing Azure SQL logical server.')
 param sqlServerName string
+
+@description('Resource group containing the existing Azure SQL logical server.')
+param sqlServerResourceGroupName string = resourceGroup().name
 
 @description('Database name created on the existing SQL server.')
 param sqlDatabaseName string = 'applypilot'
@@ -40,6 +49,9 @@ param postmarkInboundAddress string = ''
 
 @description('Custom inbound domain after its MX record is connected to Postmark.')
 param mailboxDomain string = ''
+
+@description('Runtime environment label. Non-production values cause outbound email to be marked TEST.')
+param deploymentEnvironment string = 'production'
 
 @description('Tags applied to every supported resource.')
 param tags object = {
@@ -107,13 +119,13 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
   name: '${frontendResourceName}/appsettings'
   properties: {
     AZURE_CLIENT_ID: azureClientId
-    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${concat(keyVault.outputs.uri, 'secrets/', azureClientSecretName)})'
+    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/${azureClientSecretName})'
   }
-  dependsOn: [frontend, keyVault]
 }
 
 module database 'modules/database.bicep' = {
   name: 'database'
+  scope: resourceGroup(sqlServerResourceGroupName)
   params: {
     sqlServerName: sqlServerName
     databaseName: sqlDatabaseName
@@ -141,6 +153,8 @@ module backend 'modules/backend.bicep' = {
     mailboxDomain: mailboxDomain
     serviceBusNamespace: serviceBus.outputs.namespace
     submissionQueueName: serviceBus.outputs.queueName
+    deploymentEnvironment: deploymentEnvironment
+    packageUrl: backendPackageUrl
     tags: tags
   }
 }
@@ -155,6 +169,7 @@ module browserWorker 'modules/browser-worker.bicep' = {
     sqlServerFqdn: database.outputs.serverFqdn
     sqlDatabaseName: database.outputs.name
     storageAccountName: backend.outputs.storageAccountName
+    image: browserWorkerImage
     tags: tags
   }
 }
@@ -208,3 +223,7 @@ output serviceBusNamespace string = serviceBus.outputs.namespace
 output applicationSubmissionQueue string = serviceBus.outputs.queueName
 output browserWorkerName string = browserWorker.outputs.workerName
 output browserRegistryName string = browserWorker.outputs.registryName
+output browserWorkerIdentityName string = browserWorker.outputs.identityName
+output backendStorageAccount string = backend.outputs.storageAccountName
+output backendIdentityName string = backend.outputs.identityName
+output backendIdentityClientId string = backend.outputs.identityClientId

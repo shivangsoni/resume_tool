@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fluentui/react-components": "^9.74.5",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
     "react": "latest",

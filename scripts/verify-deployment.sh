@@ -2,6 +2,7 @@
 set -euo pipefail
 
 base_url="${1:-https://blue-water-0d76ed710.7.azurestaticapps.net}"
+environment_name="${2:-production}"
 base_url="${base_url%/}"
 
 for attempt in {1..12}; do
@@ -23,4 +24,4 @@ case "$aad_status" in
   301|302|303|307|308) ;;
   *) echo "Microsoft login route returned HTTP $aad_status" >&2; exit 1 ;;
 esac
-echo "Production verification passed."
+echo "${environment_name} verification passed."

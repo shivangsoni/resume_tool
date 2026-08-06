@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@fluentui/react-components";
 import {
   BarChart3,
   Briefcase,
@@ -274,13 +275,13 @@ export default function App() {
           </div>
           <div className="header-spacer" />
           <nav className="top-nav" aria-label="Primary navigation">
-            <button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</button>
-            <button className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")}><Mail /> Email Inbox</button>
-            <button className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</button>
-            <button className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</button>
-            <button className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")}><FileText /> Résumé</button>
-            <button className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</button>
-            <button className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</button>
+            <Button appearance="subtle" className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</Button>
+            <Button appearance="subtle" className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")} icon={<Mail />}>Email Inbox</Button>
+            <Button appearance="subtle" className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</Button>
+            <Button appearance="subtle" className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</Button>
+            <Button appearance="subtle" className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")} icon={<FileText />}>Résumé</Button>
+            <Button appearance="subtle" className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</Button>
+            <Button appearance="subtle" className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</Button>
           </nav>
           {!authReady ? (
             <span className="auth-label">Checking account…</span>
@@ -501,11 +502,11 @@ function Side({
   count?: number;
 }) {
   return (
-    <button className={`side-item ${active ? "active" : ""}`} onClick={click}>
+    <Button appearance="subtle" className={`side-item ${active ? "active" : ""}`} onClick={click}>
       {icon}
       <span>{label}</span>
       {count && <em>{count}</em>}
-    </button>
+    </Button>
   );
 }
 

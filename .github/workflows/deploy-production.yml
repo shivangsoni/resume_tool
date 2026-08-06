@@ -31,14 +31,12 @@ env:
   AZURE_SUBSCRIPTION_ID: b5f1fa5f-c39f-4d7d-866c-57836fe7382f
 
 jobs:
-  deploy:
+  infrastructure:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://blue-water-0d76ed710.7.azurestaticapps.net
+    environment: production
     steps:
       - name: Check out verified revision
         uses: actions/checkout@v6
@@ -57,13 +55,40 @@ jobs:
           test "$(az provider show --namespace Microsoft.App --query registrationState --output tsv)" = "Registered"
           test "$(az provider show --namespace Microsoft.ContainerRegistry --query registrationState --output tsv)" = "Registered"
 
-      - name: Deploy Azure infrastructure
-        run: >-
-          az deployment group create
-          --resource-group "$RESOURCE_GROUP"
-          --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          --template-file infra/main.bicep
-          --parameters infra/dev.bicepparam
+      - name: Deploy infrastructure
+        run: |
+          worker_image="$(az containerapp show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --query properties.template.containers[0].image --output tsv 2>/dev/null || true)"
+          backend_package="$(az functionapp config appsettings list --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --query "[?name=='WEBSITE_RUN_FROM_PACKAGE'] | [0].value" --output tsv 2>/dev/null || true)"
+          parameters=(infra/dev.bicepparam)
+          if [[ -n "$worker_image" ]]; then
+            parameters+=("browserWorkerImage=$worker_image")
+          fi
+          if [[ -n "$backend_package" ]]; then
+            parameters+=("backendPackageUrl=$backend_package")
+          fi
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file infra/main.bicep \
+            --parameters "${parameters[@]}"
+
+  backend:
+    name: Deploy backend and worker
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install backend dependencies
         run: npm ci --prefix backend --omit=dev --workspaces=false
@@ -80,13 +105,13 @@ jobs:
       - name: Apply pending database migrations
         env:
           AZURE_SQL_SERVER: simplyapply.database.windows.net
-          AZURE_SQL_DATABASE: applypilot
+          AZURE_SQL_DATABASE: ${{ env.SQL_DATABASE }}
         run: npm run migrate --prefix backend
 
       - name: Grant browser worker database access
         env:
           AZURE_SQL_SERVER: simplyapply.database.windows.net
-          AZURE_SQL_DATABASE: applypilot
+          AZURE_SQL_DATABASE: ${{ env.SQL_DATABASE }}
           WORKER_IDENTITY_NAME: ${{ env.BROWSER_WORKER }}
         run: |
           worker_client_id="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_IDENTITY" --query clientId --output tsv)"
@@ -122,6 +147,39 @@ jobs:
           az containerapp registry set --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --server "${BROWSER_REGISTRY}.azurecr.io" --identity "$worker_identity_id"
           az containerapp update --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --image "${BROWSER_REGISTRY}.azurecr.io/applypilot-browser:${GITHUB_SHA}" --command npm start
 
+      - name: Verify backend deployment
+        run: |
+          health_url="${FRONTEND_URL%/}/api/health"
+          health=''
+          for attempt in {1..12}; do
+            health="$(curl --fail --silent --show-error "$health_url" || true)"
+            if jq -e '.status == "ok" and .database.connected == true' <<<"$health" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 10
+          done
+          jq -e '.status == "ok" and .database.connected == true' <<<"$health" >/dev/null
+
+  frontend:
+    name: Deploy frontend
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://blue-water-0d76ed710.7.azurestaticapps.net
+    steps:
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
       - name: Build frontend
         env:
           VITE_API_BASE_URL: /api
@@ -137,7 +195,7 @@ jobs:
           echo "::add-mask::$token"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy frontend
+      - name: Deploy frontend package
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
@@ -145,5 +203,14 @@ jobs:
           app_location: frontend/dist
           skip_app_build: true
 
-      - name: Verify production
-        run: bash scripts/verify-deployment.sh "$FRONTEND_URL"
+      - name: Verify frontend deployment
+        run: |
+          base_url="${FRONTEND_URL%/}"
+          curl --fail --silent --show-error "$base_url/" >/dev/null
+          curl --fail --silent --show-error "$base_url/login" >/dev/null
+          curl --fail --silent --show-error "$base_url/logged-out" >/dev/null
+          aad_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$base_url/.auth/login/aad?post_login_redirect_uri=/dashboard")"
+          case "$aad_status" in
+            301|302|303|307|308) ;;
+            *) echo "Microsoft login route returned HTTP $aad_status" >&2; exit 1 ;;
+          esac
