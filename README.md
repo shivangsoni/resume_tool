@@ -57,7 +57,7 @@ flowchart LR
     Main --> Production[Production deployment]
 ```
 
-Never push changes directly to `main`. Work on a user/feature branch, wait for `Deploy non-production`, test the non-production URL, and then open a pull request. Repository protection requires a pull request, resolved conversations, linear history, and passing CI before your manual merge. Formal approving reviews are not required because GitHub does not permit the PR author to approve their own PR in a single-owner repository. Only the resulting protected `main` commit can start `Deploy production`.
+Never push changes directly to `main`. Work on a user/feature branch; the existing CI workflow invokes the reusable non-production deployment after all four validation jobs pass. Test the non-production URL, then open a pull request. Repository protection requires a pull request, resolved conversations, linear history, and passing CI before your manual merge. Formal approving reviews are not required because GitHub does not permit the PR author to approve their own PR in a single-owner repository (a collaborator may still review and approve). Only the resulting protected `main` commit can start `Deploy production`.
 
 The non-production stack has a separate Static Web App, Function App, Blob Storage, Azure SQL database (`applypilot_nonprod`), Service Bus namespace/queue, browser worker, registry, telemetry, and managed identities. It temporarily reuses the current Postmark inbound address. Outbound staging email uses the staging Communication Service and both its subject and body begin with `TEST`; production email remains unchanged.
 
