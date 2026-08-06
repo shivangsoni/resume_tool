@@ -59,42 +59,54 @@ async function sendEmail({ to, subject, plainText }) {
 }
 
 async function mirrorToInbox(principal, { subject, plainText, providerMessageId, senderName, senderEmail }) {
+  const mailbox = await ensureMailbox(principal);
+  await appendMailboxMessage({
+    mailboxId: mailbox.Id,
+    providerMessageId,
+    senderName: senderName || "ApplyPilot",
+    senderEmail: senderEmail || process.env.EMAIL_SENDER_ADDRESS || "noreply@applypilot.local",
+    subject,
+    textBody: plainText,
+    receivedAt: new Date(),
+  });
+}
+
+async function deliverAndMirror(principal, content, providerMessageId) {
+  let mirrored = false;
   try {
-    const mailbox = await ensureMailbox(principal);
-    await appendMailboxMessage({
-      mailboxId: mailbox.Id,
+    await mirrorToInbox(principal, {
+      ...content,
       providerMessageId,
-      senderName: senderName || "ApplyPilot",
-      senderEmail: senderEmail || process.env.EMAIL_SENDER_ADDRESS || "noreply@applypilot.local",
-      subject,
-      textBody: plainText,
-      receivedAt: new Date(),
+      senderName: "ApplyPilot",
+      senderEmail: process.env.EMAIL_SENDER_ADDRESS || "donotreply@applypilot.local",
     });
-  } catch {
-    // Inbox mirror must not fail the primary notification path.
+    mirrored = true;
+  } catch (error) {
+    console.error("Inbox mirror failed", error);
+  }
+  try {
+    const result = await sendEmail({ to: principal.email, ...content });
+    return { ...result, mirrored };
+  } catch (error) {
+    if (mirrored) return { sent: false, reason: error instanceof Error ? error.message : String(error), mirrored: true };
+    throw error;
   }
 }
 
 export async function sendApplicationQueuedEmail(principal, application) {
-  const content = applicationQueuedContent(application);
-  const result = await sendEmail({ to: principal.email, ...content });
-  await mirrorToInbox(principal, {
-    ...content,
-    providerMessageId: `outbound:queued:${application.id}:${Date.now()}`,
-    senderName: "ApplyPilot",
-  });
-  return result;
+  return deliverAndMirror(
+    principal,
+    applicationQueuedContent(application),
+    `outbound:queued:${application.id}:${Date.now()}`,
+  );
 }
 
 export async function notifyApplicationStatus(principal, application, statusLabel, detail) {
-  const content = applicationStatusContent(application, statusLabel, detail);
-  const result = await sendEmail({ to: principal.email, ...content });
-  await mirrorToInbox(principal, {
-    ...content,
-    providerMessageId: `outbound:${statusLabel}:${application.id}:${Date.now()}`,
-    senderName: "ApplyPilot",
-  });
-  return result;
+  return deliverAndMirror(
+    principal,
+    applicationStatusContent(application, statusLabel, detail),
+    `outbound:${statusLabel}:${application.id}:${Date.now()}`,
+  );
 }
 
 export async function sendOpsAlertEmail({ title, detail, context = {} }) {

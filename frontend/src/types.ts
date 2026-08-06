@@ -50,6 +50,7 @@ export type Application = {
   appliedAt?: string;
   submissionQueuedAt?: string;
   lastSubmissionError?: string;
+  answers?: Record<string, string>;
   requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "blocking"; options?: string[]; required: boolean }>;
 };
 

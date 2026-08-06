@@ -77,10 +77,13 @@ type Job = {
   logoUrl?: string;
   source?: string;
   postedAt?: string;
+  applicationId?: string;
   applicationStatus?: Application["status"];
   applicationError?: string;
   applicationUpdatedAt?: string;
   submissionQueuedAt?: string;
+  requiredQuestions?: Application["requiredQuestions"];
+  applicationAnswers?: Record<string, string>;
 };
 
 export default function App() {
@@ -114,6 +117,15 @@ export default function App() {
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
+  };
+  const resolveAnswers = async (id: string, answers: Record<string, string>) => {
+    try {
+      const result = await answerApplicationQuestions(id, answers);
+      setApplications((items) => items.map((item) => (item.id === id ? result.application : item)));
+      notify("Answers saved. Application queued again.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Answers could not be saved");
+    }
   };
   useEffect(() => {
     getCurrentUser()
@@ -177,10 +189,13 @@ export default function App() {
         );
         return {
           ...item,
+          applicationId: application?.id,
           applicationStatus: application?.status,
           applicationError: application?.lastSubmissionError,
           applicationUpdatedAt: application?.updatedAt,
           submissionQueuedAt: application?.submissionQueuedAt,
+          requiredQuestions: application?.requiredQuestions,
+          applicationAnswers: application?.answers,
           status:
             application && ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
@@ -393,6 +408,8 @@ export default function App() {
                 );
               }
             }}
+            resolve={resolveAnswers}
+            profile={profile}
           />
         )}
         {page === "applications" && (
@@ -413,13 +430,8 @@ export default function App() {
                 );
               }
             }}
-            resolve={async (id, answers) => {
-              try {
-                const result = await answerApplicationQuestions(id, answers);
-                setApplications((items) => items.map((item) => item.id === id ? result.application : item));
-                notify("Answers saved. Application queued again.");
-              } catch (error) { notify(error instanceof Error ? error.message : "Answers could not be saved"); }
-            }}
+            resolve={resolveAnswers}
+            profile={profile}
           />
         )}
         {page === "resume" && (
@@ -570,6 +582,8 @@ function Dashboard(p: {
   retry: () => void;
   dismiss: (n: number) => void;
   apply: (j: Job) => Promise<void>;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  profile: Profile;
 }) {
   return (
     <div className="dash">
@@ -714,7 +728,7 @@ function Dashboard(p: {
             </div>
           )}
         </section>
-        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} />}
+        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} profile={p.profile} />}
       </div>
     </div>
   );
@@ -806,12 +820,32 @@ function JobDetail({
   job,
   dismiss,
   apply,
+  resolve,
+  profile,
 }: {
   job: Job;
   dismiss: (n: number) => void;
   apply: (j: Job) => Promise<void>;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  profile: Profile;
 }) {
   const [applying, setApplying] = useState(false);
+  const failedApplication = job.status === "failed" && job.applicationId
+    ? {
+        id: job.applicationId,
+        jobId: job.id,
+        company: job.company,
+        title: job.title,
+        location: job.location,
+        status: (job.applicationStatus || "needs_action") as Application["status"],
+        sourceUrl: job.sourceUrl || "",
+        source: job.source || "",
+        updatedAt: job.applicationUpdatedAt || new Date().toISOString(),
+        lastSubmissionError: job.applicationError,
+        requiredQuestions: job.requiredQuestions,
+        answers: job.applicationAnswers,
+      }
+    : null;
   return (
     <section className="job-detail">
       <div className="detail-top">
@@ -851,7 +885,7 @@ function JobDetail({
           </div>
         </div>
       )}
-      {job.status === "failed" && (
+      {job.status === "failed" && !failedApplication && (
         <div className="submission-banner failed">
           <CircleAlert />
           <div>
@@ -859,6 +893,9 @@ function JobDetail({
             <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
           </div>
         </div>
+      )}
+      {failedApplication && (
+        <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
       )}
       {job.status === "applied" && (
         <div className="submission-banner applied">
@@ -905,7 +942,7 @@ function JobDetail({
             : job.status === "ready"
               ? "Simple Apply"
               : job.status === "failed"
-                ? "Failed — see Applications"
+                ? "Answer questions below"
                 : job.status === "applied"
                   ? "Already applied"
                   : "Queued"}
@@ -932,10 +969,12 @@ function Applications({
   applications,
   update,
   resolve,
+  profile,
 }: {
   applications: Application[];
   update: (id: string, status: Application["status"]) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  profile: Profile;
 }) {
   return (
     <div className="basic-page">
@@ -998,7 +1037,9 @@ function Applications({
                 {new Date(application.updatedAt).toLocaleDateString()}
               </time>
             </div>
-            {(application.status === "needs_action" || application.status === "failed") && <ApplicationQuestions application={application} resolve={resolve} />}
+            {(application.status === "needs_action" || application.status === "failed") && (
+              <ApplicationQuestions application={application} resolve={resolve} profile={profile} />
+            )}
           </div>
         ))}
       </div>
@@ -1006,20 +1047,135 @@ function Applications({
   );
 }
 
-function ApplicationQuestions({ application, resolve }: { application: Application; resolve: (id: string, answers: Record<string, string>) => Promise<void> }) {
-  const questions = application.requiredQuestions || [];
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+function profileAnswerForLabel(label: string, profile: Profile) {
+  const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/first name/.test(text)) return profile.firstName;
+  if (/last name/.test(text)) return profile.lastName;
+  if (/full name|legal name/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
+  if (/email/.test(text)) return profile.email;
+  if (/phone|mobile/.test(text)) return profile.phone;
+  if (/linkedin/.test(text)) return profile.linkedin;
+  if (/github/.test(text)) return profile.github;
+  if (/portfolio|website/.test(text)) return profile.portfolio;
+  if (/city/.test(text)) return profile.city;
+  if (/state/.test(text)) return profile.state;
+  if (/postal|zip/.test(text)) return profile.postalCode;
+  if (/address/.test(text)) return profile.address;
+  if (/country/.test(text)) return profile.country;
+  if (/work authorization|authorized to work/.test(text)) return profile.workAuthorization;
+  if (/sponsor/.test(text)) return profile.sponsorship;
+  return "";
+}
+
+function ApplicationQuestions({
+  application,
+  resolve,
+  profile,
+}: {
+  application: Application;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  profile: Profile;
+}) {
+  const questions = application.requiredQuestions;
+  const seedAnswers = useMemo(() => {
+    const list = questions || [];
+    const next: Record<string, string> = { ...(application.answers || {}) };
+    for (const question of list) {
+      if (String(next[question.key] || "").trim()) continue;
+      const guessed = profileAnswerForLabel(question.label, profile);
+      if (guessed) next[question.key] = guessed;
+    }
+    return next;
+  }, [application.answers, application.id, profile, questions]);
+  const [answers, setAnswers] = useState(seedAnswers);
   const [saving, setSaving] = useState(false);
-  if (!questions.length) return <div className="action-required"><b>Action required</b><p>{application.lastSubmissionError || "The employer application needs manual review."}</p><div className="action-required-buttons"><button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button><a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a></div></div>;
+  useEffect(() => {
+    setAnswers(seedAnswers);
+  }, [seedAnswers]);
+
+  if (!questions?.length) {
+    return (
+      <div className="action-required">
+        <b>Action required</b>
+        <p>{application.lastSubmissionError || "The employer application needs manual review."}</p>
+        <div className="action-required-buttons">
+          <button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button>
+          <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a>
+        </div>
+      </div>
+    );
+  }
+
   const blocking = questions.some((question) => question.type === "blocking");
-  return <form className="action-required" onSubmit={async (event) => { event.preventDefault(); if (blocking) return; setSaving(true); try { await resolve(application.id, answers); } finally { setSaving(false); } }}>
-    <b>Additional employer questions</b>
-    <p>{application.lastSubmissionError}</p>
-    {questions.map((question) => <label key={question.key}>{question.label}
-      {question.type === "blocking" ? <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a> : question.type === "select" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option>{question.options?.map((option) => <option key={option}>{option}</option>)}</select> : question.type === "checkbox" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option><option value="yes">Yes</option><option value="no">No</option></select> : question.type === "textarea" ? <textarea required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} /> : <input required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} />}
-    </label>)}
-    {!blocking && <button className="apply" disabled={saving}>{saving ? "Saving…" : "Save answers and retry"}</button>}
-  </form>;
+  const answeredCount = questions.filter((question) => String(answers[question.key] || "").trim()).length;
+
+  return (
+    <form
+      className="action-required"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (blocking) return;
+        setSaving(true);
+        try {
+          await resolve(application.id, answers);
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <div className="action-required-head">
+        <b>Employer questions ({questions.length})</b>
+        <small>{answeredCount} of {questions.length} filled · Profile values prefilled where possible</small>
+      </div>
+      <p>{application.lastSubmissionError}</p>
+      <div className="action-required-fields">
+        {questions.map((question) => (
+          <label key={question.key}>
+            <span>{question.label}</span>
+            {question.type === "blocking" ? (
+              <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
+            ) : question.type === "select" ? (
+              <select
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+              >
+                <option value="">Select an answer</option>
+                {question.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            ) : question.type === "checkbox" ? (
+              <select
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+              >
+                <option value="">Select an answer</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            ) : question.type === "textarea" ? (
+              <textarea
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+              />
+            ) : (
+              <input
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}
+              />
+            )}
+          </label>
+        ))}
+      </div>
+      {!blocking && (
+        <button className="apply" disabled={saving}>
+          {saving ? "Saving…" : "Save answers and retry"}
+        </button>
+      )}
+    </form>
+  );
 }
 function Resume({
   documents,
