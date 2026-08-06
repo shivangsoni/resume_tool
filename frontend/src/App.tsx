@@ -33,6 +33,7 @@ import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
+import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFILE_FIELDS } from "./profileCompleteness";
 import {
   answerApplicationQuestions,
   createApplication,
@@ -370,6 +371,27 @@ export default function App() {
             </button>
           )}
         </header>
+        {currentUser && (() => {
+          const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
+          if (readiness.ready) return null;
+          return (
+            <div className="onboarding-banner">
+              <div>
+                <b>Finish setup for one-click apply</b>
+                <p>
+                  {readiness.needsResume ? "Upload a résumé, then " : ""}
+                  fill required profile fields
+                  {readiness.missing.length ? `: ${readiness.missing.map(fieldLabel).join(", ")}` : ""}.
+                  Extracted résumé details fill blank fields automatically.
+                </p>
+              </div>
+              <div className="onboarding-banner-actions">
+                {readiness.needsResume && <button className="apply" onClick={() => setPage("resume")}>Upload résumé</button>}
+                <button className="apply" onClick={() => setPage("profile")}>Complete profile</button>
+              </div>
+            </div>
+          );
+        })()}
         {page === "dashboard" && (
           <Dashboard
             visible={pagedJobs}
@@ -405,6 +427,16 @@ export default function App() {
             apply={async (j) => {
               if (!currentUser) {
                 window.location.assign("/login");
+                return;
+              }
+              const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
+              if (!readiness.ready) {
+                const parts = [
+                  readiness.needsResume ? "upload a résumé" : "",
+                  readiness.missing.length ? `complete required profile fields (${readiness.missing.map(fieldLabel).join(", ")})` : "",
+                ].filter(Boolean);
+                notify(`Before Simple Apply, ${parts.join(" and ")}.`);
+                setPage(readiness.needsResume ? "resume" : "profile");
                 return;
               }
               try {
@@ -467,9 +499,17 @@ export default function App() {
               try {
                 const result = await uploadResume(file);
                 setResumeDocuments((items) => [result.document, ...items.map((item) => ({ ...item, isPrimary: false }))]);
+                if (result.profile) {
+                  const normalized = { ...emptyProfile, ...result.profile };
+                  setProfile(normalized);
+                  saveProfile(normalized);
+                }
+                const filled = (result.mergedFields || []).length;
                 notify(
                   result.extractionStatus === "succeeded"
-                    ? "Résumé uploaded. Your profile was not changed."
+                    ? filled
+                      ? `Résumé uploaded. Filled ${filled} blank profile field${filled === 1 ? "" : "s"} from extraction.`
+                      : "Résumé uploaded. Profile already had extracted contact details."
                     : "Resume uploaded securely, but automatic extraction needs retrying",
                 );
               } catch (error) {
@@ -521,6 +561,8 @@ export default function App() {
           <ProfileView
             profile={profile}
             setProfile={setProfile}
+            hasResume={resumeDocuments.length > 0}
+            goResume={() => setPage("resume")}
             save={async () => {
               try {
                 const result = await putRemoteProfile(profile);
@@ -1108,14 +1150,24 @@ function profileAnswerForLabel(label: string, profile: Profile) {
   if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
-  if (/\bportfolio\b|\bwebsite\b/.test(text)) return profile.portfolio;
+  if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
   if (/\bcity\b/.test(text)) return profile.city;
-  if (/\bstate\b/.test(text)) return profile.state;
+  if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
-  if (/\baddress\b/.test(text)) return profile.address;
-  if (/\bwork authorization\b|\bauthorized to work\b/.test(text)) return profile.workAuthorization;
-  if (/\bsponsor/.test(text)) return profile.sponsorship;
+  if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
+  if (/\blocation\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
+  if (/\bsponsor|\bvisa\b/.test(text)) return profile.sponsorship;
+  if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
+  if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
+  if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
+  if (/\bsalary\b|\bcompensation\b|\bexpected pay\b/.test(text)) return profile.minSalary;
+  if (/\bemployment type\b|\bfull.?time|part.?time|contract\b/.test(text)) return profile.employmentTypes;
+  if (/\blanguage\b/.test(text)) return profile.preferredLanguages;
+  if (/\bcover letter\b|\bwhy (do you want|are you interested)|about yourself\b|\bsummary\b|\badditional (information|info)\b/.test(text)) {
+    return profile.additionalInfo || profile.summary || profile.headline || "";
+  }
   return "";
 }
 
@@ -1674,53 +1726,97 @@ function ProfileView({
   profile,
   setProfile,
   save,
+  hasResume,
+  goResume,
 }: {
   profile: Profile;
   setProfile: (p: Profile) => void;
   save: () => void;
+  hasResume: boolean;
+  goResume: () => void;
 }) {
+  const missing = missingProfileFields(profile);
+  const required = new Set<string>(REQUIRED_PROFILE_FIELDS);
+  const selectOptions: Partial<Record<keyof Profile, string[]>> = {
+    workAuthorization: ["US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"],
+    sponsorship: ["No", "Yes", "Not sure"],
+    educationLevel: ["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"],
+    experienceLevel: ["0-1 years", "1-3 years", "3-5 years", "5-8 years", "8+ years"],
+  };
+  const fields = [
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "location",
+    "country",
+    "state",
+    "city",
+    "address",
+    "postalCode",
+    "linkedin",
+    "github",
+    "portfolio",
+    "workAuthorization",
+    "sponsorship",
+    "skills",
+    "targetRoles",
+    "preferredLocations",
+    "employmentTypes",
+    "experienceLevel",
+    "minSalary",
+    "educationLevel",
+    "preferredLanguages",
+    "companiesToExclude",
+    "additionalInfo",
+  ] as (keyof Profile)[];
+
   return (
     <div className="basic-page screenshot-profile">
       <h1>Profile Information</h1>
-      <p>These details are reused when applications ask common questions. Review extracted resume data before queueing applications.</p>
+      <p>
+        Required fields are collected once and reused by the browser worker on every Simple Apply.
+        Uploading a résumé auto-fills blank contact and skills fields from extraction.
+      </p>
+      {(missing.length > 0 || !hasResume) && (
+        <div className="onboarding-banner profile-setup">
+          <div>
+            <b>Required before Simple Apply</b>
+            <p>
+              {!hasResume ? "Upload a résumé. " : ""}
+              {missing.length ? `Still needed: ${missing.map(fieldLabel).join(", ")}.` : "Required profile fields look complete."}
+            </p>
+          </div>
+          {!hasResume && <button className="apply" onClick={goResume}>Upload résumé</button>}
+        </div>
+      )}
       <div className="settings-card profile-grid">
-        {(
-          [
-            "firstName",
-            "lastName",
-            "email",
-            "phone",
-            "location",
-            "country",
-            "state",
-            "city",
-            "address",
-            "postalCode",
-            "linkedin",
-            "github",
-            "portfolio",
-            "workAuthorization",
-            "sponsorship",
-            "skills",
-            "targetRoles",
-            "preferredLocations",
-            "employmentTypes",
-            "experienceLevel",
-            "minSalary",
-            "educationLevel",
-            "preferredLanguages",
-            "companiesToExclude",
-            "additionalInfo",
-          ] as (keyof Profile)[]
-        ).map((k) => (
-          <label key={k}>
-            {k.replace(/([A-Z])/g, " $1")}
-            <input
-              value={profile[k]}
-              onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-            />
-          </label>
-        ))}
+        {fields.map((k) => {
+          const isRequired = required.has(k);
+          const options = selectOptions[k];
+          return (
+            <label key={k} className={isRequired && !String(profile[k] || "").trim() ? "required-missing" : undefined}>
+              {fieldLabel(k)}{isRequired ? " *" : ""}
+              {options ? (
+                <select
+                  required={isRequired}
+                  value={profile[k]}
+                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
+                >
+                  <option value="">Select…</option>
+                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                  {profile[k] && !options.includes(profile[k]) ? <option value={profile[k]}>{profile[k]}</option> : null}
+                </select>
+              ) : (
+                <input
+                  required={isRequired}
+                  value={profile[k]}
+                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
+                />
+              )}
+            </label>
+          );
+        })}
         <button className="apply" onClick={save}>
           Save profile
         </button>

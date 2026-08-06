@@ -55,7 +55,12 @@ export async function getProfile(principal) {
   const db = await pool();
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId)
     .query("SELECT ProfileJson, UpdatedAt FROM dbo.CandidateProfiles WHERE UserId=@userId");
-  if (!result.recordset.length) return { profile: null, updatedAt: null };
+  if (!result.recordset.length) {
+    const seeded = {};
+    if (principal.email) seeded.email = principal.email;
+    await saveProfile(principal, seeded);
+    return getProfile(principal);
+  }
   return { profile: JSON.parse(result.recordset[0].ProfileJson), updatedAt: result.recordset[0].UpdatedAt };
 }
 

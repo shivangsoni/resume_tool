@@ -1720,6 +1720,43 @@ a.orange-action, button.orange-action { background: #ff8500; color: #fff; }
   font-weight: 700;
   cursor: pointer;
 }
+.onboarding-banner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #ffd099;
+  background: linear-gradient(135deg, #fff8f0, #fff1e6);
+  color: #7a3e00;
+}
+.onboarding-banner b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+.onboarding-banner p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  max-width: 720px;
+}
+.onboarding-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.onboarding-banner.profile-setup {
+  margin-bottom: 18px;
+}
+.profile-grid label.required-missing input,
+.profile-grid label.required-missing select {
+  border-color: #f97066;
+  background: #fff8f7;
+}
 .screenshot-profile .settings-card {
   background: white;
   border-color: #dde3eb;

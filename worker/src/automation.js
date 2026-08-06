@@ -36,14 +36,24 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
-  if (/\bportfolio\b|\bwebsite\b/.test(text)) return profile.portfolio;
+  if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
   if (/\bcity\b/.test(text)) return profile.city;
-  if (/\bstate\b/.test(text)) return profile.state;
+  if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
-  if (/\baddress\b/.test(text)) return profile.address;
-  if (/\bwork authorization\b|\bauthorized to work\b/.test(text)) return profile.workAuthorization;
-  if (/\bsponsor/.test(text)) return profile.sponsorship;
+  if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
+  if (/\blocation\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
+  if (/\bsponsor|\bvisa\b/.test(text)) return profile.sponsorship;
+  if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
+  if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
+  if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
+  if (/\bsalary\b|\bcompensation\b|\bexpected pay\b/.test(text)) return profile.minSalary;
+  if (/\bemployment type\b|\bfull.?time|part.?time|contract\b/.test(text)) return profile.employmentTypes;
+  if (/\blanguage\b/.test(text)) return profile.preferredLanguages;
+  if (/\bcover letter\b|\bwhy (do you want|are you interested)|about yourself\b|\bsummary\b|\badditional (information|info)\b/.test(text)) {
+    return profile.additionalInfo || profile.summary || profile.headline || "";
+  }
   return "";
 };
 

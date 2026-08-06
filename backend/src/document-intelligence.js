@@ -11,7 +11,8 @@ export function extractProfileFromText(content) {
   const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
   const phone = text.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/)?.[0] || "";
   const linkedin = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/[A-Z0-9_-]+\/?/i)?.[0] || "";
-  const portfolio = text.match(/https?:\/\/(?![^\s]*linkedin\.com)[^\s)]+/i)?.[0] || "";
+  const github = text.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[A-Z0-9_-]+\/?/i)?.[0] || "";
+  const portfolio = text.match(/https?:\/\/(?![^\s]*(?:linkedin|github)\.com)[^\s)]+/i)?.[0] || "";
   const nameLine = lines.slice(0, 12).find((line) => {
     const words = line.split(/\s+/);
     return words.length >= 2 && words.length <= 4 && /^[A-Za-z][A-Za-z .'-]+$/.test(line)
@@ -19,14 +20,53 @@ export function extractProfileFromText(content) {
   }) || "";
   const name = nameLine.split(/\s+/);
   const skills = skillNames.filter((skill) => new RegExp(`(^|[^A-Za-z0-9+#])${skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9+#]|$)`, "i").test(text));
+
+  const locationLine = lines.slice(0, 20).find((line) =>
+    /,/.test(line)
+    && /[A-Za-z]/.test(line)
+    && !/@/.test(line)
+    && !/https?:/i.test(line)
+    && line.length < 80
+    && (/\b[A-Z]{2}\b/.test(line) || /\b(USA|United States|Canada|UK|Remote)\b/i.test(line) || /\b(WA|CA|NY|TX|FL|IL|MA|CO|OR|BC|ON)\b/.test(line)),
+  ) || "";
+  let city = "";
+  let state = "";
+  let country = "";
+  let location = "";
+  if (locationLine) {
+    location = locationLine;
+    const parts = locationLine.split(",").map((part) => part.trim()).filter(Boolean);
+    if (parts.length >= 1) city = parts[0];
+    if (parts.length >= 2) {
+      const second = parts[1];
+      const stateMatch = second.match(/\b([A-Z]{2})\b/);
+      state = stateMatch ? stateMatch[1] : second.replace(/\d+/g, "").trim();
+    }
+    if (/\b(united states|usa|u\.s\.a\.?)\b/i.test(locationLine)) country = "United States";
+    else if (/\bcanada\b/i.test(locationLine)) country = "Canada";
+    else if (/\b(uk|united kingdom)\b/i.test(locationLine)) country = "United Kingdom";
+    else if (parts.length >= 3) country = parts[parts.length - 1];
+  }
+
+  const educationLevel = /\bph\.?d\b|\bdoctorate\b/i.test(text) ? "PhD"
+    : /\bmaster'?s\b|\bm\.?s\.?\b|\bmba\b/i.test(text) ? "Master's"
+      : /\bbachelor'?s\b|\bb\.?s\.?\b|\bb\.?a\.?\b/i.test(text) ? "Bachelor's"
+        : "";
+
   return {
     firstName: name[0] || "",
     lastName: name.length > 1 ? name.slice(1).join(" ") : "",
     email,
     phone,
     linkedin: linkedin && !/^https?:/i.test(linkedin) ? `https://${linkedin}` : linkedin,
+    github: github && !/^https?:/i.test(github) ? `https://${github}` : github,
     portfolio,
     skills: skills.join(", "),
+    location,
+    city,
+    state,
+    country,
+    educationLevel,
   };
 }
 
@@ -53,7 +93,7 @@ export async function analyzeResume(buffer, contentType) {
     const body = await result.json();
     if (body.status === "succeeded") {
       const content = body.analyzeResult?.content || "";
-      return { profile: extractProfileFromText(content) };
+      return { profile: extractProfileFromText(content), contentPreview: content.slice(0, 4000) };
     }
     if (body.status === "failed") throw new Error("Document Intelligence could not analyze the resume.");
   }

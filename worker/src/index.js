@@ -24,18 +24,28 @@ async function load(id) {
       Status='queued'
       OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
     );
-    SELECT a.Id,a.UserId,u.Email,p.ProfileJson,d.BlobName,d.FileName,m.Alias AS MailboxAlias,m.Id AS MailboxId
+    SELECT a.Id,a.UserId,u.Email,p.ProfileJson,d.BlobName,d.FileName,d.ExtractionJson,m.Alias AS MailboxAlias,m.Id AS MailboxId
     FROM dbo.Applications a
     JOIN dbo.Users u ON u.Id=a.UserId
     LEFT JOIN dbo.CandidateProfiles p ON p.UserId=a.UserId
     LEFT JOIN dbo.Mailboxes m ON m.UserId=a.UserId
-    OUTER APPLY (SELECT TOP 1 BlobName,FileName FROM dbo.Documents WHERE UserId=a.UserId AND DocumentType='resume' ORDER BY IsPrimary DESC,CreatedAt DESC) d
+    OUTER APPLY (SELECT TOP 1 BlobName,FileName,ExtractionJson FROM dbo.Documents WHERE UserId=a.UserId AND DocumentType='resume' ORDER BY IsPrimary DESC,CreatedAt DESC) d
     WHERE a.Id=@id;
   `);
   if (!result.recordsets[0].length) return null;
   const app = result.recordsets[0][0]; const context = result.recordsets[1][0];
   const answers = app.AnswersJson ? JSON.parse(app.AnswersJson) : {};
-  const profile = { ...(context.ProfileJson ? JSON.parse(context.ProfileJson) : {}) };
+  const extracted = (() => {
+    try {
+      const parsed = context.ExtractionJson ? JSON.parse(context.ExtractionJson) : null;
+      return parsed?.profile && typeof parsed.profile === "object" ? parsed.profile : {};
+    } catch { return {}; }
+  })();
+  const storedProfile = context.ProfileJson ? JSON.parse(context.ProfileJson) : {};
+  const profile = { ...extracted, ...storedProfile };
+  for (const [key, value] of Object.entries(extracted)) {
+    if (typeof value === "string" && value.trim() && !String(profile[key] || "").trim()) profile[key] = value.trim();
+  }
   const mailboxEmail = addressForAlias(context.MailboxAlias);
   // Prefer private inbound alias so recruiter replies land in ApplyPilot Inbox.
   const applyEmail = mailboxEmail || answers.email || profile.email || context.Email;

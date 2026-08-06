@@ -22,9 +22,11 @@ test("compactLabel trims oversized label text", () => {
 });
 
 test("knownAnswer still matches when label text is noisy", () => {
-  const profile = { country: "United States", workAuthorization: "Citizen", sponsorship: "No" };
+  const profile = { country: "United States", workAuthorization: "Citizen", sponsorship: "No", skills: "React, TypeScript", educationLevel: "Bachelor's" };
   assert.equal(knownAnswer("Country United States Canada Mexico", profile, {}), "United States");
   assert.equal(knownAnswer("Are you authorized to work in the US?", profile, {}), "Citizen");
+  assert.equal(knownAnswer("Relevant skills", profile, {}), "React, TypeScript");
+  assert.equal(knownAnswer("Highest education", profile, {}), "Bachelor's");
 });
 
 test("humanizeFieldName turns Greenhouse-style names into labels", () => {

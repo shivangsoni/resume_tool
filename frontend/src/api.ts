@@ -93,6 +93,8 @@ export async function uploadResume(file: File) {
   return body as {
     document: ResumeDocument;
     suggestions: Partial<Profile>;
+    profile?: Profile | null;
+    mergedFields?: string[];
     extractionStatus: "succeeded" | "failed";
   };
 }
