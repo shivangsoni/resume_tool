@@ -50,6 +50,7 @@ import {
   uploadResume,
   deleteResume,
   renameResume,
+  getAuthProviders,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
@@ -300,13 +301,16 @@ export default function App() {
           <div className="header-spacer" />
           <nav className="top-nav" aria-label="Primary navigation">
             <Button appearance="subtle" className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</Button>
+            <Button appearance="subtle" className={page === "applications" ? "active" : ""} onClick={() => setPage("applications")} icon={<Briefcase />}>Applications</Button>
             <Button appearance="subtle" className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")} icon={<Mail />}>Email Inbox</Button>
             <Button appearance="subtle" className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</Button>
             <Button appearance="subtle" className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</Button>
             <Button appearance="subtle" className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")} icon={<FileText />}>Résumé</Button>
-            <Button appearance="subtle" className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</Button>
+            <Button appearance="subtle" className={page === "preferences" ? "active" : ""} onClick={() => setPage("preferences")} icon={<SlidersHorizontal />}>Preferences</Button>
             <Button appearance="subtle" className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</Button>
+            <Button appearance="subtle" className="tour-trigger" onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Tour</Button>
           </nav>
+          <ProductTour page={page} setPage={setPage} />
           {!authReady ? (
             <span className="auth-label">Checking account…</span>
           ) : currentUser ? (
@@ -1146,33 +1150,96 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
 }
 
 function AuthPage() {
+  const [providers, setProviders] = useState<Array<{ id: string; label: string; href: string; enabled: boolean }>>([
+    { id: "aad", label: "Microsoft", href: "/.auth/login/aad?post_login_redirect_uri=/dashboard", enabled: true },
+  ]);
+  useEffect(() => {
+    getAuthProviders()
+      .then((result) => setProviders(result.providers))
+      .catch(() => undefined);
+  }, []);
+  const mark = (id: string) => {
+    if (id === "aad") return <span className="microsoft-mark"><i /><i /><i /><i /></span>;
+    if (id === "google") return <span className="provider-letter google">G</span>;
+    if (id === "github") return <span className="provider-letter github">GH</span>;
+    return <span className="provider-letter facebook">f</span>;
+  };
   return (
     <div className="auth-page">
       <section className="auth-card">
         <div className="auth-brand"><WandSparkles /></div>
         <h1>Create your ApplyPilot account</h1>
         <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
-        <a className="provider-button microsoft" href="/.auth/login/aad?post_login_redirect_uri=/dashboard">
-          <span className="microsoft-mark"><i /><i /><i /><i /></span>
-          Continue with Microsoft
-        </a>
-        <button className="provider-button" disabled title="Google OAuth registration is not configured in Azure yet">
-          <span className="provider-letter google">G</span>
-          Continue with Google
-          <small>Provider setup required</small>
-        </button>
-        <button className="provider-button github" disabled title="GitHub OAuth registration is not configured in Azure yet">
-          <span className="provider-letter github">GH</span>
-          Continue with GitHub
-          <small>Provider setup required</small>
-        </button>
-        <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
-          <span className="provider-letter facebook">f</span>
-          Continue with Facebook
-          <small>Provider setup required</small>
-        </button>
+        {providers.map((provider) =>
+          provider.enabled ? (
+            <a key={provider.id} className={`provider-button ${provider.id === "aad" ? "microsoft" : provider.id}`} href={provider.href}>
+              {mark(provider.id)}
+              Continue with {provider.label}
+            </a>
+          ) : (
+            <button key={provider.id} className={`provider-button ${provider.id}`} disabled title={`${provider.label} OAuth registration is not configured in Azure yet`}>
+              {mark(provider.id)}
+              Continue with {provider.label}
+              <small>Provider setup required</small>
+            </button>
+          ),
+        )}
         <div className="auth-note">By continuing, you agree to use ApplyPilot for your own job search and to review information before submission.</div>
       </section>
+    </div>
+  );
+}
+
+function ProductTour({
+  page,
+  setPage,
+}: {
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const steps = [
+    { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
+    { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
+    { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
+    { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
+    { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
+    { page: "preferences" as const, title: "Preferences", body: "Set target titles, locations, and workplace types to improve match quality." },
+  ];
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem("applypilot.tour.done") !== "1"; } catch { return true; }
+  });
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const start = () => { setIndex(0); setOpen(true); };
+    window.addEventListener("applypilot:start-tour", start);
+    return () => window.removeEventListener("applypilot:start-tour", start);
+  }, []);
+  useEffect(() => {
+    if (open) setPage(steps[index].page);
+  }, [open, index]);
+  if (!open) return null;
+  const step = steps[index];
+  const finish = () => {
+    try { localStorage.setItem("applypilot.tour.done", "1"); } catch { /* ignore */ }
+    setOpen(false);
+  };
+  return (
+    <div className="tour-overlay" role="dialog" aria-modal="true" aria-label="ApplyPilot walkthrough">
+      <div className="tour-card">
+        <small>Step {index + 1} of {steps.length}</small>
+        <h2>{step.title}</h2>
+        <p>{step.body}</p>
+        <div className="tour-actions">
+          <button className="not" onClick={finish}>Skip</button>
+          {index > 0 && <button className="not" onClick={() => setIndex((value) => value - 1)}>Back</button>}
+          {index < steps.length - 1 ? (
+            <button className="apply" onClick={() => setIndex((value) => value + 1)}>Next</button>
+          ) : (
+            <button className="apply" onClick={finish}>Done</button>
+          )}
+        </div>
+        <p className="tour-hint">You are on: <b>{page}</b>. Restart anytime with Tour in the top nav.</p>
+      </div>
     </div>
   );
 }
@@ -1200,6 +1267,7 @@ function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
 function InboxPage() {
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [address, setAddress] = useState<string | null>(null);
+  const [routingNote, setRoutingNote] = useState("");
   const [selected, setSelected] = useState<MailMessage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1207,6 +1275,7 @@ function InboxPage() {
   useEffect(() => {
     getMailbox().then((result) => {
       setAddress(result.address);
+      setRoutingNote(result.routingNote || "");
       setMessages(result.messages);
       setSelected(result.messages[0] || null);
     }).catch((cause) => setError(cause.message === "AUTH_REQUIRED" ? "Sign in to open your mailbox." : cause.message)).finally(() => setLoading(false));
@@ -1223,9 +1292,9 @@ function InboxPage() {
 
   return (
     <div className="simple-page">
-      <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Application messages received through a connected mailbox appear here.</p></div>
-      {address && <div className="info-banner">Your private application address: <strong>{address}</strong></div>}
-      {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Use the address above on applications. Recruiter replies and verification messages will appear here.</p></section> : (
+      <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
+      {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
+      {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
           <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p><pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>

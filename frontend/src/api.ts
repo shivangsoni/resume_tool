@@ -116,7 +116,10 @@ export const answerApplicationQuestions = (id: string, answers: Record<string, s
   });
 
 export const getMailbox = (offset = 0) =>
-  request<{ address: string | null; messages: MailMessage[]; total: number }>(`/mailbox?limit=25&offset=${offset}`);
+  request<{ address: string | null; messages: MailMessage[]; total: number; routingNote?: string }>(`/mailbox?limit=25&offset=${offset}`);
 
 export const markMailboxMessageRead = (id: string) =>
   request<{ message: MailMessage }>(`/mailbox/${id}`, { method: "PATCH", body: "{}" });
+
+export const getAuthProviders = () =>
+  request<{ providers: Array<{ id: string; label: string; href: string; enabled: boolean }> }>("/auth/providers");

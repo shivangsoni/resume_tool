@@ -1816,9 +1816,17 @@ select {
   .top-nav {
     order: 3;
     width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 2px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
   }
   .top-nav button {
     font-size: 11px;
+    flex: none;
+    white-space: nowrap;
+    padding: 8px 10px;
   }
   .simple-page {
     padding: 24px 14px 80px;
@@ -1832,4 +1840,87 @@ select {
   .mail-list { border-right: 0; max-height: 300px; }
   .public-header { padding: 0 18px; }.public-header nav > a:first-child { display: none; }
   .landing-hero { grid-template-columns: 1fr; padding-top: 56px; gap: 44px; }.landing-hero h1 { font-size: 46px; }.landing-features { grid-template-columns: 1fr; }
+  .metric-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ready-card {
+    grid-column: span 2;
+  }
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbar select,
+  .searchbox {
+    width: 100%;
+    min-width: 0;
+  }
+  .job-detail {
+    display: none;
+  }
+  .job-layout {
+    grid-template-columns: 1fr;
+  }
+  .auth-card {
+    margin: 24px 14px;
+    padding: 24px 18px;
+  }
+  .tour-card {
+    width: min(94vw, 420px);
+    padding: 20px;
+  }
+  .info-banner {
+    font-size: 12px;
+    line-height: 1.45;
+    word-break: break-word;
+  }
 }
+
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgb(16 24 40 / 45%);
+  display: grid;
+  place-items: end center;
+  padding: 24px;
+}
+.tour-card {
+  width: min(440px, 100%);
+  background: white;
+  border-radius: 16px;
+  padding: 22px 24px;
+  box-shadow: 0 18px 50px rgb(16 24 40 / 22%);
+  margin-bottom: 18px;
+}
+.tour-card small {
+  color: #98a2b3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 700;
+}
+.tour-card h2 {
+  margin: 8px 0 6px;
+  font-size: 22px;
+}
+.tour-card p {
+  color: #475467;
+  line-height: 1.5;
+  margin: 0;
+}
+.tour-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.tour-hint {
+  margin-top: 12px !important;
+  font-size: 12px;
+}
+.tour-trigger {
+  border: 1px dashed #d0d5dd !important;
+}
+

@@ -371,18 +371,50 @@ export async function saveInboundMessage(payload) {
   const alias = String(payload.MailboxHash || "").toLowerCase() || String(payload.ToFull?.[0]?.Email || payload.To || "").split("@")[0].split("+").pop().toLowerCase();
   if (!alias) return null;
   const db = await pool();
-  const result = await db.request().input("alias", sql.VarChar(64), alias)
-    .input("providerId", sql.NVarChar(255), String(payload.MessageID || "").slice(0, 255))
-    .input("senderName", sql.NVarChar(200), String(payload.FromName || payload.FromFull?.Name || "").slice(0, 200) || null)
-    .input("senderEmail", sql.NVarChar(320), String(payload.FromFull?.Email || payload.From || "").slice(0, 320))
-    .input("subject", sql.NVarChar(500), String(payload.Subject || "(no subject)").slice(0, 500))
-    .input("body", sql.NVarChar(sql.MAX), String(payload.TextBody || payload.StrippedTextReply || "").slice(0, 250000))
-    .input("receivedAt", sql.DateTime2, new Date(payload.Date || Date.now()))
-    .input("attachments", sql.Int, Math.min(Number(payload.Attachments?.length || 0), 100)).query(`
+  const mailbox = await db.request().input("alias", sql.VarChar(64), alias).query("SELECT Id FROM dbo.Mailboxes WHERE Alias=@alias");
+  if (!mailbox.recordset.length) return null;
+  return appendMailboxMessage({
+    mailboxId: mailbox.recordset[0].Id,
+    providerMessageId: String(payload.MessageID || "").slice(0, 255),
+    senderName: String(payload.FromName || payload.FromFull?.Name || "").slice(0, 200) || null,
+    senderEmail: String(payload.FromFull?.Email || payload.From || "").slice(0, 320),
+    subject: String(payload.Subject || "(no subject)").slice(0, 500),
+    textBody: String(payload.TextBody || payload.StrippedTextReply || "").slice(0, 250000),
+    receivedAt: new Date(payload.Date || Date.now()),
+    attachmentCount: Math.min(Number(payload.Attachments?.length || 0), 100),
+  });
+}
+
+export async function appendMailboxMessage({
+  mailboxId,
+  providerMessageId,
+  senderName,
+  senderEmail,
+  subject,
+  textBody,
+  receivedAt = new Date(),
+  attachmentCount = 0,
+}) {
+  const db = await pool();
+  const result = await db.request()
+    .input("mailboxId", sql.UniqueIdentifier, mailboxId)
+    .input("providerId", sql.NVarChar(255), String(providerMessageId || "").slice(0, 255))
+    .input("senderName", sql.NVarChar(200), senderName ? String(senderName).slice(0, 200) : null)
+    .input("senderEmail", sql.NVarChar(320), String(senderEmail || "").slice(0, 320))
+    .input("subject", sql.NVarChar(500), String(subject || "(no subject)").slice(0, 500))
+    .input("body", sql.NVarChar(sql.MAX), String(textBody || "").slice(0, 250000))
+    .input("receivedAt", sql.DateTime2, receivedAt)
+    .input("attachments", sql.Int, Math.min(Number(attachmentCount) || 0, 100)).query(`
       INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ReceivedAt,AttachmentCount)
       OUTPUT inserted.*
-      SELECT Id,@providerId,@senderName,@senderEmail,@subject,@body,@receivedAt,@attachments FROM dbo.Mailboxes WHERE Alias=@alias
-      AND NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
+      SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,@receivedAt,@attachments
+      WHERE NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
     `);
   return result.recordset.length ? mapMessage(result.recordset[0]) : null;
+}
+
+export async function getMailboxAliasForUserId(userId) {
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).query("SELECT Alias FROM dbo.Mailboxes WHERE UserId=@userId");
+  return result.recordset[0]?.Alias || null;
 }

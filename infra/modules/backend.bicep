@@ -16,6 +16,8 @@ param serviceBusNamespace string
 param submissionQueueName string
 param deploymentEnvironment string = 'production'
 param packageUrl string = ''
+param opsAlertEmail string = 'shivangsoni22@gmail.com'
+param authProviders string = 'aad'
 param tags object
 
 resource functionIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -115,6 +117,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
         { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
         { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
+        { name: 'OPS_ALERT_EMAIL', value: opsAlertEmail }
+        { name: 'AUTH_PROVIDERS', value: authProviders }
       ], empty(packageUrl) ? [] : [
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: packageUrl }
         { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: 'SystemAssigned' }
@@ -124,8 +128,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 }
 
 resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  // Include principalId so identity swaps create a new assignment instead of updating an immutable one.
-  name: guid(storage.id, functionIdentity.properties.principalId, 'StorageBlobDataContributor')
+  // Name must be known at deploy start (BCP120). Include the user-assigned identity name so this
+  // differs from older system-assigned assignments keyed only by functionAppName.
+  name: guid(storage.id, functionAppName, functionIdentity.name, 'StorageBlobDataContributor')
   scope: storage
   properties: {
     principalId: functionIdentity.properties.principalId
@@ -135,7 +140,7 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 resource packageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionApp.identity.principalId, 'PackageStorageBlobDataReader')
+  name: guid(storage.id, functionAppName, 'PackageStorageBlobDataReader-system')
   scope: storage
   properties: {
     principalId: functionApp.identity.principalId
@@ -152,3 +157,5 @@ output identityName string = functionIdentity.name
 output identityClientId string = functionIdentity.properties.clientId
 output storageAccountName string = storage.name
 output id string = functionApp.id
+output appInsightsId string = insights.id
+output appInsightsConnectionString string = insights.properties.ConnectionString

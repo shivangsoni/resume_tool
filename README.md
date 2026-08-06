@@ -159,11 +159,13 @@ Official write APIs exist for Greenhouse, Lever, and SmartRecruiters, but requir
 
 ### Authentication providers
 
-Microsoft delegated sign-in is configured at `/.auth/login/aad`. Other provider buttons remain unavailable until both their provider registration and required Static Web Apps settings are deployed; incomplete providers must not be included in `staticwebapp.config.json` because one invalid custom provider can disable the platform auth routes. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+Microsoft delegated sign-in is configured at `/.auth/login/aad`. The login page loads `/api/auth/providers` and enables only providers listed in the Function App setting `AUTH_PROVIDERS` (comma-separated: `aad`, `google`, `github`, `facebook`). Incomplete social providers must not be added to `staticwebapp.config.json` until their client IDs/secrets are present in Static Web Apps app settings—one invalid custom provider can disable platform auth routes.
 
-Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations. The custom Entra provider uses the tenant-specific v2 issuer so Static Web Apps can validate the callback token issuer.
+To enable Google, GitHub, or Facebook after creating those OAuth apps, pass their credentials as Bicep parameters (`googleClientId` / `googleClientSecret`, `githubClientId` / `githubClientSecret`, `facebookAppId` / `facebookAppSecret`) or run `scripts/enable-social-auth.ps1`, then redeploy the frontend so the updated `staticwebapp.config.json` is published. The first authenticated profile/API request maps the provider subject to a SQL user (with email-based identity merge), so sign-up and sign-in use the same secure flow.
 
-GitHub, Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until the provider and callback URLs are configured and tested. Register these callbacks with the providers:
+Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations.
+
+GitHub, Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Register these callbacks with the providers:
 
 ```text
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/github/callback
@@ -176,14 +178,16 @@ Client IDs and secrets are stored in Static Web Apps application settings—neve
 Required external inputs:
 
 - Google OAuth web client ID and client secret, with the Google callback allowlisted.
+- GitHub OAuth app client ID and secret, with the GitHub callback allowlisted.
 - Meta/Facebook application ID and secret, with the Facebook callback allowlisted and the app published for non-admin users.
-- Microsoft Entra application client ID/secret if switching from the current preconfigured Microsoft provider to a multi-provider custom configuration.
 
 ### Email and mailbox behavior
 
 Postmark test mode permits inbound processing from any domain, but limits the account to 100 processed messages. Apply for Postmark approval before production volume requires more than that. ApplyPilot continues using Azure Communication Services rather than Postmark for outbound queue confirmations.
 
 Azure Communication Services Email provides outbound delivery only. The deployed Azure-managed domain sends queue confirmations from its fixed `donotreply@...azurecomm.net` address; Azure-managed sender usernames cannot be personalized. The Function uses managed identity with the Communication and Email Service Owner role, so no email connection string is stored in the app.
+
+Outbound status emails (queued, submitted, needs action) are also mirrored into the user's ApplyPilot inbox (`dbo.InboundMessages`) so the Email Inbox tab stays populated even when recruiters never reply. Simple Apply sets the employer contact email to the user's private inbound alias so recruiter replies route through Postmark into that same inbox. The browser worker prefers `answers.email`, then the mailbox alias, then the profile/sign-in email.
 
 Inbound mail uses a Postmark inbound stream. Until the custom MX domain is verified, each user receives a plus-addressed alias under the server address configured by `POSTMARK_INBOUND_ADDRESS`. After Postmark verifies `applypilotmail.accesscam.org`, set `mailboxDomain` in `infra/dev.bicepparam` to expose the shorter `alias@applypilotmail.accesscam.org` form. The webhook is an Azure Function with `function` authorization; never commit or publish its function key.
 
@@ -196,6 +200,14 @@ $postmarkWebhook | Set-Clipboard
 ```
 
 Postmark must receive HTTP 200 from its webhook check. Apply migration `007_inbound_mailbox.sql` before sending the check payload. Messages are deduplicated by provider message ID; only bounded plain text and attachment counts are stored, and attachment downloads remain disabled pending malware scanning.
+
+### Telemetry and alerting
+
+Application Insights on the Function App raises metric alerts for exceptions and failed requests. Action group `applypilotcentral-ops` emails `shivangsoni22@gmail.com` (override with Bicep `opsAlertEmail`). Runtime failures in applications/mailbox paths also attempt an ACS ops alert email to the same address via `OPS_ALERT_EMAIL`.
+
+### Product walkthrough and mobile layout
+
+Signed-in users see a first-run walkthrough covering Dashboard, Applications, Inbox, Résumé, Profile, and Preferences. Restart it anytime from **Tour** in the top nav. The shell is responsive below 700px: horizontal-scroll top navigation, two-column KPI cards, stacked filters, and list-first job browsing.
 
 `apply.com` is not owned by this subscription and cannot be used or verified here. Unique receiving aliases such as `username@your-domain.example` require:
 

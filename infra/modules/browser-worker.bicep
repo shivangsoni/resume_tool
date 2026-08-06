@@ -6,6 +6,8 @@ param sqlServerFqdn string
 param sqlDatabaseName string
 param storageAccountName string
 param image string
+param postmarkInboundAddress string = ''
+param mailboxDomain string = ''
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -78,6 +80,8 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           { name: 'AZURE_STORAGE_ACCOUNT', value: storageAccountName }
           { name: 'RESUME_CONTAINER', value: 'resumes' }
           { name: 'AZURE_CLIENT_ID', value: workerIdentity.properties.clientId }
+          { name: 'POSTMARK_INBOUND_ADDRESS', value: postmarkInboundAddress }
+          { name: 'MAILBOX_DOMAIN', value: mailboxDomain }
         ]
         resources: {
           cpu: json('1.0')

@@ -1,14 +1,8 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
 import { listInboundMessages, markInboundMessageRead, saveInboundMessage } from "../database.js";
-
-const addressFor = (alias) => {
-  const domain = process.env.MAILBOX_DOMAIN;
-  if (domain) return `${alias}@${domain}`;
-  const inbound = process.env.POSTMARK_INBOUND_ADDRESS || "";
-  const [local, host] = inbound.split("@");
-  return local && host ? `${local}+${alias}@${host}` : null;
-};
+import { addressForAlias } from "../mailbox-address.js";
+import { sendOpsAlertEmail } from "../notifications.js";
 
 app.http("mailbox", {
   methods: ["GET"], authLevel: "anonymous", route: "mailbox",
@@ -18,8 +12,20 @@ app.http("mailbox", {
       const limit = Math.min(Math.max(Number(request.query.get("limit")) || 25, 1), 50);
       const offset = Math.max(Number(request.query.get("offset")) || 0, 0);
       const result = await listInboundMessages(principal, limit, offset);
-      return { jsonBody: { address: addressFor(result.mailbox.Alias), messages: result.messages, total: result.total }, headers: { "Cache-Control": "no-store" } };
-    } catch (error) { context.error("Mailbox request failed", error); return { status: 500, jsonBody: { error: "Mailbox request failed." } }; }
+      return {
+        jsonBody: {
+          address: addressForAlias(result.mailbox.Alias),
+          messages: result.messages,
+          total: result.total,
+          routingNote: "Employer applications use this address so recruiter replies appear here. Status emails are also copied into this inbox.",
+        },
+        headers: { "Cache-Control": "no-store" },
+      };
+    } catch (error) {
+      context.error("Mailbox request failed", error);
+      try { await sendOpsAlertEmail({ title: "Mailbox API failure", detail: error instanceof Error ? error.message : String(error) }); } catch { /* ignore */ }
+      return { status: 500, jsonBody: { error: "Mailbox request failed." } };
+    }
   },
 });
 
@@ -45,6 +51,10 @@ app.http("postmarkInbound", {
       const message = await saveInboundMessage(payload);
       if (!message) context.warn("Inbound message did not match a mailbox alias", payload.MessageID);
       return { status: 200 };
-    } catch (error) { context.error("Postmark inbound processing failed", error); return { status: 500 } ; }
+    } catch (error) {
+      context.error("Postmark inbound processing failed", error);
+      try { await sendOpsAlertEmail({ title: "Postmark inbound failure", detail: error instanceof Error ? error.message : String(error) }); } catch { /* ignore */ }
+      return { status: 500 };
+    }
   },
 });
