@@ -69,10 +69,18 @@ jobs:
           auth_secret="$(az keyvault secret show --vault-name "$AUTH_KEY_VAULT" --name "$AUTH_SECRET_NAME" --query value --output tsv)"
           test -n "$auth_secret"
           worker_image="$(az containerapp list --resource-group "$RESOURCE_GROUP" --query "[?tags.application=='ApplyPilot' && tags.environment=='nonproduction'] | [0].properties.template.containers[0].image" --output tsv)"
+          backend_name="$(az functionapp list --resource-group "$RESOURCE_GROUP" --query "[?tags.application=='ApplyPilot' && tags.environment=='nonproduction'] | [0].name" --output tsv)"
+          backend_package=''
+          if [[ -n "$backend_name" ]]; then
+            backend_package="$(az functionapp config appsettings list --resource-group "$RESOURCE_GROUP" --name "$backend_name" --query "[?name=='WEBSITE_RUN_FROM_PACKAGE'] | [0].value" --output tsv)"
+          fi
           deployment="nonprod-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           parameters=(infra/nonprod.bicepparam "azureClientSecretValue=$auth_secret")
           if [[ -n "$worker_image" ]]; then
             parameters+=("browserWorkerImage=$worker_image")
+          fi
+          if [[ -n "$backend_package" ]]; then
+            parameters+=("backendPackageUrl=$backend_package")
           fi
           az deployment group create --resource-group "$RESOURCE_GROUP" --name "$deployment" --template-file infra/main.bicep --parameters "${parameters[@]}"
           for output in frontendName frontendUrl backendName backendIdentityName backendIdentityClientId sqlDatabase browserWorkerName browserRegistryName; do

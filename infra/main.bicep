@@ -14,6 +14,9 @@ param browserWorkerLocation string = 'westus2'
 @description('Container image retained by infrastructure deployments until the application deployment publishes a new worker revision.')
 param browserWorkerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('Existing backend release package URL retained during infrastructure-only deployments.')
+param backendPackageUrl string = ''
+
 @description('Static Web Apps plan. Free is appropriate for development.')
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
@@ -116,9 +119,8 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
   name: '${frontendResourceName}/appsettings'
   properties: {
     AZURE_CLIENT_ID: azureClientId
-    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${concat(keyVault.outputs.uri, 'secrets/', azureClientSecretName)})'
+    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/${azureClientSecretName})'
   }
-  dependsOn: [frontend, keyVault]
 }
 
 module database 'modules/database.bicep' = {
@@ -152,6 +154,7 @@ module backend 'modules/backend.bicep' = {
     serviceBusNamespace: serviceBus.outputs.namespace
     submissionQueueName: serviceBus.outputs.queueName
     deploymentEnvironment: deploymentEnvironment
+    packageUrl: backendPackageUrl
     tags: tags
   }
 }

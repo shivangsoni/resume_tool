@@ -83,7 +83,7 @@ The workflow is active after it is pushed to `main`. Production protection rules
 
 ## Complete Azure deployment
 
-The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. On later runs, the infrastructure job passes the currently deployed image back to Bicep so a backend-stage failure cannot roll the worker back to the bootstrap image. Keep this order to avoid an identity/registry dependency cycle on first deployment.
+The browser worker is first created with a public bootstrap image. After Azure assigns its managed identity and Bicep grants `AcrPull`, the deployment workflow configures the private registry and replaces the bootstrap revision with the application-specific Playwright image. On later runs, the infrastructure job passes both the currently deployed worker image and backend package URL back to Bicep, so a backend-stage failure cannot roll back the worker or remove the active Function package. Keep this order to avoid an identity/registry dependency cycle on first deployment.
 
 Database migrations are split on `GO` batch separators by `backend/scripts/migrate.js`. When a migration adds a column and then references it in a constraint, keep those statements in separate batches so Azure SQL compiles the constraint after the column exists.
 

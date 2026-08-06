@@ -15,6 +15,7 @@ param mailboxDomain string = ''
 param serviceBusNamespace string
 param submissionQueueName string
 param deploymentEnvironment string = 'production'
+param packageUrl string = ''
 param tags object
 
 resource functionIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -93,7 +94,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         allowedOrigins: allowedOrigins
         supportCredentials: false
       }
-      appSettings: [
+      appSettings: concat([
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' }
         { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~22' }
@@ -114,7 +115,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
         { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
         { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
-      ]
+      ], empty(packageUrl) ? [] : [
+        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: packageUrl }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: 'SystemAssigned' }
+      ])
     }
   }
 }

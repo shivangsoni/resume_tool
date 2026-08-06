@@ -58,9 +58,13 @@ jobs:
       - name: Deploy infrastructure
         run: |
           worker_image="$(az containerapp show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --query properties.template.containers[0].image --output tsv 2>/dev/null || true)"
+          backend_package="$(az functionapp config appsettings list --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --query "[?name=='WEBSITE_RUN_FROM_PACKAGE'] | [0].value" --output tsv 2>/dev/null || true)"
           parameters=(infra/dev.bicepparam)
           if [[ -n "$worker_image" ]]; then
             parameters+=("browserWorkerImage=$worker_image")
+          fi
+          if [[ -n "$backend_package" ]]; then
+            parameters+=("backendPackageUrl=$backend_package")
           fi
           az deployment group create \
             --resource-group "$RESOURCE_GROUP" \
