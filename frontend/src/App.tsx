@@ -1109,10 +1109,12 @@ function ApplicationQuestions({
     return next;
   }, [application.answers, application.id, profile, questions]);
   const [answers, setAnswers] = useState(seedAnswers);
+  const [seededFrom, setSeededFrom] = useState(seedAnswers);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
+  if (seededFrom !== seedAnswers) {
+    setSeededFrom(seedAnswers);
     setAnswers(seedAnswers);
-  }, [seedAnswers]);
+  }
 
   if (!questions?.length) {
     return (
