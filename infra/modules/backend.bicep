@@ -129,6 +129,16 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
+resource packageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, functionApp.name, 'PackageStorageBlobDataReader')
+  scope: storage
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
+  }
+}
+
 output name string = functionApp.name
 output hostname string = functionApp.properties.defaultHostName
 output url string = 'https://${functionApp.properties.defaultHostName}'

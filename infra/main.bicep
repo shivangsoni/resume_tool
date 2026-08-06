@@ -11,6 +11,9 @@ param location string = resourceGroup().location
 @description('Region for the isolated browser worker; separated to avoid Container Apps capacity constraints.')
 param browserWorkerLocation string = 'westus2'
 
+@description('Container image retained by infrastructure deployments until the application deployment publishes a new worker revision.')
+param browserWorkerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
 @description('Static Web Apps plan. Free is appropriate for development.')
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
@@ -163,6 +166,7 @@ module browserWorker 'modules/browser-worker.bicep' = {
     sqlServerFqdn: database.outputs.serverFqdn
     sqlDatabaseName: database.outputs.name
     storageAccountName: backend.outputs.storageAccountName
+    image: browserWorkerImage
     tags: tags
   }
 }

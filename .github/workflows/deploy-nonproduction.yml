@@ -68,8 +68,13 @@ jobs:
         run: |
           auth_secret="$(az keyvault secret show --vault-name "$AUTH_KEY_VAULT" --name "$AUTH_SECRET_NAME" --query value --output tsv)"
           test -n "$auth_secret"
+          worker_image="$(az containerapp list --resource-group "$RESOURCE_GROUP" --query "[?tags.application=='ApplyPilot' && tags.environment=='nonproduction'] | [0].properties.template.containers[0].image" --output tsv)"
           deployment="nonprod-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          az deployment group create --resource-group "$RESOURCE_GROUP" --name "$deployment" --template-file infra/main.bicep --parameters infra/nonprod.bicepparam azureClientSecretValue="$auth_secret"
+          parameters=(infra/nonprod.bicepparam "azureClientSecretValue=$auth_secret")
+          if [[ -n "$worker_image" ]]; then
+            parameters+=("browserWorkerImage=$worker_image")
+          fi
+          az deployment group create --resource-group "$RESOURCE_GROUP" --name "$deployment" --template-file infra/main.bicep --parameters "${parameters[@]}"
           for output in frontendName frontendUrl backendName backendIdentityName backendIdentityClientId sqlDatabase browserWorkerName browserRegistryName; do
             value="$(az deployment group show --resource-group "$RESOURCE_GROUP" --name "$deployment" --query "properties.outputs.${output}.value" --output tsv)"
             test -n "$value"
@@ -171,11 +176,10 @@ jobs:
 
       - name: Verify backend deployment
         run: |
-          backend_host="$(az functionapp show -g "$RESOURCE_GROUP" -n "${{ needs.infrastructure.outputs.backendName }}" --query defaultHostName -o tsv)"
-          test -n "$backend_host"
+          health_url="${{ needs.infrastructure.outputs.frontendUrl }}/api/health"
           health=''
           for attempt in {1..12}; do
-            health="$(curl --fail --silent --show-error "https://${backend_host}/api/health" || true)"
+            health="$(curl --fail --silent --show-error "$health_url" || true)"
             if jq -e '.status == "ok" and .database.connected == true' <<<"$health" >/dev/null 2>&1; then
               break
             fi

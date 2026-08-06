@@ -56,12 +56,17 @@ jobs:
           test "$(az provider show --namespace Microsoft.ContainerRegistry --query registrationState --output tsv)" = "Registered"
 
       - name: Deploy infrastructure
-        run: >-
-          az deployment group create
-          --resource-group "$RESOURCE_GROUP"
-          --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          --template-file infra/main.bicep
-          --parameters infra/dev.bicepparam
+        run: |
+          worker_image="$(az containerapp show --resource-group "$RESOURCE_GROUP" --name "$BROWSER_WORKER" --query properties.template.containers[0].image --output tsv 2>/dev/null || true)"
+          parameters=(infra/dev.bicepparam)
+          if [[ -n "$worker_image" ]]; then
+            parameters+=("browserWorkerImage=$worker_image")
+          fi
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file infra/main.bicep \
+            --parameters "${parameters[@]}"
 
   backend:
     name: Deploy backend and worker
@@ -140,11 +145,10 @@ jobs:
 
       - name: Verify backend deployment
         run: |
-          backend_host="$(az functionapp show --resource-group "$RESOURCE_GROUP" --name "$FUNCTION_APP" --query defaultHostName --output tsv)"
-          test -n "$backend_host"
+          health_url="${FRONTEND_URL%/}/api/health"
           health=''
           for attempt in {1..12}; do
-            health="$(curl --fail --silent --show-error "https://${backend_host}/api/health" || true)"
+            health="$(curl --fail --silent --show-error "$health_url" || true)"
             if jq -e '.status == "ok" and .database.connected == true' <<<"$health" >/dev/null 2>&1; then
               break
             fi

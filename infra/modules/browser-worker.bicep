@@ -5,6 +5,7 @@ param queueName string
 param sqlServerFqdn string
 param sqlDatabaseName string
 param storageAccountName string
+param image string
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -66,9 +67,9 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
     template: {
       containers: [{
         name: 'browser-worker'
-        // Bootstrap with a small, known-good public image. The deployment workflow
-        // replaces this revision with the application-specific Playwright image.
-        image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+        // The default is a bootstrap image for first creation. Deployment workflows
+        // pass the current image so later infrastructure runs cannot roll it back.
+        image: image
         env: [
           { name: 'SERVICE_BUS_NAMESPACE', value: serviceBusNamespace }
           { name: 'APPLICATION_SUBMISSION_QUEUE', value: queueName }
