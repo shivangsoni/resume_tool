@@ -183,7 +183,7 @@ Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can s
 | Component | Purpose | Security boundary |
 | --- | --- | --- |
 | Static Web Apps Standard | React hosting, Microsoft authentication, linked `/api` proxy | Personal API routes require the `authenticated` role |
-| Azure Functions Consumption | API and orchestration | System-assigned managed identity; direct linked backend protected |
+| Azure Functions Consumption | API and orchestration | Stable user-assigned runtime identity plus system identity for private package loading; direct linked backend protected |
 | Azure SQL Basic | Users, profiles, jobs, applications, document metadata | Entra app access; personal queries include the internal user ID |
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |

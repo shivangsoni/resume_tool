@@ -214,3 +214,5 @@ output browserWorkerName string = browserWorker.outputs.workerName
 output browserRegistryName string = browserWorker.outputs.registryName
 output browserWorkerIdentityName string = browserWorker.outputs.identityName
 output backendStorageAccount string = backend.outputs.storageAccountName
+output backendIdentityName string = backend.outputs.identityName
+output backendIdentityClientId string = backend.outputs.identityClientId

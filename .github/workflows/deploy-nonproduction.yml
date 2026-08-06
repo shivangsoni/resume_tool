@@ -58,7 +58,7 @@ jobs:
           test -n "$auth_secret"
           deployment="nonprod-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           az deployment group create --resource-group "$RESOURCE_GROUP" --name "$deployment" --template-file infra/main.bicep --parameters infra/nonprod.bicepparam azureClientSecretValue="$auth_secret"
-          for output in frontendName frontendUrl backendName sqlDatabase browserWorkerName browserRegistryName; do
+          for output in frontendName frontendUrl backendName backendIdentityName backendIdentityClientId sqlDatabase browserWorkerName browserRegistryName; do
             value="$(az deployment group show --resource-group "$RESOURCE_GROUP" --name "$deployment" --query "properties.outputs.${output}.value" --output tsv)"
             test -n "$value"
             echo "${output}=${value}" >> "$GITHUB_OUTPUT"
@@ -101,12 +101,11 @@ jobs:
           AZURE_SQL_SERVER: simplyapply.database.windows.net
           AZURE_SQL_DATABASE: ${{ env.SQL_DATABASE }}
           DATABASE_IDENTITY_MODE: backend
-          DATABASE_IDENTITY_NAME: ${{ steps.infra.outputs.backendName }}
+          DATABASE_IDENTITY_NAME: ${{ steps.infra.outputs.backendIdentityName }}
+          DATABASE_IDENTITY_CLIENT_ID: ${{ steps.infra.outputs.backendIdentityClientId }}
         run: |
-          principal_id="$(az functionapp identity show -g "$RESOURCE_GROUP" -n "${{ steps.infra.outputs.backendName }}" --query principalId -o tsv)"
-          backend_client_id="$(az ad sp show --id "$principal_id" --query appId -o tsv)"
-          test -n "$backend_client_id"
-          DATABASE_IDENTITY_CLIENT_ID="$backend_client_id" npm run grant-database-identity --prefix backend
+          test -n "$DATABASE_IDENTITY_CLIENT_ID"
+          npm run grant-database-identity --prefix backend
 
       - name: Remove temporary SQL firewall rule
         if: always() && steps.sql_firewall.outputs.rule_name != ''

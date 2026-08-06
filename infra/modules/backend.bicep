@@ -17,6 +17,12 @@ param submissionQueueName string
 param deploymentEnvironment string = 'production'
 param tags object
 
+resource functionIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${functionAppName}-id'
+  location: location
+  tags: tags
+}
+
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
@@ -69,7 +75,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   location: location
   tags: tags
   kind: 'functionapp,linux'
-  identity: { type: 'SystemAssigned' }
+  identity: {
+    type: 'SystemAssigned,UserAssigned'
+    userAssignedIdentities: { '${functionIdentity.id}': {} }
+  }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
@@ -104,6 +113,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SERVICE_BUS__fullyQualifiedNamespace', value: serviceBusNamespace }
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
         { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
+        { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
       ]
     }
   }
@@ -113,7 +123,7 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   name: guid(storage.id, functionApp.name, 'StorageBlobDataContributor')
   scope: storage
   properties: {
-    principalId: functionApp.identity.principalId
+    principalId: functionIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
@@ -122,6 +132,8 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 output name string = functionApp.name
 output hostname string = functionApp.properties.defaultHostName
 output url string = 'https://${functionApp.properties.defaultHostName}'
-output principalId string = functionApp.identity.principalId
+output principalId string = functionIdentity.properties.principalId
+output identityName string = functionIdentity.name
+output identityClientId string = functionIdentity.properties.clientId
 output storageAccountName string = storage.name
 output id string = functionApp.id
