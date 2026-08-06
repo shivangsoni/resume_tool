@@ -1,34 +1,55 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@fluentui/react-components";
 import {
-  BarChart3,
-  Briefcase,
-  Check,
-  ChevronLeft,
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  Clock,
-  FileText,
-  CreditCard,
-  Download,
-  LayoutDashboard,
-  MapPin,
-  Mail,
-  Maximize2,
-  Minus,
-  Minimize2,
-  Pencil,
-  Plus,
-  Search,
-  Settings,
-  SlidersHorizontal,
-  Upload,
-  Trash2,
-  UserRound,
-  WandSparkles,
-  X,
-} from "lucide-react";
+  Avatar,
+  Button,
+  CounterBadge,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  NavDrawer,
+  NavDrawerBody,
+  NavDrawerFooter,
+  NavDrawerHeader,
+  NavItem,
+  NavSectionHeader,
+  Tooltip,
+  type OnNavItemSelectData,
+} from "@fluentui/react-components";
+import {
+  Add24Regular,
+  Alert24Regular,
+  ArrowDownload24Regular,
+  ArrowUpload24Regular,
+  Board24Regular,
+  Briefcase24Regular,
+  Checkmark24Regular,
+  CheckmarkCircle24Regular,
+  ChevronDown24Regular,
+  ChevronLeft24Regular,
+  ChevronRight24Regular,
+  Clock24Regular,
+  DataBarVertical24Regular,
+  Delete24Regular,
+  Dismiss24Regular,
+  Document24Regular,
+  Edit24Regular,
+  ErrorCircle24Regular,
+  FullScreenMaximize24Regular,
+  FullScreenMinimize24Regular,
+  Location24Regular,
+  Mail24Regular,
+  Navigation24Regular,
+  Options24Regular,
+  Payment24Regular,
+  Person24Regular,
+  Search24Regular,
+  Settings24Regular,
+  SignOut24Regular,
+  Sparkle24Filled,
+  Subtract24Regular,
+} from "@fluentui/react-icons";
 import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -60,6 +81,19 @@ import { matchesJob, paginateJobs } from "./job-filter";
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
+
+const pageTitles: Record<Page, string> = {
+  dashboard: "Job Matches",
+  applications: "Applications",
+  resume: "Résumé",
+  preferences: "Preferences",
+  profile: "Profile",
+  inbox: "Email Inbox",
+  search: "Job Search",
+  credits: "Usage",
+  settings: "Settings",
+  auth: "Account",
+};
 const productTourSteps = [
   { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
   { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
@@ -125,6 +159,8 @@ export default function App() {
   } | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
+  const [navOpen, setNavOpen] = useState(true);
+  const [unreadMailCount, setUnreadMailCount] = useState(0);
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
@@ -180,7 +216,21 @@ export default function App() {
         // Keep the last known state; the next poll retries automatically.
       }
     };
-    const interval = window.setInterval(refreshApplications, 10_000);
+    const refreshUnread = async () => {
+      try {
+        const mailbox = await getMailbox(0);
+        if (!active) return;
+        setUnreadMailCount(mailbox.messages.filter((message) => !message.isRead).length);
+      } catch {
+        // Inbox may be unavailable; keep the last badge count.
+      }
+    };
+    void refreshApplications();
+    void refreshUnread();
+    const interval = window.setInterval(() => {
+      void refreshApplications();
+      void refreshUnread();
+    }, 10_000);
     return () => { active = false; window.clearInterval(interval); };
   }, [currentUser]);
   useEffect(() => {
@@ -245,132 +295,119 @@ export default function App() {
   if (routePath === "/logged-out") return <LoggedOutPage signedIn={Boolean(currentUser)} />;
   if (!currentUser && routePath === "/login") return <AuthPage />;
   if (!currentUser) return <LandingPage signedIn={false} />;
+
+  const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in";
+  const avatarInitials = (profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase();
+  const onNavSelect = (_event: Event | React.SyntheticEvent, data: OnNavItemSelectData) => {
+    if (data.value) setPage(String(data.value) as Page);
+  };
+
   return (
-    <div className="sa-shell">
-      <aside className="sa-side">
-        <div className="sa-logo">
-          <span>
-            <WandSparkles />
-          </span>
-          <b>ApplyPilot</b>
-        </div>
-        <nav>
-          <Side
-            icon={<LayoutDashboard />}
-            label="Job Matches"
-            active={page === "dashboard"}
-            click={() => setPage("dashboard")}
-          />
-          <Side
-            icon={<Briefcase />}
-            label="Applications"
-            active={page === "applications"}
-            click={() => setPage("applications")}
-            count={applications.length}
-          />
-          <Side
-            icon={<FileText />}
-            label="Resumes"
-            active={page === "resume"}
-            click={() => setPage("resume")}
-          />
-          <Side
-            icon={<SlidersHorizontal />}
-            label="Job Preferences"
-            active={page === "preferences"}
-            click={() => setPage("preferences")}
-          />
-          <Side
-            icon={<UserRound />}
-            label="Profile"
-            active={page === "profile"}
-            click={() => setPage("profile")}
-          />
-        </nav>
-        <div className="side-lower">
+    <div className={`sa-shell ${navOpen ? "nav-expanded" : "nav-collapsed"}`}>
+      <NavDrawer
+        open={navOpen}
+        type="inline"
+        selectedValue={page}
+        onNavItemSelect={onNavSelect}
+        className="sa-nav"
+      >
+        <NavDrawerHeader>
+          <div className="sa-logo">
+            <span><Sparkle24Filled /></span>
+            {navOpen && <b>ApplyPilot</b>}
+          </div>
+        </NavDrawerHeader>
+        <NavDrawerBody>
+          <NavSectionHeader>Workspace</NavSectionHeader>
+          <NavItem value="dashboard" icon={<Board24Regular />}>Job Matches</NavItem>
+          <NavItem value="applications" icon={<Briefcase24Regular />}>
+            Applications
+            {applications.length > 0 ? <CounterBadge className="nav-count" count={applications.length} size="small" appearance="filled" color="informative" /> : null}
+          </NavItem>
+          <NavItem value="inbox" icon={<Mail24Regular />}>
+            Email Inbox
+            {unreadMailCount > 0 ? <CounterBadge className="nav-count" count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+          </NavItem>
+          <NavItem value="search" icon={<Search24Regular />}>Job Search</NavItem>
+          <NavSectionHeader>Candidate</NavSectionHeader>
+          <NavItem value="resume" icon={<Document24Regular />}>Résumé</NavItem>
+          <NavItem value="profile" icon={<Person24Regular />}>Profile</NavItem>
+          <NavItem value="preferences" icon={<Options24Regular />}>Preferences</NavItem>
+          <NavSectionHeader>Account</NavSectionHeader>
+          <NavItem value="settings" icon={<Settings24Regular />}>Settings</NavItem>
+          <NavItem value="credits" icon={<Payment24Regular />}>Usage</NavItem>
+        </NavDrawerBody>
+        <NavDrawerFooter>
           <div className="usage">
             <div>
               <span>Submitted applications</span>
-              <b>
-                {
-                  applications.filter((item) => item.status === "submitted")
-                    .length
-                }{" "}
-                / 100
-              </b>
+              <b>{applications.filter((item) => item.status === "submitted").length} / 100</b>
             </div>
             <i>
-              <em
-                style={{
-                  width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%`,
-                }}
-              />
+              <em style={{ width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%` }} />
             </i>
             <small>Persisted in your account</small>
           </div>
-          {authReady && currentUser ? (
-            <button className="user" onClick={() => setPage("profile")}>
-              <span>{(profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase()}</span>
-              <div>
-                <b>{[profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in"}</b>
-                <small>Profile and applications saved</small>
-              </div>
-              <ChevronRight />
-            </button>
-          ) : (
-            <a className="user login-card" href="/login">
-              <span><UserRound /></span>
-              <div>
-                <b>Sign in</b>
-                <small>Save profile and applications</small>
-              </div>
-              <ChevronRight />
-            </a>
-          )}
-        </div>
-      </aside>
-      <main className="sa-main">
+        </NavDrawerFooter>
+      </NavDrawer>
+
+      <div className="sa-main-column">
         <header className="sa-header">
-          <div className="mobile-logo">
-            <WandSparkles /> ApplyPilot
+          <Button
+            appearance="subtle"
+            icon={<Navigation24Regular />}
+            aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
+            onClick={() => setNavOpen((value) => !value)}
+          />
+          <div className="header-title">
+            <b>{pageTitles[page]}</b>
           </div>
           <div className="header-spacer" />
-          <nav className="top-nav" aria-label="Primary navigation">
-            <Button appearance="subtle" className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</Button>
-            <Button appearance="subtle" className={page === "applications" ? "active" : ""} onClick={() => setPage("applications")} icon={<Briefcase />}>Applications</Button>
-            <Button appearance="subtle" className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")} icon={<Mail />}>Email Inbox</Button>
-            <Button appearance="subtle" className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</Button>
-            <Button appearance="subtle" className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</Button>
-            <Button appearance="subtle" className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")} icon={<FileText />}>Résumé</Button>
-            <Button appearance="subtle" className={page === "preferences" ? "active" : ""} onClick={() => setPage("preferences")} icon={<SlidersHorizontal />}>Preferences</Button>
-            <Button appearance="subtle" className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</Button>
-            <Button appearance="subtle" className="tour-trigger" onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Tour</Button>
-          </nav>
-          <ProductTour page={page} setPage={setPage} />
-          {!authReady ? (
-            <span className="auth-label">Checking account…</span>
-          ) : currentUser ? (
-            <a
-              className="upgrade"
-              href="/.auth/logout?post_logout_redirect_uri=/logged-out"
-              onClick={(event) => {
-                if (!import.meta.env.DEV) return;
-                event.preventDefault();
-                setDevSignedIn(false);
-                window.location.assign("/logged-out");
-              }}
-            >
-              Sign out
-            </a>
-          ) : (
-            <button
-              className="upgrade"
-              onClick={() => { window.location.assign("/login"); }}
-            >
-              <UserRound /> Sign in
-            </button>
-          )}
+          <Tooltip content="Email notifications" relationship="label">
+            <Button
+              appearance="subtle"
+              className="header-icon-btn"
+              icon={
+                <span className="header-bell">
+                  <Alert24Regular />
+                  {unreadMailCount > 0 ? <CounterBadge count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+                </span>
+              }
+              aria-label="Email notifications"
+              onClick={() => setPage("inbox")}
+            />
+          </Tooltip>
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button appearance="subtle" className="header-profile-btn" aria-label="Account menu">
+                <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem icon={<Person24Regular />} onClick={() => setPage("profile")}>Profile</MenuItem>
+                <MenuItem icon={<Settings24Regular />} onClick={() => setPage("settings")}>Settings</MenuItem>
+                <MenuItem icon={<Sparkle24Filled />} onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Product tour</MenuItem>
+                <MenuItem
+                  icon={<SignOut24Regular />}
+                  onClick={(event) => {
+                    if (import.meta.env.DEV) {
+                      event.preventDefault();
+                      setDevSignedIn(false);
+                      window.location.assign("/logged-out");
+                      return;
+                    }
+                    window.location.assign("/.auth/logout?post_logout_redirect_uri=/logged-out");
+                  }}
+                >
+                  Sign out
+                </MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </header>
+        <ProductTour page={page} setPage={setPage} />
+        <main className="sa-main">
         {currentUser && (() => {
           const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
           if (readiness.ready) return null;
@@ -591,36 +628,15 @@ export default function App() {
         {page === "credits" && <CreditsPage queued={applications.filter((item) => ["review", "queued", "processing"].includes(item.status)).length} />}
         {page === "settings" && <SettingsPage />}
         {page === "auth" && <AuthPage />}
-      </main>
-      {toast && (
-        <div className="toast">
-          <Check />
-          {toast}
-        </div>
-      )}
+        </main>
+        {toast && (
+          <div className="toast">
+            <CheckmarkCircle24Regular />
+            {toast}
+          </div>
+        )}
+      </div>
     </div>
-  );
-}
-
-function Side({
-  icon,
-  label,
-  active,
-  click,
-  count,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-  click: () => void;
-  count?: number;
-}) {
-  return (
-    <Button appearance="subtle" className={`side-item ${active ? "active" : ""}`} onClick={click}>
-      {icon}
-      <span>{label}</span>
-      {count && <em>{count}</em>}
-    </Button>
   );
 }
 
@@ -701,7 +717,7 @@ function Dashboard(p: {
         />
         <div className="ready-card">
           <span>
-            <Check />
+            <Checkmark24Regular />
           </span>
           <div>
             <b>One-click application workflow</b>
@@ -711,7 +727,7 @@ function Dashboard(p: {
       </div>
       <div className="toolbar">
         <div className="searchbox">
-          <Search />
+          <Search24Regular />
           <input
             placeholder="Search title or company"
             value={p.query}
@@ -719,7 +735,7 @@ function Dashboard(p: {
           />
         </div>
         <div className="searchbox location-filter">
-          <MapPin />
+          <Location24Regular />
           <input placeholder="Filter by location" value={p.locationFilter} onChange={(e) => p.setLocationFilter(e.target.value)} />
         </div>
         <select value={p.source} onChange={(e) => p.setSource(e.target.value)} aria-label="Job source">
@@ -758,7 +774,7 @@ function Dashboard(p: {
           <div className="list-head">
             <b>Showing {p.visible.length} of {p.filteredCount} matches</b>
             <span>
-              Sorted by best match <ChevronDown />
+              Sorted by best match <ChevronDown24Regular />
             </span>
           </div>
           {p.visible.map((j) => (
@@ -771,7 +787,7 @@ function Dashboard(p: {
           ))}
           {!p.visible.length && (
             <div className="no-results">
-              <Search />
+              <Search24Regular />
               <b>
                 {p.feedState === "loading"
                   ? "Loading current jobs"
@@ -790,9 +806,9 @@ function Dashboard(p: {
           )}
           {p.filteredCount > 0 && (
             <div className="pagination" aria-label="Job pages">
-              <button disabled={p.page === 1} onClick={() => p.setPage(p.page - 1)}><ChevronLeft /> Previous</button>
+              <button disabled={p.page === 1} onClick={() => p.setPage(p.page - 1)}><ChevronLeft24Regular /> Previous</button>
               <span>Page {p.page} of {p.pageCount}</span>
-              <button disabled={p.page === p.pageCount} onClick={() => p.setPage(p.page + 1)}>Next <ChevronRight /></button>
+              <button disabled={p.page === p.pageCount} onClick={() => p.setPage(p.page + 1)}>Next <ChevronRight24Regular /></button>
             </div>
           )}
         </section>
@@ -822,7 +838,7 @@ function Metric({
         <b>{label}</b>
         <small>job matches</small>
       </div>
-      <ChevronRight />
+      <ChevronRight24Regular />
     </button>
   );
 }
@@ -845,23 +861,23 @@ function JobRow({
           <b>{j.title}</b>
           {j.status === "applied" && (
             <em className="status-tag applied">
-              <Check /> Applied
+              <Checkmark24Regular /> Applied
             </em>
           )}
           {j.status === "queued" && (
             <em className="status-tag queued">
-              <Clock /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
+              <Clock24Regular /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
             </em>
           )}
           {j.status === "failed" && (
             <em className="status-tag failed">
-              <X /> Failed
+              <Dismiss24Regular /> Failed
             </em>
           )}
         </div>
         <strong>{j.company}</strong>
         <small>
-          <MapPin />
+          <Location24Regular />
           {j.location} · {j.level}
         </small>
         <div className="row-tags">
@@ -870,7 +886,7 @@ function JobRow({
         </div>
         {j.status === "failed" && (
           <p className="job-error">
-            <CircleAlert />
+            <ErrorCircle24Regular />
             {j.applicationError || "Submission failed. Open the job for details or retry from Applications."}
           </p>
         )}
@@ -930,7 +946,7 @@ function JobDetail({
           </p>
         </div>
         <button className="icon-btn">
-          <X />
+          <Dismiss24Regular />
         </button>
       </div>
       <div className="match-card">
@@ -945,7 +961,7 @@ function JobDetail({
       </div>
       {job.status === "queued" && (
         <div className="submission-banner queued">
-          <Clock />
+          <Clock24Regular />
           <div>
             <b>{job.applicationStatus === "processing" ? "Submitting now" : "Queued for submission"}</b>
             <p>
@@ -970,7 +986,7 @@ function JobDetail({
       )}
       {job.status === "failed" && !failedApplication && (
         <div className="submission-banner failed">
-          <CircleAlert />
+          <ErrorCircle24Regular />
           <div>
             <b>Application failed</b>
             <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
@@ -982,7 +998,7 @@ function JobDetail({
       )}
       {job.status === "applied" && (
         <div className="submission-banner applied">
-          <Check />
+          <Checkmark24Regular />
           <div>
             <b>Applied</b>
             <p>This application was submitted successfully.</p>
@@ -991,10 +1007,10 @@ function JobDetail({
       )}
       <div className="detail-tags">
         <span>
-          <MapPin /> {job.remote ? "Remote" : "On-site"}
+          <Location24Regular /> {job.remote ? "Remote" : "On-site"}
         </span>
         <span>
-          <BarChart3 /> {job.level}
+          <DataBarVertical24Regular /> {job.level}
         </span>
         <span>{job.salary}</span>
       </div>
@@ -1005,7 +1021,7 @@ function JobDetail({
         <div className="skills">
           {job.skills.map((s) => (
             <span key={s}>
-              <Check />
+              <Checkmark24Regular />
               {s}
             </span>
           ))}
@@ -1019,7 +1035,7 @@ function JobDetail({
           setApplying(true);
           try { await apply(job); } finally { setApplying(false); }
         }}>
-          <WandSparkles />{" "}
+          <Sparkle24Filled />{" "}
           {applying
             ? "Queuing..."
             : job.status === "ready"
@@ -1042,7 +1058,7 @@ function JobDetail({
         </a>
       )}
       <div className="safe-note">
-        <Check /> One click queues the application; a background worker fills and submits the employer form
+        <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
       </div>
     </section>
   );
@@ -1080,7 +1096,7 @@ function Applications({
         </div>
         {applications.length === 0 && (
           <div className="no-results">
-            <Briefcase />
+            <Briefcase24Regular />
             <b>No applications in progress</b>
             <span>Choose Simple Apply on a job match to queue submission.</span>
           </div>
@@ -1099,7 +1115,7 @@ function Applications({
               </div>
             </div>
             <span className={`status-pill ${application.status}`}>
-              {application.status === "submitted" && <Check />}{" "}
+              {application.status === "submitted" && <Checkmark24Regular />}{" "}
               {application.status}
             </span>
             <div className="application-actions">
@@ -1180,7 +1196,7 @@ function displayQuestionLabel(question: { key: string; label: string }, index: n
     : key.replace(/__\d+$/, "").split(/[./#]/).pop() || key;
   const humanized = leaf
     .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[_\-]+/g, " ")
+    .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (humanized && !/^(input|field|select|textarea|question|required question)\d*$/i.test(humanized)) {
@@ -1231,12 +1247,14 @@ function ApplicationQuestions({
     // Signatures keep seed stable across poll-driven object identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [application.id, answersSignature, questionsSignature, profileSignature]);
+  const seedKey = `${application.id}|${answersSignature}|${questionsSignature}|${profileSignature}`;
   const [answers, setAnswers] = useState(seedAnswers);
+  const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
+  if (appliedSeedKey !== seedKey) {
+    setAppliedSeedKey(seedKey);
     setAnswers(seedAnswers);
-  }, [seedAnswers]);
+  }
 
   if (!questions?.length) {
     return (
@@ -1396,7 +1414,7 @@ function Resume({
       <div className="resume-library">
         <section className="resume-left">
           <div className="upload-card simple-card">
-            <span><Upload /></span>
+            <span><ArrowUpload24Regular /></span>
             <h2>Upload another résumé</h2>
             <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
             <label className="apply">
@@ -1415,10 +1433,10 @@ function Resume({
             {documents.map((item) => (
               <article className={selected?.id === item.id ? "selected" : ""} key={item.id}>
                 <button className="resume-select" onClick={() => { setSelectedId(item.id); setPdfUrl(""); setPreviewError(""); setPageCount(0); setZoom(1); }}>
-                  <FileText />
+                  <Document24Regular />
                   <span><b>{item.fileName}</b><small>{(item.sizeBytes / 1024).toFixed(0)} KB · {new Date(item.createdAt).toLocaleDateString()} {item.isPrimary ? "· Primary" : ""}</small></span>
                 </button>
-                <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Trash2 /></button>
+                <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Delete24Regular /></button>
               </article>
             ))}
           </div>
@@ -1427,18 +1445,18 @@ function Resume({
           <div className="resume-preview-toolbar">
             <h2>{selected ? selected.fileName : "Preview"}</h2>
             {selected && <div>
-              <button disabled={busy} onClick={() => void renameSelected()}><Pencil /> Rename</button>
-              <button disabled={busy} onClick={() => void download()}><Download /> Download</button>
-              <button onClick={() => setFullScreen((value) => !value)} title={fullScreen ? "Exit full screen" : "View full screen"}>{fullScreen ? <Minimize2 /> : <Maximize2 />} {fullScreen ? "Exit" : "Full screen"}</button>
-              {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Minus /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Plus /></button></>}
+              <button disabled={busy} onClick={() => void renameSelected()}><Edit24Regular /> Rename</button>
+              <button disabled={busy} onClick={() => void download()}><ArrowDownload24Regular /> Download</button>
+              <button onClick={() => setFullScreen((value) => !value)} title={fullScreen ? "Exit full screen" : "View full screen"}>{fullScreen ? <FullScreenMinimize24Regular /> : <FullScreenMaximize24Regular />} {fullScreen ? "Exit" : "Full screen"}</button>
+              {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Subtract24Regular /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Add24Regular /></button></>}
             </div>}
           </div>
           {!selected ? <p>Select an uploaded PDF to preview it.</p> : selected.contentType !== "application/pdf" ? (
-            <div className="resume-preview-empty"><FileText /><p>DOCX preview is not available in the browser.</p><button className="apply" onClick={() => void download()}>Download DOCX</button></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>DOCX preview is not available in the browser.</p><button className="apply" onClick={() => void download()}>Download DOCX</button></div>
           ) : previewError ? (
-            <div className="resume-preview-empty"><FileText /><p>{previewError}</p></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>{previewError}</p></div>
           ) : !pdfUrl ? (
-            <div className="resume-preview-empty"><FileText /><p>Loading PDF…</p></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>Loading PDF…</p></div>
           ) : (
             <PdfDocument key={pdfUrl} file={pdfUrl} loading="Loading PDF…" error="PDF preview could not be loaded." onLoadSuccess={({ numPages }) => setPageCount(numPages)}>
               {Array.from({ length: pageCount }, (_, index) => <PdfPage key={index + 1} pageNumber={index + 1} scale={zoom} renderAnnotationLayer renderTextLayer />)}
@@ -1455,10 +1473,10 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
     <div className="simple-page narrow-page">
       <div className="page-heading"><h1>Job Search <em>BETA</em></h1><p>Search current opportunities using the same live feed as your dashboard.</p></div>
       <section className="simple-card search-panel">
-        <h2><Search /> Search Jobs</h2>
+        <h2><Search24Regular /> Search Jobs</h2>
         <label>Job title, company, or skill<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Software Engineer, React, Azure…" /></label>
         <label>Location<input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote, Seattle, United States…" /></label>
-        <button className="orange-action" onClick={search}><Search /> Search jobs</button>
+        <button className="orange-action" onClick={search}><Search24Regular /> Search jobs</button>
       </section>
     </div>
   );
@@ -1490,7 +1508,7 @@ function AuthPage() {
   return (
     <div className="auth-page">
       <section className="auth-card">
-        <div className="auth-brand"><WandSparkles /></div>
+        <div className="auth-brand"><Sparkle24Filled /></div>
         <h1>Create your ApplyPilot account</h1>
         <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
         {providers.map((provider) =>
@@ -1565,15 +1583,15 @@ function ProductTour({
 }
 
 function AuthLoading() {
-  return <main className="public-shell"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><section className="public-centered"><div className="landing-orb"><WandSparkles /></div><h1>Preparing your workspace…</h1><p>Checking your secure session.</p></section></main>;
+  return <main className="public-shell"><div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div><section className="public-centered"><div className="landing-orb"><Sparkle24Filled /></div><h1>Preparing your workspace…</h1><p>Checking your secure session.</p></section></main>;
 }
 
 function LandingPage({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="public-shell">
-      <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
-      <section className="landing-features" id="features"><article><Search /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><FileText /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
+      <header className="public-header"><div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
+      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase24Regular /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Checkmark24Regular /></div><div className="preview-job"><Mail24Regular /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Checkmark24Regular /></div></div></section>
+      <section className="landing-features" id="features"><article><Search24Regular /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><Document24Regular /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail24Regular /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
     </main>
   );
 }
@@ -1587,7 +1605,7 @@ function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
     window.location.assign("/logged-out");
   };
   return (
-    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><WandSparkles /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Check /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href={logoutHref} onClick={onDevLogout}>Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
+    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Checkmark24Regular /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href={logoutHref} onClick={onDevLogout}>Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
   );
 }
 
@@ -1619,12 +1637,12 @@ function InboxPage({ openApplication }: { openApplication: (applicationId: strin
 
   return (
     <div className="simple-page">
-      <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
+      <div className="page-heading left"><h1><Mail24Regular /> Email Inbox</h1><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
       {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
-      {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
+      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
-          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
+          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase24Regular /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
         </section>
       )}
     </div>
@@ -1634,7 +1652,7 @@ function InboxPage({ openApplication }: { openApplication: (applicationId: strin
 function CreditsPage({ queued }: { queued: number }) {
   return (
     <div className="simple-page narrow-page">
-      <section className="simple-card credits-card"><CreditCard /><h1>Applications & usage</h1><strong>{queued}</strong><p>applications currently queued for review</p><hr /><h2>No artificial credit limit</h2><p>ApplyPilot does not sell or invent credits. Azure usage remains governed by your subscription budget.</p></section>
+      <section className="simple-card credits-card"><Payment24Regular /><h1>Applications & usage</h1><strong>{queued}</strong><p>applications currently queued for review</p><hr /><h2>No artificial credit limit</h2><p>ApplyPilot does not sell or invent credits. Azure usage remains governed by your subscription budget.</p></section>
     </div>
   );
 }
@@ -1651,7 +1669,7 @@ function SettingsPage() {
     localStorage.setItem("applypilot.settings", JSON.stringify(next));
   };
   return (
-    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings /> Settings</h1><p>Manage local notification preferences.</p>{([
+    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings24Regular /> Settings</h1><p>Manage local notification preferences.</p>{([
       ["jobAlerts", "Daily job alerts", "Show new matching roles when you return"],
       ["weeklySummary", "Weekly application summary", "Summarize queued and submitted applications"],
       ["profileReminders", "Profile improvement reminders", "Prompt when important profile fields are blank"],
