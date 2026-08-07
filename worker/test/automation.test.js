@@ -66,6 +66,22 @@ test("lookupAnswer recovers answers when DOM index suffix shifts", () => {
     }, {}),
     "Shivang",
   );
+  assert.equal(
+    lookupAnswer({ phone: "5302048592", city: "Redmond" }, {
+      key: "job_application[phone]__4",
+      name: "job_application[phone]",
+      label: "Phone",
+    }, {}),
+    "5302048592",
+  );
+  assert.equal(
+    lookupAnswer({ phone: "5302048592", city: "Redmond" }, {
+      key: "job_application[location]__5",
+      name: "job_application[location]",
+      label: "Location (City)",
+    }, {}),
+    "Redmond",
+  );
   assert.equal(answerKeyBase("foo__g3"), "foo");
   assert.equal(answerKeyBase("foo__10_2"), "foo");
 });
