@@ -12,8 +12,19 @@ import {
   resolveApplicationUrl,
   parseMultiselectAnswer,
   optionMatchesTokens,
+  preferredLocationTokens,
+  multiselectTokensFromProfile,
   resolveMultiselectSelections,
   matchOptionLabel,
+  choiceOptionLabels,
+  isBooleanChoiceLabel,
+  isCheckboxGroupName,
+  formatLocationQuery,
+  looksLikePlaceString,
+  dedupeMissingQuestions,
+  isLocationAutocompleteLabel,
+  isPhoneFieldLabel,
+  pageHasBlockingCaptcha,
 } from "../src/automation.js";
 
 test("maps standard employer fields from the saved profile", () => {
@@ -63,8 +74,88 @@ test("lookupAnswer recovers answers when DOM index suffix shifts", () => {
     }, {}),
     "Shivang",
   );
+  assert.equal(
+    lookupAnswer({ phone: "5302048592", city: "Redmond" }, {
+      key: "job_application[phone]__4",
+      name: "job_application[phone]",
+      label: "Phone",
+    }, {}),
+    "5302048592",
+  );
+  assert.equal(
+    lookupAnswer({ phone: "5302048592", city: "Redmond" }, {
+      key: "job_application[location]__5",
+      name: "job_application[location]",
+      label: "Location (City)",
+    }, {}),
+    "Redmond",
+  );
   assert.equal(answerKeyBase("foo__g3"), "foo");
   assert.equal(answerKeyBase("foo__10_2"), "foo");
+});
+
+test("matchOptionLabel maps country aliases onto select options", () => {
+  assert.equal(matchOptionLabel(["US", "CA", "MX"], "United States"), "US");
+  assert.equal(matchOptionLabel(["United States", "Canada"], "USA"), "United States");
+  assert.equal(matchOptionLabel(["United States of America", "Canada"], "US"), "United States of America");
+  assert.equal(
+    matchOptionLabel(["🇺🇸 United States +1", "🇦🇫 Afghanistan +93"], "United States"),
+    "🇺🇸 United States +1",
+  );
+});
+
+test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
+  assert.equal(
+    formatLocationQuery("redmond", { city: "redmond", state: "Washington", country: "United States" }),
+    "redmond, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("Redmond, Washington, United States", { city: "Redmond", state: "WA", country: "US" }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("", { location: "Seattle, Washington, United States", city: "Seattle" }),
+    "Seattle, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("", {
+      location: "DEEPLEARNING.AI, ANDREW NG Advancements in AI",
+      city: "Redmond",
+      state: "Washington",
+      country: "United States",
+    }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
+    looksLikePlaceString("DEEPLEARNING.AI, ANDREW NG Advancements in AI"),
+    false,
+  );
+  assert.equal(looksLikePlaceString("Redmond, Washington, United States"), true);
+});
+
+test("detects Greenhouse location autocomplete and phone field labels", () => {
+  assert.equal(isLocationAutocompleteLabel("Location (City)", "job_application[location]"), true);
+  assert.equal(isLocationAutocompleteLabel("Phone", "job_application[phone]"), false);
+  assert.equal(isLocationAutocompleteLabel("Are you authorized to work in the location(s) you selected?", ""), false);
+  assert.equal(isPhoneFieldLabel("Phone", "job_application[phone]"), true);
+  assert.equal(isPhoneFieldLabel("Location (City)", "job_application[location]"), false);
+  assert.equal(isPhoneFieldLabel("WhatsApp number", "custom_question"), false);
+  assert.equal(isPhoneFieldLabel("Phone screen availability", ""), false);
+});
+
+test("dedupeMissingQuestions keeps a single Phone row", () => {
+  assert.deepEqual(
+    dedupeMissingQuestions([
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "phone__2", label: "Phone", type: "phone" },
+      { key: "loc__1", label: "Location (City)", type: "autocomplete" },
+      { key: "loc__2", label: "Location (City)", type: "autocomplete" },
+    ]),
+    [
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "loc__1", label: "Location (City)", type: "autocomplete" },
+    ],
+  );
 });
 
 test("matchOptionLabel coerces Yes/No onto clear options", () => {
@@ -158,6 +249,53 @@ test("multiselect helpers pick country options from profile and answers", () => 
     resolveMultiselectSelections(options, "Germany", { country: "United States" }),
     ["Germany"],
   );
+});
+
+test("preferredLocations JSON expands into location and remote tokens", () => {
+  const preferredLocations = JSON.stringify([
+    { workplaceTypes: ["Remote", "Hybrid"], country: "Canada", city: "Toronto" },
+    { workplaceTypes: ["On-site"], country: "Germany", city: "Berlin" },
+  ]);
+  assert.deepEqual(
+    preferredLocationTokens(preferredLocations).sort(),
+    ["Berlin", "Canada", "Germany", "Hybrid", "On-site", "Remote", "Toronto"].sort(),
+  );
+  const tokens = multiselectTokensFromProfile({
+    country: "United States",
+    preferredLocations,
+  });
+  assert.ok(tokens.includes("Canada"));
+  assert.ok(tokens.includes("Remote"));
+  assert.ok(!tokens.some((token) => token.includes("workplaceTypes")));
+  assert.equal(
+    knownAnswer("Do you plan to work remotely for this role?", { preferredLocations }, {}),
+    "Yes",
+  );
+  assert.deepEqual(
+    resolveMultiselectSelections(
+      ["Australia", "Canada", "Germany", "United States"],
+      "",
+      { preferredLocations },
+    ),
+    ["Canada", "Germany"],
+  );
+});
+
+test("choiceOptionLabels ignores shared country prompt text", () => {
+  const prompt = "Please select the country or countries you anticipate working in for the role in which you are applying.";
+  const group = [
+    { info: { optionLabel: "United States", label: prompt, groupLabel: prompt } },
+    { info: { optionLabel: "Canada", label: prompt, groupLabel: prompt } },
+    { info: { optionLabel: "", label: prompt, groupLabel: prompt } },
+  ];
+  assert.deepEqual(choiceOptionLabels(group, prompt), ["United States", "Canada"]);
+});
+
+test("country prompts are not treated as boolean checkbox questions", () => {
+  assert.equal(isBooleanChoiceLabel("Please select the country where you currently reside."), false);
+  assert.equal(isBooleanChoiceLabel("Are you legally authorized to work in the United States?"), true);
+  assert.equal(isCheckboxGroupName("question_68165587[]"), true);
+  assert.equal(isCheckboxGroupName("agree_terms"), false);
 });
 
 test("matchOptionLabel fuzzy-matches radio answers", () => {

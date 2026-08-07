@@ -31,6 +31,7 @@ export const emptyProfile: Profile = {
   preferredLanguages: "",
   companiesToExclude: "",
   additionalInfo: "",
+  photoUrl: "",
 };
 
 export function loadProfile(): Profile {

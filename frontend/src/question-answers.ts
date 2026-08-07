@@ -35,6 +35,24 @@ export function matchSelectOption(options: string[] | undefined, answer: string)
     const noOpt = usable.find((option) => /^(no|false|n)\b/i.test(option.trim()) || normalize(option) === "no");
     if (noOpt) return noOpt;
   }
+  const COUNTRY_ALIASES: Record<string, string[]> = {
+    us: ["united states", "usa", "america"],
+    usa: ["united states", "us", "america"],
+    "united states": ["us", "usa", "america"],
+    "united states of america": ["us", "usa", "united states", "america"],
+  };
+  const aliasHit = usable.find((option) => {
+    const label = normalize(option);
+    const labelCompact = label.replace(/\s+/g, "");
+    const aliases = COUNTRY_ALIASES[needle] || COUNTRY_ALIASES[needle.replace(/\s+/g, "")] || [];
+    if (aliases.some((alias) => {
+      const a = normalize(alias);
+      return label === a || labelCompact === a.replace(/\s+/g, "") || (a.length >= 4 && label.includes(a));
+    })) return true;
+    const reverse = COUNTRY_ALIASES[label] || COUNTRY_ALIASES[labelCompact] || [];
+    return reverse.some((alias) => normalize(alias) === needle || needle.includes(normalize(alias)));
+  });
+  if (aliasHit) return aliasHit;
   const includes = usable.find((option) => {
     const label = normalize(option);
     if (!label) return false;
@@ -79,36 +97,191 @@ export function lookupStoredAnswer(stored: Record<string, string>, candidates: s
   return "";
 }
 
-export function coerceQuestionAnswer(
-  question: { type?: string; options?: string[] },
+export function isBooleanQuestionLabel(label: string) {
+  const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!text) return false;
+  if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
+  if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
+  if (/\b(yes or no|y n)\b/.test(text)) return true;
+  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote|hybrid)\b/.test(text)) return true;
+  return false;
+}
+
+/** Normalize worker question types so country prompts are not rendered as Yes/No. */
+export function resolveQuestionInputType(question: { type?: string; label?: string; options?: string[] }) {
+  const options = (question.options || []).filter((option) => String(option).trim());
+  const type = String(question.type || "text").toLowerCase();
+  if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file") return type;
+  if (type === "autocomplete" || type === "phone") return type;
+  if (type === "select") return options.length ? "select" : "text";
+  if (type === "checkbox") {
+    if (options.length > 1) return "multiselect";
+    if (options.length === 1 || isBooleanQuestionLabel(question.label || "")) return "checkbox";
+    return "text";
+  }
+  // Heuristic: Location (City) without a typed autocomplete still benefits from combobox UX.
+  const label = String(question.label || "").toLowerCase();
+  if (/\blocation\b/.test(label) && /\bcity\b/.test(label)) return "autocomplete";
+  if (/^(phone|mobile|tel)\b/.test(label) || /\bphone\b/.test(label)) return "phone";
+  return type || "text";
+}
+
+const PLACE_COUNTRY_TOKENS = [
+  "united states", "usa", "us", "america", "canada", "united kingdom", "uk", "england",
+  "australia", "germany", "france", "ireland", "india", "singapore", "netherlands",
+  "brazil", "mexico", "japan", "south korea", "spain", "italy", "sweden", "switzerland",
+  "new zealand",
+];
+
+/** Reject course titles / brand strings that pollute Location (City). */
+export function looksLikePlaceString(
   value: string,
+  profile?: { city?: string; state?: string; country?: string },
+) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 120) return false;
+  const text = raw.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/\b(deeplearning|deep learning|coursera|udemy|advancement|certificate|bootcamp|nanodegree|mooc|andrew ng)\b/.test(text)) {
+    return false;
+  }
+  if (/\b\w+\.(ai|io|com|org|net|dev)\b/i.test(raw)) return false;
+  const countryHints = [
+    ...PLACE_COUNTRY_TOKENS,
+    String(profile?.country || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+    String(profile?.state || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+  ].filter(Boolean);
+  const hasCountryHint = countryHints.some((hint) => hint.length >= 2 && text.includes(hint));
+  const commaParts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  if (commaParts.length >= 2) {
+    if (hasCountryHint) return true;
+    if (commaParts.length === 2 && /^[A-Za-z]{2}$/.test(commaParts[1])) return true;
+    if (raw.length > 48 || commaParts.some((part) => part.split(/\s+/).length > 5)) return false;
+    return commaParts.every((part) => part.split(/\s+/).length <= 4);
+  }
+  return raw.split(/\s+/).length <= 4 && raw.length <= 48;
+}
+
+/** Shape a city answer for Greenhouse-style typeaheads. Prefer city/state/country over junk location. */
+export function formatLocationAnswer(
+  value: string,
+  profile?: { city?: string; state?: string; country?: string; location?: string },
+) {
+  const raw = String(value || "").trim();
+  const city = String(profile?.city || "").trim();
+  const state = String(profile?.state || "").trim();
+  const country = String(profile?.country || "").trim();
+  const residence = [city, state, country].filter(Boolean).join(", ");
+  const fullResidence = Boolean(city && (state || country));
+  const location = String(profile?.location || "").trim();
+  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+  const norm = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  if (fullResidence) {
+    // Keep an already-shaped place answer; don't append state/country again.
+    if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+      return safeRaw;
+    }
+    if (!safeRaw || norm(residence).includes(norm(safeRaw)) || (city && norm(safeRaw) === norm(city))) {
+      return residence;
+    }
+    return [safeRaw, state, country].filter(Boolean).join(", ");
+  }
+
+  if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+    return safeRaw;
+  }
+  if (safeLocation && (!safeRaw || norm(safeLocation).includes(norm(safeRaw)))) {
+    return safeLocation;
+  }
+
+  const cityPart = safeRaw || city;
+  if (!cityPart) return safeLocation || residence;
+  if (city && cityPart.toLowerCase() === city.toLowerCase()) {
+    return residence || cityPart;
+  }
+  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  return cityPart;
+}
+
+/** Dedupe worker missing questions so users never see two Phone blocks. */
+export function dedupeEmployerQuestions<T extends { key?: string; label?: string; type?: string }>(items: T[]) {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const type = resolveQuestionInputType(item);
+    const labelNorm = String(item.label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const soft = `${type}|${labelNorm}`;
+    const hard = type === "phone" ? "phone" : soft;
+    if (seen.has(hard) || seen.has(soft)) continue;
+    seen.add(hard);
+    seen.add(soft);
+    out.push(item);
+  }
+  return out;
+}
+
+
+/** Common dial-code countries for Greenhouse phone Country widgets. */
+export const PHONE_DIAL_OPTIONS = [
+  { country: "United States", dial: "+1" },
+  { country: "Canada", dial: "+1" },
+  { country: "United Kingdom", dial: "+44" },
+  { country: "India", dial: "+91" },
+  { country: "Australia", dial: "+61" },
+  { country: "Germany", dial: "+49" },
+  { country: "France", dial: "+33" },
+  { country: "Ireland", dial: "+353" },
+  { country: "Singapore", dial: "+65" },
+  { country: "Brazil", dial: "+55" },
+  { country: "Mexico", dial: "+52" },
+  { country: "Japan", dial: "+81" },
+  { country: "South Korea", dial: "+82" },
+  { country: "Netherlands", dial: "+31" },
+] as const;
+
+export function matchPhoneDialCountry(country: string) {
+  const wanted = String(country || "").trim();
+  if (!wanted) return PHONE_DIAL_OPTIONS[0].country;
+  const hit = matchSelectOption(PHONE_DIAL_OPTIONS.map((item) => item.country), wanted);
+  return hit || PHONE_DIAL_OPTIONS[0].country;
+}
+
+export function coerceQuestionAnswer(
+  question: { type?: string; label?: string; options?: string[] },
+  value: string,
+  profile?: { city?: string; state?: string; country?: string; location?: string },
 ) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (question.type === "select" || question.type === "checkbox") {
-    const options = question.type === "checkbox" && !(question.options || []).length
+  const inputType = resolveQuestionInputType(question);
+  if (inputType === "select" || inputType === "checkbox") {
+    const options = inputType === "checkbox" && !(question.options || []).length
       ? ["yes", "no"]
       : (question.options || []);
     return matchSelectOption(options, raw) || raw;
   }
+  if (inputType === "autocomplete") return formatLocationAnswer(raw, profile);
+  if (inputType === "phone") return raw.replace(/[^\d+]/g, "") || raw;
   return raw;
 }
 
 export function isQuestionAnswered(
-  question: { type?: string; options?: string[]; key: string },
+  question: { type?: string; label?: string; options?: string[]; key: string },
   answers: Record<string, string>,
 ) {
   const raw = String(answers[question.key] || "").trim();
   if (!raw) return false;
-  if (question.type === "select") {
+  const inputType = resolveQuestionInputType(question);
+  if (inputType === "select") {
     const options = (question.options || []).filter((option) => String(option).trim());
     if (!options.length) return true;
     return Boolean(matchSelectOption(options, raw));
   }
-  if (question.type === "checkbox") {
+  if (inputType === "checkbox") {
     return Boolean(matchSelectOption(["yes", "no", ...(question.options || [])], raw) || /^(yes|no)$/i.test(raw));
   }
-  if (question.type === "multiselect") {
+  if (inputType === "multiselect") {
     try {
       const parsed = raw.startsWith("[") ? JSON.parse(raw) : raw.split(/[,;\n|]+/);
       return Array.isArray(parsed) ? parsed.some((item) => String(item || "").trim()) : Boolean(raw);

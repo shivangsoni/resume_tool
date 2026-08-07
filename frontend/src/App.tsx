@@ -34,6 +34,8 @@ import {
   ChevronDown24Regular,
   ChevronLeft24Regular,
   ChevronRight24Regular,
+  CalendarLtr24Regular,
+  Building24Regular,
   Clock24Regular,
   DataBarVertical24Regular,
   Delete24Regular,
@@ -41,15 +43,16 @@ import {
   Document24Regular,
   Edit24Regular,
   ErrorCircle24Regular,
-  Filter24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
+  Home24Regular,
   Location24Regular,
   Mail24Regular,
   Navigation24Regular,
   Options24Regular,
   Payment24Regular,
   Person24Regular,
+  Camera24Regular,
   QuestionCircle24Regular,
   Search24Regular,
   Settings24Regular,
@@ -61,7 +64,27 @@ import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
+import { readImageAsAvatarDataUrl } from "./avatar-image";
 import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFILE_FIELDS } from "./profileCompleteness";
+import {
+  EMPLOYMENT_TYPE_OPTIONS,
+  EXPERIENCE_YEARS_OPTIONS,
+  emptyWorkLocation,
+  flattenWorkLocationsForWorker,
+  isUnitedStates,
+  listFieldHas,
+  parseListField,
+  parseWorkLocations,
+  PROFILE_COUNTRIES,
+  residenceLocationString,
+  serializeListField,
+  serializeWorkLocations,
+  summarizeWorkLocation,
+  toggleListItem,
+  US_STATES,
+  WORKPLACE_TYPES,
+  type WorkLocationCard,
+} from "./profile-form";
 import {
   answerApplicationQuestions,
   createApplication,
@@ -90,13 +113,19 @@ import {
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
 import { resolveEmployerApplicationUrl } from "./employer-application-url";
+import { CompanyLogo } from "./company-logo";
 import {
   coerceQuestionAnswer,
+  dedupeEmployerQuestions,
+  formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel as isUselessQuestionLabelHelper,
   lookupStoredAnswer,
+  matchPhoneDialCountry,
   matchSelectOption,
+  PHONE_DIAL_OPTIONS,
   priorAnswerKeys,
+  resolveQuestionInputType,
 } from "./question-answers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -152,6 +181,7 @@ type Job = {
   sourceUrl?: string;
   logoUrl?: string;
   source?: string;
+  sourceBoard?: string;
   postedAt?: string;
   applicationId?: string;
   jobExternalId?: string;
@@ -193,10 +223,23 @@ export default function App() {
   } | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
-  const [navOpen, setNavOpen] = useState(true);
+  const [navOpen, setNavOpen] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width: 1051px)").matches);
+  const [compactShell, setCompactShell] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1050px)").matches);
   const [profileOpen, setProfileOpen] = useState(false);
   const [headerQuery, setHeaderQuery] = useState("");
   const [unreadMailCount, setUnreadMailCount] = useState(0);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1050px)");
+    const sync = () => {
+      setCompactShell(mq.matches);
+      if (mq.matches) setNavOpen(false);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
@@ -364,9 +407,45 @@ export default function App() {
   if (!currentUser) return <LandingPage signedIn={false} />;
 
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in";
-  const avatarInitials = (profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase();
+  const avatarInitials = (
+    `${profile.firstName?.[0] || ""}${profile.lastName?.[0] || ""}`
+    || (currentUser.userDetails?.includes("@") ? currentUser.userDetails[0] : currentUser.userDetails?.[0])
+    || "U"
+  ).toUpperCase();
+  const avatarImage = profile.photoUrl ? { src: profile.photoUrl } : undefined;
+  const persistPhoto = async (photoUrl: string) => {
+    const next = { ...profile, photoUrl };
+    setProfile(next);
+    saveProfile(next);
+    setPhotoBusy(true);
+    try {
+      const result = await putRemoteProfile(next);
+      const normalized = { ...emptyProfile, ...result.profile };
+      setProfile(normalized);
+      saveProfile(normalized);
+      notify(photoUrl ? "Profile photo updated" : "Profile photo removed");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not save photo");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+  const onPickPhoto = async (file: File | null | undefined) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await readImageAsAvatarDataUrl(file);
+      await persistPhoto(dataUrl);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not read photo");
+      setPhotoBusy(false);
+    }
+  };
   const onNavSelect = (_event: Event | React.SyntheticEvent, data: OnNavItemSelectData) => {
     if (data.value) setPage(String(data.value) as Page);
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1050px)").matches) {
+      setNavOpen(false);
+    }
   };
 
   return (
@@ -437,12 +516,20 @@ export default function App() {
             aria-label="Open profile"
             onClick={() => setProfileOpen(true)}
           >
-            <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
+            <Avatar name={displayName} initials={avatarInitials} image={avatarImage} color="colorful" size={32} />
           </button>
         </div>
       </header>
 
       <div className="sa-body">
+        {navOpen && compactShell ? (
+          <button
+            type="button"
+            className="sa-nav-backdrop"
+            aria-label="Close navigation"
+            onClick={() => setNavOpen(false)}
+          />
+        ) : null}
         <NavDrawer
           open
           type="inline"
@@ -524,6 +611,13 @@ export default function App() {
             setPage={setJobPage}
             selected={selected}
             setSelected={setSelected}
+            mobileDetailOpen={mobileDetailOpen}
+            setMobileDetailOpen={setMobileDetailOpen}
+            openApplications={(applicationId) => {
+              setMobileDetailOpen(false);
+              if (applicationId) setFocusedApplicationId(applicationId);
+              setPage("applications");
+            }}
             job={job}
             query={query}
             setQuery={(value) => { setQuery(value); setJobPage(1); }}
@@ -684,9 +778,9 @@ export default function App() {
             setProfile={setProfile}
             hasResume={resumeDocuments.length > 0}
             goResume={() => setPage("resume")}
-            save={async () => {
+            save={async (nextProfile) => {
               try {
-                const result = await putRemoteProfile(profile);
+                const result = await putRemoteProfile(nextProfile ?? profile);
                 setProfile(result.profile);
                 saveProfile(result.profile);
                 try {
@@ -725,6 +819,7 @@ export default function App() {
       <OverlayDrawer
         position="end"
         size="medium"
+        modalType="non-modal"
         open={profileOpen}
         onOpenChange={(_e, data) => setProfileOpen(data.open)}
         className="sa-profile-drawer"
@@ -746,7 +841,33 @@ export default function App() {
         <DrawerBody>
           <div className="sa-profile-drawer-body">
             <div className="sa-profile-drawer-user">
-              <Avatar name={displayName} initials={avatarInitials} color="colorful" size={64} />
+              <div className="sa-profile-photo">
+                <Avatar name={displayName} initials={avatarInitials} image={avatarImage} color="colorful" size={72} />
+                <label className="sa-profile-photo-btn">
+                  <Camera24Regular />
+                  <span>{photoBusy ? "Saving…" : profile.photoUrl ? "Change photo" : "Upload photo"}</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={photoBusy}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      void onPickPhoto(file);
+                    }}
+                  />
+                </label>
+                {profile.photoUrl ? (
+                  <button
+                    type="button"
+                    className="sa-profile-photo-remove"
+                    disabled={photoBusy}
+                    onClick={() => void persistPhoto("")}
+                  >
+                    Remove photo
+                  </button>
+                ) : null}
+              </div>
               <div>
                 <b>{displayName}</b>
                 <span>{currentUser.userDetails || currentUser.userId}</span>
@@ -779,6 +900,9 @@ function Dashboard(p: {
   setPage: (page: number) => void;
   selected: number;
   setSelected: (n: number) => void;
+  mobileDetailOpen: boolean;
+  setMobileDetailOpen: (open: boolean) => void;
+  openApplications: (applicationId?: string) => void;
   job?: Job;
   query: string;
   setQuery: (s: string) => void;
@@ -801,30 +925,14 @@ function Dashboard(p: {
 }) {
   return (
     <div className="dash">
-      <TabList
-        className="page-tabs"
-        selectedValue={p.status}
-        onTabSelect={(_e, data) => p.setStatus(String(data.value) as typeof p.status)}
-      >
-        <Tab value="all" content="All matches" />
-        <Tab value="ready" content="Not applied" />
-        <Tab value="queued" content="Queued" />
-        <Tab value="applied" content="Applied" />
-        <Tab value="failed" content="Failed" />
-      </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton
           appearance="primary"
+          className="sa-cmd-primary"
           icon={<ArrowClockwise24Regular />}
           onClick={p.retry}
         >
           Refresh
-        </ToolbarButton>
-        <ToolbarButton
-          icon={<Filter24Regular />}
-          onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
-        >
-          {p.status === "ready" ? "Clear filter" : "Not applied"}
         </ToolbarButton>
         <span className={`feed toolbar-feed ${p.feedState}`}>
           {p.feedState === "live"
@@ -863,15 +971,6 @@ function Dashboard(p: {
           active={p.status === "failed"}
           onClick={() => p.setStatus(p.status === "failed" ? "all" : "failed")}
         />
-        <div className="ready-card">
-          <span>
-            <Checkmark24Regular />
-          </span>
-          <div>
-            <b>One-click application workflow</b>
-            <small>Simple Apply queues a background worker to submit for you</small>
-          </div>
-        </div>
       </div>
       <div className="toolbar">
         <div className="searchbox">
@@ -925,12 +1024,18 @@ function Dashboard(p: {
               Sorted by best match <ChevronDown24Regular />
             </span>
           </div>
-          {p.visible.map((j) => (
+          {p.visible.map((j, index) => (
             <JobRow
               key={j.id}
               j={j}
+              index={(p.page - 1) * 10 + index + 1}
               active={p.selected === j.id}
-              click={() => p.setSelected(j.id)}
+              click={() => {
+                p.setSelected(j.id);
+                p.setMobileDetailOpen(true);
+              }}
+              dismiss={p.dismiss}
+              apply={p.apply}
             />
           ))}
           {!p.visible.length && (
@@ -960,7 +1065,19 @@ function Dashboard(p: {
             </div>
           )}
         </section>
-        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} requeue={p.requeue} profile={p.profile} />}
+        {p.job && (
+          <JobDetail
+            job={p.job}
+            dismiss={p.dismiss}
+            apply={p.apply}
+            resolve={p.resolve}
+            requeue={p.requeue}
+            profile={p.profile}
+            mobileOpen={p.mobileDetailOpen}
+            onMobileClose={() => p.setMobileDetailOpen(false)}
+            onOpenApplications={() => p.openApplications(p.job?.applicationId)}
+          />
+        )}
       </div>
     </div>
   );
@@ -990,62 +1107,151 @@ function Metric({
     </button>
   );
 }
+function failureHint(job: Job) {
+  const questions = job.requiredQuestions || [];
+  const answers = job.applicationAnswers || {};
+  if (questions.length) {
+    const ready = questions.every((question) => {
+      const key = String(question.key || "");
+      if (String(answers[key] || "").trim()) return true;
+      const base = key.replace(/__(?:g)?\d+(?:_\d+)?$/i, "");
+      if (base && String(answers[base] || "").trim()) return true;
+      const label = String(question.label || "").toLowerCase();
+      if ((/\bphone\b|\bmobile\b|\btel\b/.test(label)) && String(answers.phone || "").trim()) return true;
+      if (/\bcity\b/.test(label) && String(answers.city || "").trim()) return true;
+      if (/\bcountry\b/.test(label) && String(answers.country || "").trim()) return true;
+      if (/\blocation\b/.test(label) && (String(answers.location || "").trim() || String(answers.city || "").trim())) return true;
+      return false;
+    });
+    if (ready) return "Answers ready — open to save and retry.";
+    return job.applicationError || "Open to answer employer questions and retry.";
+  }
+  return job.applicationError || "Submission failed. Tap to answer questions and retry.";
+}
+
 function JobRow({
   j,
+  index,
   active,
   click,
+  dismiss,
+  apply,
 }: {
   j: Job;
+  index: number;
   active: boolean;
   click: () => void;
+  dismiss: (job: Job) => void;
+  apply: (job: Job) => Promise<void>;
 }) {
+  const [applying, setApplying] = useState(false);
+  const statusLabel = j.status === "applied"
+    ? "Applied"
+    : j.status === "queued"
+      ? (j.applicationStatus === "processing" ? "Submitting" : "Queued")
+      : j.status === "failed"
+        ? "Needs attention"
+        : "Auto-Apply Ready";
+  const workplaceLabel = j.remote ? "Remote" : "On-site";
   return (
-    <button className={`job-row ${active ? "active" : ""}`} onClick={click}>
-      <span className="job-logo">
-        {j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}
-      </span>
-      <div className="job-main">
-        <div>
-          <b>{j.title}</b>
-          {j.status === "applied" && (
-            <em className="status-tag applied">
-              <Checkmark24Regular /> Applied
-            </em>
-          )}
-          {j.status === "queued" && (
-            <em className="status-tag queued">
-              <Clock24Regular /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
-            </em>
-          )}
-          {j.status === "failed" && (
-            <em className="status-tag failed">
-              <Dismiss24Regular /> Failed
-            </em>
-          )}
+    <article className={`job-card ${active ? "active" : ""} ${j.status}`}>
+      <button type="button" className="job-card-main" onClick={click}>
+        <div className="job-card-top">
+          <span className="job-card-index">#{index} · Job Match</span>
+          <span className={`job-card-match ${j.match > 88 ? "great" : ""}`}>{j.match}% Match</span>
         </div>
-        <strong>{j.company}</strong>
-        <small>
+        <div className="job-card-company">
+          <CompanyLogo job={j} />
+          <div className="job-card-heading">
+            <strong>{j.company}</strong>
+            <b>{j.title}</b>
+            <em className={`job-card-status ${j.status}`}>
+              {j.status === "ready" && <Sparkle24Filled />}
+              {j.status === "applied" && <Checkmark24Regular />}
+              {j.status === "queued" && <Clock24Regular />}
+              {j.status === "failed" && <ErrorCircle24Regular />}
+              {statusLabel}
+            </em>
+          </div>
+        </div>
+        <div className="job-card-tags">
+          <i className={j.remote ? "tag-remote" : "tag-onsite"}>
+            {j.remote ? <Home24Regular /> : <Building24Regular />}
+            {workplaceLabel}
+          </i>
+          {j.posted && (
+            <i className="tag-date">
+              <CalendarLtr24Regular />
+              {j.posted}
+            </i>
+          )}
+          {j.level && (
+            <i className="tag-level">
+              <DataBarVertical24Regular />
+              {j.level}
+            </i>
+          )}
+          {j.salary && (
+            <i className="tag-salary">{j.salary}</i>
+          )}
+          {j.source && <i className="tag-source">{j.source}</i>}
+        </div>
+        <p className="job-card-location">
           <Location24Regular />
-          {j.location} · {j.level}
-        </small>
-        <div className="row-tags">
-          {j.remote && <i>Remote</i>}
-          <i>{j.salary}</i>
-        </div>
+          {j.location || "Location not listed"}
+        </p>
         {j.status === "failed" && (
           <p className="job-error">
             <ErrorCircle24Regular />
-            {j.applicationError || "Submission failed. Open the job for details or retry from Applications."}
+            {failureHint(j)}
           </p>
         )}
+      </button>
+      <div className="job-card-actions">
+        <button type="button" onClick={click}>
+          <Document24Regular />
+          Job details
+        </button>
+        <button
+          type="button"
+          className="job-card-apply"
+          disabled={applying}
+          onClick={async (event) => {
+            event.stopPropagation();
+            if (j.status !== "ready") {
+              click();
+              return;
+            }
+            setApplying(true);
+            try {
+              await apply(j);
+            } finally {
+              setApplying(false);
+            }
+          }}
+        >
+          <CheckmarkCircle24Regular />
+          {j.status === "ready"
+            ? (applying ? "Applying…" : "Apply")
+            : j.status === "failed"
+              ? "Fix & retry"
+              : j.status === "queued"
+                ? "View queue"
+                : "View"}
+        </button>
+        <button
+          type="button"
+          className="job-card-dismiss"
+          onClick={(event) => {
+            event.stopPropagation();
+            dismiss(j);
+          }}
+        >
+          <Dismiss24Regular />
+          Not interested
+        </button>
       </div>
-      <div className="job-score">
-        <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
-        <small>match</small>
-        <time>{j.posted}</time>
-        {j.source && <em className="source-badge">{j.source}</em>}
-      </div>
-    </button>
+    </article>
   );
 }
 function JobDetail({
@@ -1055,6 +1261,9 @@ function JobDetail({
   resolve,
   requeue,
   profile,
+  mobileOpen = false,
+  onMobileClose,
+  onOpenApplications,
 }: {
   job: Job;
   dismiss: (job: Job) => void;
@@ -1062,6 +1271,9 @@ function JobDetail({
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
   profile: Profile;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  onOpenApplications?: () => void;
 }) {
   const [applying, setApplying] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
@@ -1083,18 +1295,26 @@ function JobDetail({
       }
     : null;
   return (
-    <section className="job-detail">
+    <section className={`job-detail ${mobileOpen ? "mobile-open" : ""}`}>
+      <div className="mobile-detail-bar">
+        <button type="button" className="mobile-detail-back" onClick={onMobileClose}>
+          <ChevronLeft24Regular /> Back to matches
+        </button>
+        {job.applicationId && onOpenApplications ? (
+          <button type="button" className="mobile-detail-apps" onClick={onOpenApplications}>
+            Applications
+          </button>
+        ) : null}
+      </div>
       <div className="detail-top">
-        <span className="big-logo">
-          {job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}
-        </span>
+        <CompanyLogo job={job} className="big-logo" />
         <div>
           <h2>{job.title}</h2>
           <p>
             {job.company} · {job.location}
           </p>
         </div>
-        <button className="icon-btn">
+        <button className="icon-btn" type="button" aria-label="Close detail" onClick={onMobileClose || (() => dismiss(job))}>
           <Dismiss24Regular />
         </button>
       </div>
@@ -1256,25 +1476,27 @@ function JobDetail({
       {failedApplication && (
         <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
       )}
-      <EmployerApplicationChrome
-        sourceUrl={job.sourceUrl}
-        company={job.company}
-        source={job.source}
-        jobExternalId={job.jobExternalId}
-        applicationId={job.applicationId}
-      />
-      {job.sourceUrl && (
-        <a
-          className="source-link"
-          href={job.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-        >
-          View original listing{job.source ? ` on ${job.source}` : ""}
-        </a>
-      )}
-      <div className="safe-note">
-        <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
+      <div className="detail-footer">
+        <EmployerApplicationChrome
+          sourceUrl={job.sourceUrl}
+          company={job.company}
+          source={job.source}
+          jobExternalId={job.jobExternalId}
+          applicationId={job.applicationId}
+        />
+        {job.sourceUrl && (
+          <a
+            className="source-link"
+            href={job.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View original listing{job.source ? ` on ${job.source}` : ""}
+          </a>
+        )}
+        <p className="safe-note">
+          <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
+        </p>
       </div>
     </section>
   );
@@ -1358,11 +1580,11 @@ function Applications({
         selectedValue={appTab}
         onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "action")}
       >
-        <Tab value="all" content="All applications" />
-        <Tab value="action" content="Needs action" />
+        <Tab value="all">All applications</Tab>
+        <Tab value="action">Needs action</Tab>
       </TabList>
       <Toolbar className="page-command-bar">
-        <ToolbarButton appearance="primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
+        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
           Needs action
         </ToolbarButton>
         <ToolbarButton icon={<ArrowClockwise24Regular />} onClick={() => window.location.reload()}>
@@ -1385,9 +1607,7 @@ function Applications({
         {visibleApps.map((application) => (
           <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
-              <span className="job-logo">
-                {application.company?.slice(0, 1) || "?"}
-              </span>
+              <CompanyLogo job={{ company: application.company, sourceUrl: application.sourceUrl }} />
               <div>
                 <b>{application.title}</b>
                 <small>
@@ -1471,7 +1691,12 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
-  if (/\bcity\b/.test(text)) return profile.city;
+  if (/\bcity\b/.test(text)) {
+    if (/\blocation\b/.test(text)) {
+      return formatLocationAnswer("", profile);
+    }
+    return profile.city;
+  }
   if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
@@ -1490,7 +1715,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
     return "";
   }
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
-    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+    return formatLocationAnswer("", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
@@ -1568,7 +1793,7 @@ function ApplicationQuestions({
   profile: Profile;
 }) {
   const questions = useMemo(() => {
-    const list = application.requiredQuestions || [];
+    const list = dedupeEmployerQuestions(application.requiredQuestions || []);
     const used = new Set<string>();
     return list.map((question, index) => {
       let key = String(question.key || `question_${index + 1}`);
@@ -1618,19 +1843,32 @@ function ApplicationQuestions({
       const fromStored = lookupStoredAnswer(stored, question.priorKeys);
       const raw = fromStored || profileAnswerForLabel(question.label, profile, question.options) || "";
       if (!raw) continue;
-      next[question.key] = coerceQuestionAnswer(question, raw);
+      next[question.key] = coerceQuestionAnswer(question, raw, profile);
     }
     return next;
     // Signatures keep seed stable across poll-driven object identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [application.id, answersSignature, questionsSignature, profileSignature]);
+  const seedDialCountries = useMemo(() => {
+    const next: Record<string, string> = {};
+    const storedCountry = String(application.answers?.country || profile.country || "").trim();
+    for (const question of questions) {
+      if (resolveQuestionInputType(question) !== "phone") continue;
+      next[question.key] = matchPhoneDialCountry(storedCountry);
+    }
+    return next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [application.id, answersSignature, questionsSignature, profileSignature]);
   const seedKey = `${application.id}|${answersSignature}|${questionsSignature}|${profileSignature}`;
   const [answers, setAnswers] = useState(seedAnswers);
+  const [phoneDialCountries, setPhoneDialCountries] = useState(seedDialCountries);
   const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
+  // Reseed when the worker/profile signatures change (React: adjust state during render).
   if (appliedSeedKey !== seedKey) {
     setAppliedSeedKey(seedKey);
     setAnswers(seedAnswers);
+    setPhoneDialCountries(seedDialCountries);
   }
 
   if (!questions.length) {
@@ -1675,13 +1913,20 @@ function ApplicationQuestions({
         try {
           const coerced: Record<string, string> = {};
           for (const question of questions) {
-            const value = coerceQuestionAnswer(question, answers[question.key] || "");
+            const value = coerceQuestionAnswer(question, answers[question.key] || "", profile);
             if (value) coerced[question.key] = value;
             // Also persist under the original worker key base so index shifts still resolve.
             const original = String(question.priorKeys[0] || question.key);
             if (original && original !== question.key && value) coerced[original] = value;
             const base = original.replace(/__(?:g)?\d+(?:_\d+)?$/i, "");
             if (base && value) coerced[base] = value;
+            if (resolveQuestionInputType(question) === "phone" && phoneDialCountries[question.key]) {
+              coerced.country = phoneDialCountries[question.key];
+            }
+            if (resolveQuestionInputType(question) === "autocomplete" && value) {
+              coerced.city = value.split(",")[0]?.trim() || value;
+              coerced.location = value;
+            }
           }
           await resolve(application.id, coerced);
         } finally {
@@ -1700,25 +1945,47 @@ function ApplicationQuestions({
         jobExternalId={application.jobExternalId}
         applicationId={application.id}
       />
-      <p>{application.lastSubmissionError}</p>
+      <p>
+        {answeredCount >= questions.length
+          ? "Answers look complete. Click Save answers and retry to re-queue submission."
+          : (application.lastSubmissionError || "Fill the required fields below, then save to retry.")}
+      </p>
       <div className="action-required-fields">
         {questions.map((question, index) => {
+          const inputType = resolveQuestionInputType(question);
           const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
           const selectedOptions = parseStoredMultiselect(answers[question.key] || "");
-          const selectValue = question.type === "select"
+          const selectValue = inputType === "select"
             ? (matchSelectOption(selectOptions, answers[question.key] || "") || "")
             : (answers[question.key] || "");
+          const locationSuggestion = formatLocationAnswer("", profile);
+          const locationOptions = [...new Set([
+            answers[question.key] || "",
+            locationSuggestion,
+            formatLocationAnswer(profile.city || "", profile),
+          ].filter(Boolean))];
           return (
-          <label key={question.key} className={question.type === "multiselect" ? "multiselect-field" : undefined}>
-            <span>{question.label || `Question ${index + 1}`}</span>
-            {question.type === "blocking" ? (
+          <div
+            key={question.key}
+            className={
+              inputType === "multiselect"
+                ? "action-field multiselect-field"
+                : inputType === "phone"
+                  ? "action-field phone-field"
+                  : inputType === "autocomplete"
+                    ? "action-field autocomplete-field"
+                    : "action-field"
+            }
+          >
+            <span className="action-field-label">{question.label || `Question ${index + 1}`}</span>
+            {inputType === "blocking" ? (
               <a href={resolveEmployerApplicationUrl({
                 sourceUrl: application.sourceUrl,
                 company: application.company,
                 source: application.source,
                 jobExternalId: application.jobExternalId,
               }) || application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
-            ) : question.type === "multiselect" ? (
+            ) : inputType === "multiselect" ? (
               <div className="multiselect-options">
                 {selectOptions.map((option, optionIndex) => (
                   <label key={`${question.key}::${optionIndex}::${option}`} className="multiselect-option">
@@ -1731,7 +1998,7 @@ function ApplicationQuestions({
                   </label>
                 ))}
               </div>
-            ) : question.type === "select" ? (
+            ) : inputType === "select" ? (
               <select
                 required={question.required !== false}
                 value={selectValue}
@@ -1742,7 +2009,7 @@ function ApplicationQuestions({
                   <option key={`${question.key}::${optionIndex}::${option}`} value={option}>{option}</option>
                 ))}
               </select>
-            ) : question.type === "checkbox" ? (
+            ) : inputType === "checkbox" ? (
               <select
                 required={question.required !== false}
                 value={matchSelectOption(["yes", "no"], answers[question.key] || "") || answers[question.key] || ""}
@@ -1752,20 +2019,64 @@ function ApplicationQuestions({
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
               </select>
-            ) : question.type === "textarea" ? (
+            ) : inputType === "textarea" ? (
               <textarea
                 required={question.required !== false}
                 value={answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               />
+            ) : inputType === "autocomplete" ? (
+              <>
+                <input
+                  list={`location-options-${index}`}
+                  required={question.required !== false}
+                  value={answers[question.key] || ""}
+                  onChange={(event) => setAnswer(question.key, event.target.value)}
+                  placeholder={(question as { placeholder?: string }).placeholder || "e.g. Redmond, Washington, United States"}
+                  autoComplete="off"
+                />
+                <datalist id={`location-options-${index}`}>
+                  {locationOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+                <small className="field-hint">Pick a full city match like the employer form (City, Region, Country).</small>
+              </>
+            ) : inputType === "phone" ? (
+              <>
+                <div className="phone-field-row">
+                  <select
+                    aria-label="Phone country"
+                    value={phoneDialCountries[question.key] || matchPhoneDialCountry(profile.country)}
+                    onChange={(event) => {
+                      setPhoneDialCountries((prev) => ({ ...prev, [question.key]: event.target.value }));
+                    }}
+                  >
+                    {PHONE_DIAL_OPTIONS.map((item) => (
+                      <option key={`${item.country}-${item.dial}`} value={item.country}>
+                        {item.country} {item.dial}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    required={question.required !== false}
+                    value={answers[question.key] || ""}
+                    onChange={(event) => setAnswer(question.key, event.target.value)}
+                    placeholder="Phone number"
+                  />
+                </div>
+                <small className="field-hint">Country dial code + phone, same layout as the employer application.</small>
+              </>
             ) : (
               <input
                 required={question.required !== false}
                 value={answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
+                placeholder={/\bcountry\b/i.test(question.label || "") ? "e.g. United States" : undefined}
               />
             )}
-          </label>
+          </div>
           );
         })}
       </div>
@@ -1840,7 +2151,7 @@ function Resume({
   return (
     <div className="basic-page resume-page">
       <Toolbar className="page-command-bar">
-        <ToolbarButton appearance="primary" icon={<ArrowUpload24Regular />} onClick={() => document.getElementById("resume-file-input")?.click()}>
+        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<ArrowUpload24Regular />} onClick={() => document.getElementById("resume-file-input")?.click()}>
           Upload résumé
         </ToolbarButton>
       </Toolbar>
@@ -2171,16 +2482,12 @@ function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
 
 function InboxPage({ openApplication }: { openApplication: (applicationId: string) => void }) {
   const [messages, setMessages] = useState<MailMessage[]>([]);
-  const [address, setAddress] = useState<string | null>(null);
-  const [routingNote, setRoutingNote] = useState("");
   const [selected, setSelected] = useState<MailMessage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     getMailbox().then((result) => {
-      setAddress(result.address);
-      setRoutingNote(result.routingNote || "");
       setMessages(result.messages);
       setSelected(result.messages[0] || null);
     }).catch((cause) => setError(cause.message === "AUTH_REQUIRED" ? "Sign in to open your mailbox." : cause.message)).finally(() => setLoading(false));
@@ -2198,8 +2505,7 @@ function InboxPage({ openApplication }: { openApplication: (applicationId: strin
   return (
     <div className="simple-page">
       <div className="page-heading left"><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
-      {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
-      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
+      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Application status updates and recruiter replies will appear here.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
           <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase24Regular /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
@@ -2308,55 +2614,156 @@ function ProfileView({
 }: {
   profile: Profile;
   setProfile: (p: Profile) => void;
-  save: () => void;
+  save: (next?: Profile) => void | Promise<void>;
   hasResume: boolean;
   goResume: () => void;
 }) {
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [expandedLocation, setExpandedLocation] = useState(0);
+  const [titleDraft, setTitleDraft] = useState("");
   const missing = missingProfileFields(profile);
   const required = new Set<string>(REQUIRED_PROFILE_FIELDS);
-  const selectOptions: Partial<Record<keyof Profile, string[]>> = {
-    workAuthorization: ["US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"],
-    sponsorship: ["No", "Yes", "Not sure"],
-    educationLevel: ["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"],
-    experienceLevel: ["0-1 years", "1-3 years", "3-5 years", "5-8 years", "8+ years"],
+  const workLocations = parseWorkLocations(profile.preferredLocations);
+  const titles = parseListField(profile.targetRoles);
+  const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.email || "You";
+  const initials = (`${profile.firstName?.[0] || ""}${profile.lastName?.[0] || ""}` || displayName[0] || "U").toUpperCase();
+  const canSave = missing.length === 0 && hasResume;
+
+  useEffect(() => {
+    if (String(profile.preferredLocations || "").trim()) return;
+    setProfile({
+      ...profile,
+      preferredLocations: serializeWorkLocations([emptyWorkLocation(profile.country || "United States")]),
+    });
+    // Seed once when the page opens with empty work locations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patch = (partial: Partial<Profile>) => {
+    const next = { ...profile, ...partial };
+    if (partial.city !== undefined || partial.state !== undefined || partial.country !== undefined) {
+      next.location = residenceLocationString(next);
+    }
+    setProfile(next);
   };
-  const fields = [
-    "firstName",
-    "lastName",
-    "email",
-    "phone",
-    "location",
-    "country",
-    "state",
-    "city",
-    "address",
-    "postalCode",
-    "linkedin",
-    "github",
-    "portfolio",
-    "workAuthorization",
-    "sponsorship",
-    "skills",
-    "targetRoles",
-    "preferredLocations",
-    "employmentTypes",
-    "experienceLevel",
-    "minSalary",
-    "educationLevel",
-    "school",
-    "currentEmployer",
-    "currentJobTitle",
-    "preferredLanguages",
-    "companiesToExclude",
-    "additionalInfo",
-  ] as (keyof Profile)[];
+
+  const setWorkLocations = (cards: WorkLocationCard[]) => {
+    patch({
+      preferredLocations: serializeWorkLocations(cards),
+    });
+  };
+
+  const updateWorkLocation = (index: number, partial: Partial<WorkLocationCard>) => {
+    const cards = workLocations.length ? [...workLocations] : [emptyWorkLocation(profile.country || "United States")];
+    cards[index] = { ...cards[index], ...partial };
+    setWorkLocations(cards);
+  };
+
+  const addTitle = () => {
+    const next = titleDraft.trim();
+    if (!next) return;
+    patch({ targetRoles: serializeListField([...titles, next]) });
+    setTitleDraft("");
+  };
+
+  const persist = async () => {
+    setSaving(true);
+    try {
+      const cards = workLocations.length
+        ? workLocations
+        : [emptyWorkLocation(profile.country || "United States")];
+      const next = {
+        ...profile,
+        preferredLocations: serializeWorkLocations(cards),
+        location: residenceLocationString(profile),
+      };
+      setProfile(next);
+      await save(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldClass = (key: keyof Profile) =>
+    required.has(key) && !String(profile[key] || "").trim() ? "required-missing" : undefined;
 
   return (
-    <div className="basic-page screenshot-profile">
-      <p>
-        Required fields are collected once and reused by the browser worker on every Simple Apply.
-        Uploading a résumé auto-fills blank contact and skills fields from extraction.
-      </p>
+    <div className="basic-page screenshot-profile profile-form-page">
+      <div className="profile-form-intro">
+        <div>
+          <h2>Profile information</h2>
+          <p>Update your details once — Simple Apply reuses them on every employer form.</p>
+        </div>
+        <button className="apply" disabled={saving || !canSave} onClick={() => void persist()}>
+          {saving ? "Saving…" : "Save profile"}
+        </button>
+      </div>
+
+      <div className="sa-profile-photo profile-page-photo">
+        <Avatar
+          name={displayName}
+          initials={initials}
+          image={profile.photoUrl ? { src: profile.photoUrl } : undefined}
+          color="colorful"
+          size={96}
+        />
+        <div className="sa-profile-photo-actions">
+          <label className="sa-profile-photo-btn">
+            <Camera24Regular />
+            <span>{photoBusy ? "Processing…" : profile.photoUrl ? "Change photo" : "Upload photo"}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={photoBusy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                setPhotoBusy(true);
+                void readImageAsAvatarDataUrl(file)
+                  .then(async (photoUrl) => {
+                    const next = { ...profile, photoUrl };
+                    setProfile(next);
+                    saveProfile(next);
+                    try {
+                      const result = await putRemoteProfile(next);
+                      const normalized = { ...emptyProfile, ...result.profile };
+                      setProfile(normalized);
+                      saveProfile(normalized);
+                    } catch {
+                      /* keep local photo */
+                    }
+                  })
+                  .catch(() => { /* ignore */ })
+                  .finally(() => setPhotoBusy(false));
+              }}
+            />
+          </label>
+          {profile.photoUrl ? (
+            <button
+              type="button"
+              className="sa-profile-photo-remove"
+              disabled={photoBusy}
+              onClick={() => {
+                const next = { ...profile, photoUrl: "" };
+                setProfile(next);
+                saveProfile(next);
+                void putRemoteProfile(next)
+                  .then((result) => {
+                    const normalized = { ...emptyProfile, ...result.profile };
+                    setProfile(normalized);
+                    saveProfile(normalized);
+                  })
+                  .catch(() => { /* ignore */ });
+              }}
+            >
+              Remove photo
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       {(missing.length > 0 || !hasResume) && (
         <div className="onboarding-banner profile-setup">
           <div>
@@ -2369,37 +2776,358 @@ function ProfileView({
           {!hasResume && <button className="apply" onClick={goResume}>Upload résumé</button>}
         </div>
       )}
-      <div className="settings-card profile-grid">
-        {fields.map((k) => {
-          const isRequired = required.has(k);
-          const options = selectOptions[k];
-          return (
-            <label key={k} className={isRequired && !String(profile[k] || "").trim() ? "required-missing" : undefined}>
-              {fieldLabel(k)}{isRequired ? " *" : ""}
-              {options ? (
-                <select
-                  required={isRequired}
-                  value={profile[k]}
-                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-                >
-                  <option value="">Select…</option>
-                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
-                  {profile[k] && !options.includes(profile[k]) ? <option value={profile[k]}>{profile[k]}</option> : null}
-                </select>
-              ) : (
-                <input
-                  required={isRequired}
-                  value={profile[k]}
-                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-                />
-              )}
+
+      <section className="profile-section">
+        <h3>Basics</h3>
+        <div className="profile-section-grid">
+          <label className={fieldClass("firstName")}>
+            First name *
+            <input required value={profile.firstName} onChange={(e) => patch({ firstName: e.target.value })} />
+          </label>
+          <label className={fieldClass("lastName")}>
+            Last name *
+            <input required value={profile.lastName} onChange={(e) => patch({ lastName: e.target.value })} />
+          </label>
+          <label className={fieldClass("email")}>
+            Email *
+            <input required type="email" value={profile.email} readOnly={Boolean(profile.email)} onChange={(e) => patch({ email: e.target.value })} />
+            {profile.email ? <small className="field-hint">Email comes from your sign-in account.</small> : null}
+          </label>
+          <label className={fieldClass("phone")}>
+            Phone *
+            <input required type="tel" value={profile.phone} onChange={(e) => patch({ phone: e.target.value })} />
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Current residence</h3>
+        <p className="profile-section-copy">Used for Greenhouse location and phone country fields.</p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("country")}>
+            Country of residence *
+            <select required value={profile.country} onChange={(e) => patch({ country: e.target.value })}>
+              <option value="">Select…</option>
+              {PROFILE_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
+              {profile.country && !(PROFILE_COUNTRIES as readonly string[]).includes(profile.country) ? (
+                <option value={profile.country}>{profile.country}</option>
+              ) : null}
+            </select>
+            <small className="field-hint">Select the country where you currently live.</small>
+          </label>
+          <label className={fieldClass("state")}>
+            State *
+            {isUnitedStates(profile.country) ? (
+              <select required value={profile.state} onChange={(e) => patch({ state: e.target.value })}>
+                <option value="">Select…</option>
+                {US_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                {profile.state && !(US_STATES as readonly string[]).includes(profile.state) ? (
+                  <option value={profile.state}>{profile.state}</option>
+                ) : null}
+              </select>
+            ) : (
+              <input required value={profile.state} onChange={(e) => patch({ state: e.target.value })} />
+            )}
+          </label>
+          <label className={fieldClass("city")}>
+            City *
+            <input required value={profile.city} onChange={(e) => patch({ city: e.target.value })} />
+          </label>
+          <label className={fieldClass("postalCode")}>
+            Postal code *
+            <input required value={profile.postalCode} onChange={(e) => patch({ postalCode: e.target.value })} />
+          </label>
+          <label className={`span-2 ${fieldClass("address") || ""}`.trim()}>
+            Address *
+            <input required value={profile.address} onChange={(e) => patch({ address: e.target.value })} />
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Work locations *</h3>
+        <p className="profile-section-copy">
+          Tell us where you want to work. These preferences filter matches and answer relocation / remote questions.
+        </p>
+        <div className="work-location-list">
+          {(workLocations.length ? workLocations : [emptyWorkLocation(profile.country || "United States")]).map((card, index) => {
+            const cards = workLocations.length ? workLocations : [card];
+            const open = expandedLocation === index;
+            return (
+              <div className={`work-location-card ${open ? "open" : ""}`} key={`wl-${index}`}>
+                <div className="work-location-card-head">
+                  <button type="button" className="work-location-toggle" onClick={() => setExpandedLocation(open ? -1 : index)}>
+                    <span>{summarizeWorkLocation(card)}</span>
+                    <ChevronDown24Regular />
+                  </button>
+                  {cards.length > 1 ? (
+                    <button
+                      type="button"
+                      className="work-location-remove"
+                      aria-label="Remove work location"
+                      onClick={() => {
+                        const next = cards.filter((_, i) => i !== index);
+                        setWorkLocations(next);
+                        setExpandedLocation(Math.max(0, index - 1));
+                      }}
+                    >
+                      <Delete24Regular />
+                    </button>
+                  ) : null}
+                </div>
+                {open ? (
+                  <div className="work-location-card-body">
+                    <fieldset>
+                      <legend>Workplace type *</legend>
+                      <div className="chip-row">
+                        {WORKPLACE_TYPES.map((type) => (
+                          <label key={type} className={`chip ${card.workplaceTypes.includes(type) ? "on" : ""}`}>
+                            <input
+                              type="checkbox"
+                              checked={card.workplaceTypes.includes(type)}
+                              onChange={(event) => {
+                                const workplaceTypes = event.target.checked
+                                  ? [...new Set([...card.workplaceTypes, type])]
+                                  : card.workplaceTypes.filter((item) => item !== type);
+                                updateWorkLocation(index, { workplaceTypes: workplaceTypes.length ? workplaceTypes : ["Remote"] });
+                              }}
+                            />
+                            {type}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <div className="profile-section-grid">
+                      <label>
+                        Country *
+                        <select
+                          required
+                          value={card.country}
+                          onChange={(e) => updateWorkLocation(index, { country: e.target.value })}
+                        >
+                          <option value="">Select…</option>
+                          {PROFILE_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        State
+                        {isUnitedStates(card.country) ? (
+                          <select value={card.state || ""} onChange={(e) => updateWorkLocation(index, { state: e.target.value })}>
+                            <option value="">Select…</option>
+                            {US_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                          </select>
+                        ) : (
+                          <input value={card.state || ""} onChange={(e) => updateWorkLocation(index, { state: e.target.value })} />
+                        )}
+                      </label>
+                      <label>
+                        City
+                        <input value={card.city || ""} onChange={(e) => updateWorkLocation(index, { city: e.target.value })} />
+                      </label>
+                      <label>
+                        Max search distance (miles)
+                        <input
+                          type="number"
+                          min={0}
+                          max={500}
+                          value={card.radiusMiles ?? ""}
+                          onChange={(e) => updateWorkLocation(index, {
+                            radiusMiles: e.target.value ? Number(e.target.value) : undefined,
+                          })}
+                        />
+                      </label>
+                    </div>
+                    <small className="field-hint">
+                      {card.workplaceTypes.includes("Remote")
+                        ? `Will look for Remote jobs anywhere in ${card.country || "selected country"}.`
+                        : null}
+                      {" "}
+                      {(card.workplaceTypes.includes("Hybrid") || card.workplaceTypes.includes("On-site")) && card.city
+                        ? `Will look for Hybrid/On-site near ${[card.city, card.state, card.country].filter(Boolean).join(", ")}.`
+                        : null}
+                    </small>
+                  </div>
+                ) : (
+                  <p className="work-location-summary">{flattenWorkLocationsForWorker([card])}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {(workLocations.length || 1) < 5 ? (
+          <button
+            type="button"
+            className="work-location-add"
+            onClick={() => {
+              const base = workLocations.length ? workLocations : [emptyWorkLocation(profile.country || "United States")];
+              const next = [...base, emptyWorkLocation(profile.country || "United States")];
+              setWorkLocations(next);
+              setExpandedLocation(next.length - 1);
+            }}
+          >
+            <Add24Regular /> Add work location ({Math.max(workLocations.length, 1)}/5)
+          </button>
+        ) : null}
+      </section>
+
+      <section className="profile-section">
+        <h3>Work authorization</h3>
+        <p className="profile-section-copy">
+          Used to answer “Are you legally authorized to work…” and sponsorship questions automatically.
+        </p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("workAuthorization")}>
+            Legal to work *
+            <select required value={profile.workAuthorization} onChange={(e) => patch({ workAuthorization: e.target.value })}>
+              <option value="">Select…</option>
+              {["Yes", "No", "US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"].map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+          <label className={fieldClass("sponsorship")}>
+            Require sponsorship *
+            <select required value={profile.sponsorship} onChange={(e) => patch({ sponsorship: e.target.value })}>
+              <option value="">Select…</option>
+              {["No", "Yes", "Not sure"].map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Job preferences</h3>
+        <div className="profile-section-stack">
+          <label className={fieldClass("targetRoles")}>
+            Desired job title *
+            <div className="tag-input">
+              <div className="tag-list">
+                {titles.map((title) => (
+                  <button
+                    type="button"
+                    className="tag-chip"
+                    key={title}
+                    onClick={() => patch({ targetRoles: serializeListField(titles.filter((item) => item !== title)) })}
+                  >
+                    {title} ×
+                  </button>
+                ))}
+              </div>
+              <input
+                value={titleDraft}
+                placeholder="Enter job title(s)"
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTitle();
+                  }
+                }}
+              />
+              <button type="button" className="tag-add" onClick={addTitle}>Add</button>
+            </div>
+          </label>
+
+          <fieldset className={required.has("employmentTypes") && !profile.employmentTypes.trim() ? "required-missing" : undefined}>
+            <legend>Employment type preferences *</legend>
+            <div className="chip-row vertical">
+              {EMPLOYMENT_TYPE_OPTIONS.map((type) => (
+                <label key={type} className={`chip ${listFieldHas(profile.employmentTypes, type) ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={listFieldHas(profile.employmentTypes, type)}
+                    onChange={(e) => patch({ employmentTypes: toggleListItem(profile.employmentTypes, type, e.target.checked) })}
+                  />
+                  {type}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <div className="profile-section-grid">
+            <label className={fieldClass("experienceLevel")}>
+              Years of experience *
+              <select required value={profile.experienceLevel} onChange={(e) => patch({ experienceLevel: e.target.value })}>
+                <option value="">Select…</option>
+                {EXPERIENCE_YEARS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                {profile.experienceLevel && !(EXPERIENCE_YEARS_OPTIONS as readonly string[]).includes(profile.experienceLevel) ? (
+                  <option value={profile.experienceLevel}>{profile.experienceLevel}</option>
+                ) : null}
+              </select>
             </label>
-          );
-        })}
-        <button className="apply" onClick={save}>
-          Save profile
-        </button>
-      </div>
+            <label className={fieldClass("minSalary")}>
+              Minimum salary *
+              <input required value={profile.minSalary} placeholder="e.g. 150000" onChange={(e) => patch({ minSalary: e.target.value })} />
+            </label>
+            <label className={fieldClass("educationLevel")}>
+              Education level *
+              <select required value={profile.educationLevel} onChange={(e) => patch({ educationLevel: e.target.value })}>
+                <option value="">Select…</option>
+                {["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"].map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              School
+              <input value={profile.school} onChange={(e) => patch({ school: e.target.value })} />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Additional information</h3>
+        <p className="profile-section-copy">This helps match opportunities and answer employer questions.</p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("linkedin")}>
+            LinkedIn URL *
+            <input required value={profile.linkedin} placeholder="https://www.linkedin.com/in/…" onChange={(e) => patch({ linkedin: e.target.value })} />
+            <small className="field-hint">Required for auto-apply.</small>
+          </label>
+          <label>
+            Companies to exclude
+            <input value={profile.companiesToExclude} placeholder="Enter company names, separated by commas" onChange={(e) => patch({ companiesToExclude: e.target.value })} />
+          </label>
+          <label>
+            Preferred languages
+            <input value={profile.preferredLanguages} placeholder="e.g. English, Spanish" onChange={(e) => patch({ preferredLanguages: e.target.value })} />
+          </label>
+          <label>
+            Skills
+            <input value={profile.skills} placeholder="e.g. TypeScript, React, Azure" onChange={(e) => patch({ skills: e.target.value })} />
+          </label>
+          <label>
+            GitHub URL
+            <input value={profile.github} placeholder="https://github.com/username" onChange={(e) => patch({ github: e.target.value })} />
+          </label>
+          <label>
+            Portfolio URL
+            <input value={profile.portfolio} placeholder="https://yourportfolio.com" onChange={(e) => patch({ portfolio: e.target.value })} />
+          </label>
+          <label>
+            Current employer
+            <input value={profile.currentEmployer} onChange={(e) => patch({ currentEmployer: e.target.value })} />
+          </label>
+          <label>
+            Current job title
+            <input value={profile.currentJobTitle} onChange={(e) => patch({ currentJobTitle: e.target.value })} />
+          </label>
+          <label className="span-2">
+            Additional information
+            <textarea
+              value={profile.additionalInfo}
+              placeholder="Share any additional information that might help with job matches"
+              onChange={(e) => patch({ additionalInfo: e.target.value })}
+            />
+            <small className="field-hint">Suggested cover-letter style notes for matching and application answers.</small>
+          </label>
+        </div>
+      </section>
+
+      <button className="apply profile-save-bottom" disabled={saving || !canSave} onClick={() => void persist()}>
+        {saving ? "Saving…" : "Save profile"}
+      </button>
     </div>
   );
 }

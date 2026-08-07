@@ -46,6 +46,130 @@ const isUselessLabel = (label) => {
 /** Strip volatile `__12` / `__g3` suffixes from answer keys. */
 const answerKeyBase = (key) => String(key || "").replace(/__(?:g)?\d+(?:_\d+)?$/i, "").trim();
 
+const PLACE_COUNTRY_TOKENS = [
+  "united states", "usa", "us", "america", "canada", "united kingdom", "uk", "england",
+  "australia", "germany", "france", "ireland", "india", "singapore", "netherlands",
+  "brazil", "mexico", "japan", "south korea", "spain", "italy", "sweden", "switzerland",
+  "new zealand",
+];
+
+/**
+ * Reject course titles / brand strings that pollute Location (City).
+ * Accept City, Region, Country shapes and short bare city names.
+ */
+const looksLikePlaceString = (value, profile = {}) => {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 120) return false;
+  const text = normalize(raw);
+  if (/\b(deeplearning|deep learning|coursera|udemy|advancement|certificate|bootcamp|nanodegree|mooc|andrew ng)\b/.test(text)) {
+    return false;
+  }
+  if (/\b\w+\.(ai|io|com|org|net|dev)\b/.test(text)) return false;
+  const countryHints = [
+    ...PLACE_COUNTRY_TOKENS,
+    normalize(profile.country),
+    normalize(profile.state),
+  ].filter(Boolean);
+  const hasCountryHint = countryHints.some((hint) => hint.length >= 2 && text.includes(hint));
+  const commaParts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  if (commaParts.length >= 2) {
+    if (hasCountryHint) return true;
+    // "City, ST" short form
+    if (commaParts.length === 2 && /^[A-Za-z]{2}$/.test(commaParts[1])) return true;
+    // Long multi-part without a country/state token is usually junk
+    if (raw.length > 48 || commaParts.some((part) => part.split(/\s+/).length > 5)) return false;
+    return commaParts.every((part) => part.split(/\s+/).length <= 4);
+  }
+  // Bare city / region
+  return raw.split(/\s+/).length <= 4 && raw.length <= 48;
+};
+
+/**
+ * Build a Greenhouse-shaped location query ("City, Region, Country").
+ * Prefer structured city/state/country over free-text profile.location junk.
+ */
+const formatLocationQuery = (answer, profile = {}) => {
+  const raw = String(answer || "").trim();
+  const city = String(profile.city || "").trim();
+  const state = String(profile.state || "").trim();
+  const country = String(profile.country || "").trim();
+  const residence = [city, state, country].filter(Boolean).join(", ");
+  const fullResidence = Boolean(city && (state || country));
+  const location = String(profile.location || "").trim();
+  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+
+  if (fullResidence) {
+    // Keep an already-shaped place answer; don't append state/country again.
+    if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+      return safeRaw;
+    }
+    if (!safeRaw || normalize(residence).includes(normalize(safeRaw)) || (city && normalize(safeRaw) === normalize(city))) {
+      return residence;
+    }
+    return [safeRaw, state, country].filter(Boolean).join(", ");
+  }
+
+  if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+    return safeRaw;
+  }
+  if (safeLocation && (!safeRaw || normalize(safeLocation).includes(normalize(safeRaw)))) {
+    return safeLocation;
+  }
+
+  const cityPart = safeRaw || city;
+  if (!cityPart) return safeLocation || residence;
+  if (city && normalize(cityPart) === normalize(city)) {
+    return residence || cityPart;
+  }
+  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  return cityPart;
+};
+
+const isLocationAutocompleteLabel = (label, name = "") => {
+  const text = normalize(`${label} ${name}`);
+  if (!text) return false;
+  if (/\bwork authorization\b|\bauthorized to work\b|\bsponsor|\bvisa\b|\bremot(e|ely)\b|\bhybrid\b/.test(text)) return false;
+  if (/\blocation\b.*\bcity\b|\bcity\b.*\blocation\b|\blocation \(city\)/.test(text)) return true;
+  if (/\b(job_application\[)?location\b/.test(text) && !/\bcountries\b|\bcountry selection\b/.test(text)) return true;
+  if (/^location$|^city$|\blocation \(city\)$/.test(text)) return true;
+  return false;
+};
+
+/** True phone/tel inputs only — not WhatsApp / "phone screen" prose. */
+const isPhoneFieldLabel = (label, name = "") => {
+  const labelText = normalize(label);
+  const nameText = normalize(name);
+  const combined = `${labelText} ${nameText}`.trim();
+  if (!combined) return false;
+  if (/\b(whatsapp|phone screen|phone interview|call back|callback)\b/.test(combined)) return false;
+  if (/\b(phone|mobile|telephone|tel)\b/.test(nameText)) return true;
+  if (/^(phone|mobile|telephone|tel)$/.test(labelText)) return true;
+  if (/\b(phone|mobile|telephone|tel)\b/.test(labelText) && !/\b(location|city|country|authorized|sponsor)\b/.test(labelText)) {
+    return true;
+  }
+  return false;
+};
+
+/** Keep one Phone (and one of each label+type) in missing-question lists. */
+const dedupeMissingQuestions = (items = []) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const labelNorm = normalize(item.label);
+    const soft = `${item.type || "text"}|${labelNorm}`;
+    const hard = item.type === "phone"
+      ? "phone"
+      : `${item.type || "text"}|${labelNorm}|${answerKeyBase(item.key)}`;
+    if (seen.has(hard) || seen.has(soft)) continue;
+    seen.add(hard);
+    seen.add(soft);
+    out.push(item);
+  }
+  return out;
+};
+
+
 /**
  * Resolve a saved answer even when DOM index suffixes shifted between attempts.
  * Order: exact key → bare name → any key sharing the same base → knownAnswer(label).
@@ -104,15 +228,21 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bfirst name\b/.test(text)) return profile.firstName;
   if (/\blast name\b/.test(text)) return profile.lastName;
   if (/\bfull name\b|\blegal name\b/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
-  if (/\bemail\b/.test(text)) return profile.email;
-  if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
+  if (/\bemail\b/.test(text)) return answers.email || profile.email;
+  if (/\bphone\b|\bmobile\b|\btel\b/.test(text)) return answers.phone || profile.phone;
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
-  if (/\bcountry\b/.test(text)) return profile.country;
-  if (/\bcity\b/.test(text)) return profile.city;
-  if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
-  if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
+  if (/\bcountry\b/.test(text)) return answers.country || profile.country;
+  if (/\bcity\b/.test(text)) {
+    // Greenhouse "Location (City)" needs "City, Region, Country" for typeahead commit.
+    if (/\blocation\b/.test(text)) {
+      return formatLocationQuery(answers.location || answers.city || "", profile);
+    }
+    return answers.city || profile.city;
+  }
+  if (/\bstate\b|\bprovince\b/.test(text)) return answers.state || profile.state;
+  if (/\bpostal\b|\bzip\b/.test(text)) return answers.postalCode || profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
   // Authorization/sponsorship before location: Stripe asks about work rights
   // "in the location(s) you selected", which must not match as a city/location field.
@@ -120,13 +250,17 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
   // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
   if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
-    const prefs = normalize([profile.preferredLocations, profile.location, profile.employmentTypes].filter(Boolean).join(" "));
+    const prefs = normalize([
+      flattenPreferredLocationsText(profile.preferredLocations),
+      profile.location,
+      profile.employmentTypes,
+    ].filter(Boolean).join(" "));
     if (/\bremote\b/.test(prefs)) return "Yes";
     if (/\bon.?site\b|\bin.?office\b/.test(prefs)) return "No";
     return "";
   }
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
-    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+    return formatLocationQuery(answers.location || "", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
@@ -172,9 +306,12 @@ const parseMultiselectAnswer = (value) => {
 
 const COUNTRY_ALIASES = {
   us: ["united states", "usa", "u s", "u s a", "america"],
+  usa: ["united states", "us", "u s", "u s a", "america"],
   "united states": ["us", "usa", "u s", "u s a", "america"],
+  "united states of america": ["us", "usa", "u s", "u s a", "america", "united states"],
   uk: ["united kingdom", "great britain", "britain", "england"],
   "united kingdom": ["uk", "great britain", "britain", "england"],
+  "great britain": ["uk", "united kingdom", "britain", "england"],
 };
 
 /** True when option text matches any wanted token (with common country aliases). */
@@ -206,16 +343,45 @@ const optionMatchesTokens = (optionLabel, tokens) => {
   return false;
 };
 
+/** Expand preferredLocations JSON array or legacy free text into searchable tokens. */
+const preferredLocationTokens = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  if (raw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const tokens = [];
+        for (const item of parsed) {
+          if (!item || typeof item !== "object") continue;
+          if (Array.isArray(item.workplaceTypes)) {
+            tokens.push(...item.workplaceTypes.map((type) => String(type || "").trim()).filter(Boolean));
+          }
+          for (const key of ["country", "state", "city"]) {
+            const part = String(item[key] || "").trim();
+            if (part) tokens.push(part);
+          }
+        }
+        return tokens;
+      }
+    } catch {
+      /* fall through to free-text split */
+    }
+  }
+  return raw.split(/[,;|/]+/).map((item) => item.trim()).filter(Boolean);
+};
+
+const flattenPreferredLocationsText = (value) => preferredLocationTokens(value).join(", ");
+
 /** Profile-derived tokens used to auto-check country/location multiselects. */
 const multiselectTokensFromProfile = (profile = {}) => {
   const parts = [
-    profile.country,
-    profile.location,
-    profile.preferredLocations,
-    profile.city,
-    profile.state,
+    ...String(profile.country || "").split(/[,;|/]+/),
+    ...String(profile.location || "").split(/[,;|/]+/),
+    ...preferredLocationTokens(profile.preferredLocations),
+    ...String(profile.city || "").split(/[,;|/]+/),
+    ...String(profile.state || "").split(/[,;|/]+/),
   ]
-    .flatMap((value) => String(value || "").split(/[,;|/]+/))
     .map((item) => item.trim())
     .filter(Boolean);
   return [...new Set(parts)];
@@ -251,6 +417,10 @@ const matchOptionLabel = (options, answer) => {
     if (noOpt) return noOpt;
   }
 
+  // Country aliases: "United States" ↔ "US" / "USA", etc.
+  const aliasHit = usable.find((option) => optionMatchesTokens(option, [wanted]));
+  if (aliasHit) return aliasHit;
+
   const includes = usable.find((option) => {
     const label = normalize(option);
     if (!label) return false;
@@ -266,6 +436,281 @@ const matchOptionLabel = (options, answer) => {
 const selectOptionTexts = async (field) => {
   const texts = await field.locator("option").allTextContents();
   return texts.map((item) => item.trim()).filter(Boolean);
+};
+
+/** Live control type — nth() locators can rematerialize after DOM updates. */
+const liveFieldType = async (field, fallback = "text") => {
+  const value = await field.evaluate((el) => {
+    if (el.tagName === "SELECT") return "select";
+    if (el.tagName === "TEXTAREA") return "textarea";
+    if (el instanceof HTMLInputElement) return String(el.type || "text").toLowerCase();
+    return String(el.getAttribute("type") || el.tagName || "text").toLowerCase();
+  }).catch(() => "");
+  return value || fallback;
+};
+
+/** Prefer id / name(+value) so actions survive checkbox-driven re-renders. */
+const stabilizeField = (scope, item) => {
+  const { info, field } = item;
+  if (info.id) {
+    return scope.locator(`[id=${JSON.stringify(info.id)}]`).first();
+  }
+  if (info.name && (info.type === "checkbox" || info.type === "radio") && info.value !== undefined && info.value !== "") {
+    return scope.locator(`input[type=${JSON.stringify(info.type)}][name=${JSON.stringify(info.name)}][value=${JSON.stringify(info.value)}]`).first();
+  }
+  if (info.name) {
+    const tag = info.tag === "select" ? "select" : info.tag === "textarea" ? "textarea" : "input";
+    return scope.locator(`${tag}[name=${JSON.stringify(info.name)}]`).first();
+  }
+  return field;
+};
+
+/** Fill a text-like control and verify the value stuck (Greenhouse/React-friendly). */
+const fillTextControl = async (field, answer) => {
+  const wanted = String(answer || "").trim();
+  if (!wanted) return false;
+  const digits = (value) => String(value || "").replace(/\D+/g, "");
+  const matches = (actual) => {
+    const text = String(actual || "").trim();
+    if (!text) return false;
+    if (text === wanted) return true;
+    const a = digits(text);
+    const b = digits(wanted);
+    return Boolean(a && b && (a === b || a.endsWith(b) || b.endsWith(a)));
+  };
+
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await field.fill("").catch(() => {});
+  await field.fill(wanted).catch(() => {});
+  await field.evaluate((el) => el.dispatchEvent(new Event("blur", { bubbles: true }))).catch(() => {});
+  let value = await field.inputValue().catch(() => "");
+  if (matches(value)) return true;
+
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await field.fill("").catch(() => {});
+  await field.pressSequentially(wanted, { delay: 20 }).catch(() => {});
+  await field.press("Tab").catch(() => {});
+  value = await field.inputValue().catch(() => "");
+  if (matches(value)) return true;
+
+  // React controlled inputs ignore direct .value assigns — use the native setter.
+  await field.evaluate((el, next) => {
+    el.focus();
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+    if (descriptor?.set) descriptor.set.call(el, next);
+    else el.value = next;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: next, inputType: "insertText" }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+  }, wanted).catch(() => {});
+  value = await field.inputValue().catch(() => "");
+  return matches(value);
+};
+
+/** True when Greenhouse hidden lat/lon are committed (or not present). */
+const locationLatLonCommitted = async (field) => {
+  const result = await field.evaluate((el) => {
+    const root = el.closest("form")
+      || el.closest(".field, .form-group, .application-question, .question, [class*='question' i], [class*='field' i]")
+      || el.parentElement
+      || document;
+    const lat = root.querySelector('input[name*="latitude" i], input[id*="latitude" i], input[name="latitude"]');
+    const lon = root.querySelector('input[name*="longitude" i], input[id*="longitude" i], input[name="longitude"]');
+    // Also check the whole form when lat/lon are siblings outside the field wrapper.
+    const form = el.closest("form") || document;
+    const formLat = lat || form.querySelector('input[name*="latitude" i], input[name="latitude"]');
+    const formLon = lon || form.querySelector('input[name*="longitude" i], input[name="longitude"]');
+    if (!formLat && !formLon) return { hasHidden: false, ok: true };
+    const latVal = String(formLat?.value || "").trim();
+    const lonVal = String(formLon?.value || "").trim();
+    return { hasHidden: true, ok: Boolean(latVal && lonVal) };
+  }).catch(() => ({ hasHidden: false, ok: true }));
+  return result;
+};
+
+/**
+ * Greenhouse Location (City) typeahead: type, wait for geocode suggestions, click one.
+ * Typing alone leaves hidden latitude/longitude empty and validation fails.
+ */
+const fillLocationAutocomplete = async (field, answer, profile = {}) => {
+  let query = formatLocationQuery(answer, profile);
+  if (!looksLikePlaceString(query, profile)) {
+    query = formatLocationQuery("", { ...profile, location: "" });
+  }
+  if (!query || !looksLikePlaceString(query, profile)) return false;
+
+  const attemptFill = async (typedQuery) => {
+    const parts = typedQuery.split(",").map((part) => part.trim()).filter(Boolean);
+    // Type "City, Region" when available — bare city alone is flaky on Greenhouse.
+    const searchToken = (parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : parts[0] || typedQuery).slice(0, 64);
+    const page = field.page();
+
+    await field.scrollIntoViewIfNeeded().catch(() => {});
+    await field.click({ timeout: 3000 }).catch(() => {});
+    await field.fill("").catch(() => {});
+    await field.pressSequentially(searchToken, { delay: 35 }).catch(() => {});
+
+    const optionSelectors = [
+      '[role="listbox"] [role="option"]',
+      '[role="option"]',
+      ".select2-results__option",
+      "ul[class*='suggestion' i] li",
+      "div[class*='autocomplete' i] li",
+      ".pac-item",
+      "[class*='dropdown' i] [class*='option' i]",
+    ];
+
+    let optionTexts = [];
+    let optionLocator = null;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await page.waitForTimeout(250);
+      for (const selector of optionSelectors) {
+        const locator = page.locator(selector);
+        const count = await locator.count().catch(() => 0);
+        if (!count) continue;
+        const texts = [];
+        for (let i = 0; i < Math.min(count, 40); i += 1) {
+          if (!(await locator.nth(i).isVisible().catch(() => false))) continue;
+          const text = String(await locator.nth(i).innerText().catch(() => ""))
+            .replace(/\s+/g, " ")
+            .trim()
+            .split("\n")[0]
+            .trim();
+          if (text) texts.push(text);
+        }
+        if (texts.length) {
+          optionTexts = texts;
+          optionLocator = locator;
+          break;
+        }
+      }
+      if (optionTexts.length) break;
+    }
+
+    if (optionTexts.length && optionLocator) {
+      const cityToken = parts[0] || typedQuery;
+      const matched = matchOptionLabel(optionTexts, typedQuery)
+        || matchOptionLabel(optionTexts, searchToken)
+        || optionTexts.find((option) => normalize(option).includes(normalize(cityToken)))
+        || optionTexts[0];
+      const index = optionTexts.findIndex((option) => normalize(option) === normalize(matched));
+      const target = optionLocator.nth(index >= 0 ? index : 0);
+      await target.click({ timeout: 3000 }).catch(async () => {
+        await field.press("ArrowDown").catch(() => {});
+        await field.press("Enter").catch(() => {});
+      });
+    } else {
+      await field.press("ArrowDown").catch(() => {});
+      await page.waitForTimeout(150);
+      await field.press("Enter").catch(() => {});
+    }
+
+    await page.waitForTimeout(450);
+    const value = String(await field.inputValue().catch(() => "")).trim();
+    const latLon = await locationLatLonCommitted(field);
+    if (latLon.hasHidden) return Boolean(value) && latLon.ok;
+    return Boolean(value) && looksLikePlaceString(value, profile);
+  };
+
+  if (await attemptFill(query)) return true;
+  // Retry once with city-only typing when the fuller query failed to commit lat/lon.
+  const cityOnly = query.split(",")[0].trim();
+  if (cityOnly && normalize(cityOnly) !== normalize(query)) {
+    const rebuilt = formatLocationQuery(cityOnly, { ...profile, location: "" });
+    if (rebuilt && normalize(rebuilt) !== normalize(query)) {
+      return attemptFill(rebuilt);
+    }
+  }
+  return false;
+};
+
+/**
+ * Select the custom phone Country dial-code widget (flags + +1) next to Phone.
+ * Returns true when no dial widget exists or a matching country was chosen.
+ */
+const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => {
+  const wanted = String(countryAnswer || profile.country || "").trim();
+  if (!wanted) return true;
+  const page = phoneField.page();
+
+  const containers = [
+    phoneField.locator("xpath=ancestor::*[contains(@class,'phone') or contains(@class,'field') or contains(@class,'application')][1]"),
+    phoneField.locator("xpath=../.."),
+    phoneField.locator("xpath=.."),
+  ];
+
+  for (const container of containers) {
+    const triggers = container.locator('button, [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="true"]');
+    const triggerCount = await triggers.count().catch(() => 0);
+    for (let i = 0; i < triggerCount; i += 1) {
+      const trigger = triggers.nth(i);
+      if (!(await trigger.isVisible().catch(() => false))) continue;
+      const box = await trigger.boundingBox().catch(() => null);
+      const phoneBox = await phoneField.boundingBox().catch(() => null);
+      // Prefer controls sitting to the left of / beside the phone input.
+      if (box && phoneBox && box.x > phoneBox.x + 20) continue;
+
+      await trigger.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(350);
+
+      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li');
+      const optionCount = await options.count().catch(() => 0);
+      if (!optionCount) {
+        await page.keyboard.press("Escape").catch(() => {});
+        continue;
+      }
+
+      const labels = [];
+      const max = Math.min(optionCount, 320);
+      for (let j = 0; j < max; j += 1) {
+        const text = String(await options.nth(j).innerText().catch(() => ""))
+          .replace(/\s+/g, " ")
+          .trim();
+        labels.push(text);
+      }
+      const matched = matchOptionLabel(labels.filter(Boolean), wanted)
+        || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
+      if (matched) {
+        const index = labels.findIndex((label) => label === matched);
+        if (index >= 0) {
+          await options.nth(index).click({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(200);
+          return true;
+        }
+      }
+      await page.keyboard.press("Escape").catch(() => {});
+    }
+  }
+  return false;
+};
+
+/** Labels that are true yes/no prompts (not country / multi-select lists). */
+const isBooleanChoiceLabel = (label) => {
+  const text = normalize(label);
+  if (!text) return false;
+  if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
+  if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
+  if (/\b(yes or no|y\/n)\b/.test(text)) return true;
+  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
+  return false;
+};
+
+/** Keep array-style Greenhouse names as groups even when only one option was collected. */
+const isCheckboxGroupName = (name) => /\[\]/.test(String(name || ""));
+
+/** Option labels for a checkbox/radio group — never treat the shared prompt as an option. */
+const choiceOptionLabels = (group, groupLabel) => {
+  const prompt = normalize(groupLabel);
+  return group.map((item) => {
+    const option = String(item.info.optionLabel || "").trim();
+    if (option && normalize(option) !== prompt) return option;
+    const label = String(item.info.label || "").trim();
+    if (label && normalize(label) !== prompt) return label;
+    return option;
+  }).filter(Boolean);
 };
 
 async function fillSelect(field, answer) {
@@ -284,6 +729,17 @@ async function fillSelect(field, answer) {
       label: (option.textContent || "").trim(),
     })),
   );
+  const labels = options.map((option) => option.label);
+  const matchedLabel = matchOptionLabel(labels, wanted);
+  if (matchedLabel) {
+    const match = options.find((option) => option.label === matchedLabel);
+    if (match && match.value !== "") {
+      const ok = await field.selectOption(match.value).then(() => true).catch(() => false);
+      if (ok) return true;
+    }
+    const byMatchedLabel = await field.selectOption({ label: matchedLabel }).then(() => true).catch(() => false);
+    if (byMatchedLabel) return true;
+  }
   const needle = wanted.toLowerCase();
   const needleCompact = needle.replace(/[^a-z0-9]+/g, "");
   const match = options.find((option) => {
@@ -448,7 +904,14 @@ export async function runApplication({ application, profile, resumePath }) {
     const collected = [];
     for (let index = 0; index < await fields.count(); index += 1) {
       const field = fields.nth(index);
-      if (!await field.isVisible().catch(() => false) || await field.isDisabled().catch(() => true)) continue;
+      const choiceType = await field.evaluate((el) => {
+        if (!(el instanceof HTMLInputElement)) return "";
+        return String(el.type || "").toLowerCase();
+      }).catch(() => "");
+      const isChoice = choiceType === "checkbox" || choiceType === "radio";
+      // Keep off-screen country/checkbox options so groups are not demoted to Yes/No.
+      if (!isChoice && (!await field.isVisible().catch(() => false) || await field.isDisabled().catch(() => true))) continue;
+      if (isChoice && await field.isDisabled().catch(() => true)) continue;
       const info = await field.evaluate((element) => {
         const id = element.id || "";
         const name = element.getAttribute("name") || "";
@@ -469,9 +932,36 @@ export async function runApplication({ application, profile, resumePath }) {
           clone.querySelectorAll("input, select, textarea, button, script, style, option").forEach((child) => child.remove());
           return (clone.textContent || "").replace(/\s+/g, " ").trim();
         };
-        const optionLabel = readLabelText(wrapLabel) || readLabelText(explicitLabel);
+        const shortText = (value, max = 120) => {
+          const text = String(value || "").replace(/\s+/g, " ").trim();
+          return text && text.length <= max ? text : "";
+        };
+        // Prefer the option's own short label; ignore long prompt text on the control.
+        const optionLabel = (() => {
+          const fromLabel = shortText(readLabelText(wrapLabel), 100) || shortText(readLabelText(explicitLabel), 100);
+          if (fromLabel) return fromLabel;
+          const next = element.nextElementSibling;
+          if (next && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/i.test(next.tagName)) {
+            const text = shortText(next.textContent, 100);
+            if (text) return text;
+          }
+          const parent = element.parentElement;
+          if (parent && !wrapLabel) {
+            const clone = parent.cloneNode(true);
+            clone.querySelectorAll("input, select, textarea, button, script, style, .helper, .description, [id$='-description'], [id$='-error']").forEach((child) => child.remove());
+            const text = shortText(clone.textContent, 100);
+            if (text) return text;
+          }
+          return "";
+        })();
         const fieldset = element.closest("fieldset");
         const legendText = (fieldset?.querySelector("legend")?.textContent || "").replace(/\s+/g, " ").trim();
+        const describedByText = (element.getAttribute("aria-describedby") || "")
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((ref) => document.getElementById(ref)?.textContent || "")
+          .join(" ")
+          .trim();
         const siblingText = () => {
           const prev = element.previousElementSibling;
           if (prev && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/i.test(prev.tagName)) {
@@ -498,6 +988,10 @@ export async function runApplication({ application, profile, resumePath }) {
         };
         const groupHeading = () => {
           if (legendText && legendText.length < 200) return legendText;
+          const fromDescribed = shortText(describedByText, 200);
+          if (fromDescribed) return fromDescribed;
+          const fromDescriptionAttr = shortText(element.getAttribute("description"), 200);
+          if (fromDescriptionAttr) return fromDescriptionAttr;
           const fieldRoot = element.closest(".field, .form-group, .application-question, .question, [class*='question' i], [class*='field' i], [data-qa], [data-field]");
           if (!fieldRoot) return "";
           const heading = fieldRoot.querySelector(":scope > label, :scope > legend, :scope > .label, :scope > .question-label, :scope > p, :scope > div > label, label");
@@ -550,14 +1044,20 @@ export async function runApplication({ application, profile, resumePath }) {
           if (isUseless(spaced)) return "";
           return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
         };
-        const type = element.getAttribute("type") || "text";
+        // Prefer IDL type (normalized) over raw attribute — avoids treating checkboxes as text.
+        const type = (() => {
+          if (element.tagName === "SELECT") return "select";
+          if (element.tagName === "TEXTAREA") return "textarea";
+          if (element instanceof HTMLInputElement && element.type) return String(element.type).toLowerCase();
+          return String(element.getAttribute("type") || "text").toLowerCase();
+        })();
         const isChoice = type === "checkbox" || type === "radio";
         const groupLabel = isChoice
           ? pickText(groupHeading(), labelledBy, siblingText(), humanize(name), humanize(dataHint))
           : "";
         // Prefer fieldset/group heading and nearby labels over placeholder/"Select..."/generic names
         const label = isChoice
-          ? pickText(groupLabel, labelledBy, readLabelText(labelNode), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"))
+          ? pickText(groupLabel, labelledBy, shortText(optionLabel, 100), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"))
           : pickText(groupHeading(), labelledBy, readLabelText(labelNode), siblingText(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), element.getAttribute("placeholder"), element.getAttribute("title"));
         const selfRequired = element.required || element.getAttribute("aria-required") === "true";
         const groupRequired = !!element.closest("fieldset[required], [aria-required='true'], .required");
@@ -566,6 +1066,8 @@ export async function runApplication({ application, profile, resumePath }) {
         return {
           tag: element.tagName.toLowerCase(),
           type,
+          id,
+          value: element.getAttribute("value") || "",
           name: name || id || dataHint,
           label: label.trim(),
           optionLabel: (optionLabel || "").trim(),
@@ -595,11 +1097,119 @@ export async function runApplication({ application, profile, resumePath }) {
         singles.push(item);
       }
     }
-    // Lone checkboxes stay as boolean singles.
+    // Lone boolean checkboxes stay as singles; array names / multi prompts stay grouped.
     for (const [name, list] of [...checkboxGroups.entries()]) {
-      if (list.length < 2) {
-        checkboxGroups.delete(name);
-        singles.push(...list);
+      if (list.length >= 2 || isCheckboxGroupName(name)) continue;
+      const label = list[0]?.info?.groupLabel || list[0]?.info?.label || "";
+      if (!isBooleanChoiceLabel(label) && /\b(country|countries|select all|which of)\b/i.test(label)) continue;
+      checkboxGroups.delete(name);
+      singles.push(...list);
+    }
+
+    // Fill text/select/file first so checkbox mutations cannot rematerialize nth() locators.
+    const choiceSingles = [];
+    for (const item of singles) {
+      const { index, info } = item;
+      const field = stabilizeField(scope, item);
+      const key = questionKey(info.name, info.label, index);
+      let displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
+        || humanizeFieldName(info.name)
+        || humanizeFieldName(info.label)
+        || "";
+      if (!displayLabel || isUselessLabel(displayLabel)) displayLabel = `Question ${index + 1}`;
+      const liveType = await liveFieldType(field, info.type);
+      if (liveType === "checkbox" || liveType === "radio" || info.type === "checkbox" || info.type === "radio") {
+        choiceSingles.push({ item, field, key, displayLabel, liveType });
+        continue;
+      }
+      if (liveType === "file" || info.type === "file") {
+        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
+        continue;
+      }
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      let filled = false;
+      const isSelect = info.tag === "select" || liveType === "select";
+      const isLocationField = isLocationAutocompleteLabel(displayLabel, info.name);
+      const isPhoneField = isPhoneFieldLabel(displayLabel, info.name);
+      let dialOk = true;
+      if (answer || isLocationField || isPhoneField) {
+        if (isPhoneField) {
+          const countryAnswer = lookupAnswer(application.answers, { key: "country", name: "country", label: "Country" }, profile)
+            || application.answers?.country
+            || profile.country
+            || "";
+          dialOk = await fillPhoneCountryDial(field, countryAnswer, profile);
+        }
+        if (isLocationField && !isSelect) {
+          filled = await fillLocationAutocomplete(field, answer || formatLocationQuery("", profile), profile);
+        } else if (isSelect) {
+          const options = await selectOptionTexts(field);
+          const coerced = matchOptionLabel(options, answer) || answer;
+          filled = await fillSelect(field, coerced);
+          if (!filled && options.length) {
+            // City fields often list "Redmond, WA" — retry with includes match already in matchOptionLabel;
+            // if still empty try the first option that contains the answer token.
+            const token = normalize(answer).split(/\s+/)[0];
+            const fuzzy = options.find((option) => normalize(option).includes(token) && token.length >= 3);
+            if (fuzzy) filled = await fillSelect(field, fuzzy);
+          }
+        } else if (answer) {
+          filled = await fillTextControl(field, answer);
+          // Some Greenhouse "text" questions are actually selects rematerialized after load.
+          if (!filled) {
+            const retryType = await liveFieldType(field, liveType);
+            if (retryType === "select") {
+              const options = await selectOptionTexts(field);
+              const coerced = matchOptionLabel(options, answer) || answer;
+              filled = await fillSelect(field, coerced);
+            }
+          }
+        }
+      }
+      let value = await field.inputValue().catch(() => "");
+      if (answer && !String(value || "").trim() && !filled) {
+        // nth() locators can rematerialize — retry once with a fresh stable locator.
+        const retryField = stabilizeField(scope, item);
+        if (isLocationField && !isSelect) {
+          filled = await fillLocationAutocomplete(retryField, answer, profile);
+        } else if (isSelect || await liveFieldType(retryField, liveType) === "select") {
+          const options = await selectOptionTexts(retryField);
+          const coerced = matchOptionLabel(options, answer) || answer;
+          filled = await fillSelect(retryField, coerced);
+        } else {
+          filled = await fillTextControl(retryField, answer);
+        }
+        value = await retryField.inputValue().catch(() => "");
+      }
+      if (isLocationField && filled) {
+        const latLon = await locationLatLonCommitted(stabilizeField(scope, item));
+        if (latLon.hasHidden && !latLon.ok) filled = false;
+      }
+      const digits = (text) => String(text || "").replace(/\D+/g, "");
+      const hasValue = Boolean(String(value || "").trim());
+      const digitsMatch = Boolean(
+        answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
+      );
+      // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
+      // Phone: number filled is enough — dial-code widget failure must not re-ask Phone.
+      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled);
+      void dialOk;
+      if (info.required && !looksFilled) {
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        const options = isSelect ? await selectOptionTexts(field) : undefined;
+        let missingType = isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
+        if (isLocationField && !isSelect) missingType = "autocomplete";
+        if (isPhoneField) missingType = "phone";
+        missing.push({
+          key,
+          label: displayLabel,
+          type: missingType,
+          options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
+          required: true,
+          hadAnswer: Boolean(answer),
+          placeholder: missingType === "autocomplete" ? "e.g. Redmond, Washington, United States" : undefined,
+        });
       }
     }
 
@@ -611,16 +1221,17 @@ export async function runApplication({ application, profile, resumePath }) {
       const key = groupQuestionKey(first.info.name, groupLabel, first.index);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const options = choiceOptionLabels(group, groupLabel);
       const answer = lookupAnswer(application.answers, { key, name: first.info.name, label: groupLabel }, profile);
       const selections = resolveMultiselectSelections(options, answer, profile);
       for (const item of group) {
+        const target = stabilizeField(scope, item);
         const optionText = item.info.optionLabel || item.info.label;
         if (selections.some((selected) => optionMatchesTokens(optionText, [selected]))) {
-          await item.field.check().catch(() => {});
+          await target.check().catch(() => {});
         }
       }
-      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      const anyChecked = await Promise.all(group.map((item) => stabilizeField(scope, item).isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
       if (first.info.groupRequired && !anyChecked) {
         missing.push({ key, label: groupLabel, type: "multiselect", options, required: true });
       }
@@ -634,70 +1245,53 @@ export async function runApplication({ application, profile, resumePath }) {
       const key = groupQuestionKey(first.info.name, groupLabel, first.index);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const options = choiceOptionLabels(group, groupLabel);
       const answer = lookupAnswer(application.answers, { key, name: first.info.name, label: groupLabel }, profile);
       const matched = matchOptionLabel(options, answer);
       if (matched) {
-        const target = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(matched));
-        if (target) await target.field.check().catch(() => {});
+        const targetItem = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(matched));
+        if (targetItem) await stabilizeField(scope, targetItem).check().catch(() => {});
       } else if (/^(true|yes|1|on)$/i.test(answer) && options.length) {
         const yesOpt = matchOptionLabel(options, "Yes") || options[0];
-        const target = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(yesOpt));
-        if (target) await target.field.check().catch(() => {});
+        const targetItem = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(yesOpt));
+        if (targetItem) await stabilizeField(scope, targetItem).check().catch(() => {});
       }
-      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      const anyChecked = await Promise.all(group.map((item) => stabilizeField(scope, item).isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
       if ((first.info.groupRequired || first.info.required) && !anyChecked) {
         missing.push({ key, label: isUselessLabel(groupLabel) ? `Question ${first.index + 1}` : groupLabel, type: "select", options, required: true });
       }
     }
 
-    for (const { index, field, info } of singles) {
-      const key = questionKey(info.name, info.label, index);
-      let displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
-        || humanizeFieldName(info.name)
-        || humanizeFieldName(info.label)
-        || "";
-      if (!displayLabel || isUselessLabel(displayLabel)) displayLabel = `Question ${index + 1}`;
-      if (info.type === "file") { if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath); continue; }
-      if (info.type === "checkbox" || info.type === "radio") {
-        const optionText = info.optionLabel || displayLabel;
-        const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
-        const matched = matchOptionLabel([optionText], answer);
-        if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
-          await field.check().catch(() => {});
-        } else if (info.required && !await field.isChecked()) {
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
+    for (const { field, key, displayLabel, item } of choiceSingles) {
+      const info = item.info;
+      const optionText = info.optionLabel || displayLabel;
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      const matched = matchOptionLabel([optionText], answer);
+      if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
+        await field.check().catch(() => {});
+      } else if (info.required && !await field.isChecked().catch(() => false)) {
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          if (isBooleanChoiceLabel(displayLabel)) {
             missing.push({ key, label: displayLabel, type: "checkbox", required: true });
+          } else {
+            missing.push({ key, label: displayLabel, type: "text", required: true });
           }
         }
-        continue;
-      }
-      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
-      if (answer) {
-        if (info.tag === "select") {
-          const options = await selectOptionTexts(field);
-          const coerced = matchOptionLabel(options, answer) || answer;
-          await fillSelect(field, coerced);
-        } else {
-          await field.fill(answer);
-        }
-      }
-      const value = await field.inputValue().catch(() => "");
-      if (info.required && !value) {
-        if (seenKeys.has(key)) continue;
-        seenKeys.add(key);
-        const options = info.tag === "select" ? await selectOptionTexts(field) : undefined;
-        missing.push({
-          key,
-          label: displayLabel,
-          type: info.tag === "select" ? "select" : info.tag === "textarea" ? "textarea" : "text",
-          options: options?.filter((item) => item.length > 0 && !/^(select|please select|choose)/i.test(item)),
-          required: true,
-        });
       }
     }
-    if (missing.length) return { outcome: "needs_action", detail: `${missing.length} required employer question(s) need your answer.`, questions: missing };
+    if (missing.length) {
+      const deduped = dedupeMissingQuestions(missing);
+      const unanswered = deduped.filter((item) => !item.hadAnswer);
+      const detail = unanswered.length
+        ? `${unanswered.length} required employer question(s) need your answer.`
+        : `Could not apply your saved answers on the employer form (${deduped.map((item) => item.label).join(", ")}). Open the employer page or retry.`;
+      return {
+        outcome: "needs_action",
+        detail,
+        questions: deduped.map(({ hadAnswer, ...question }) => question),
+      };
+    }
 
     // Advance multi-step employer flows (Continue/Next) until a final submit appears.
     for (let step = 0; step < 4; step += 1) {
@@ -773,4 +1367,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
