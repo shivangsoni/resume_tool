@@ -168,6 +168,31 @@ function guessGreenhouseBoard(application) {
   return "";
 }
 
+/**
+ * Invisible reCAPTCHA Enterprise (Greenhouse) must not block automation.
+ * Only fail when an interactive checkbox/challenge/hCaptcha/Turnstile is present.
+ */
+async function pageHasBlockingCaptcha(page) {
+  if (await page.locator('iframe[src*="recaptcha"][src*="bframe"], iframe[src*="hcaptcha.com"][src*="frame="], iframe[src*="challenges.cloudflare.com"]').first().isVisible().catch(() => false)) {
+    return true;
+  }
+  if (await page.locator(".h-captcha[data-sitekey] iframe, .cf-turnstile iframe").first().isVisible().catch(() => false)) {
+    return true;
+  }
+  for (const frame of page.frames()) {
+    const frameUrl = frame.url();
+    if (!/recaptcha|hcaptcha/i.test(frameUrl)) continue;
+    const kind = await frame.evaluate(() => {
+      if (document.querySelector(".rc-anchor-invisible")) return "invisible";
+      if (document.querySelector("#recaptcha-anchor, .rc-anchor-checkbox, .recaptcha-checkbox")) return "checkbox";
+      if (document.querySelector(".rc-imageselect, .challenge-container, #rc-imageselect")) return "challenge";
+      return "unknown";
+    }).catch(() => "unknown");
+    if (kind === "checkbox" || kind === "challenge") return true;
+  }
+  return false;
+}
+
 export async function runApplication({ application, profile, resumePath }) {
   const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] });
   const page = await browser.newPage();
@@ -190,8 +215,13 @@ export async function runApplication({ application, profile, resumePath }) {
     await formReady.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(alreadyOnForm ? 500 : 1500);
 
-    const captcha = page.locator('iframe[src*="captcha" i], [class*="captcha" i], [id*="captcha" i]').first();
-    if (await captcha.isVisible().catch(() => false)) return { outcome: "needs_action", detail: "Employer CAPTCHA requires completion on the original application page.", questions: [{ key: "captcha", label: "Complete the employer CAPTCHA on the original listing, then retry.", type: "blocking", required: true }] };
+    if (await pageHasBlockingCaptcha(page)) {
+      return {
+        outcome: "needs_action",
+        detail: "Employer CAPTCHA requires completion on the original application page.",
+        questions: [{ key: "captcha", label: "Complete the employer CAPTCHA on the original listing, then retry.", type: "blocking", required: true }],
+      };
+    }
 
     const contexts = [page, ...page.frames().filter((frame) => frame !== page.mainFrame())];
     let root = page;
@@ -452,4 +482,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl };
+export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

@@ -48,3 +48,8 @@ test("resolveApplicationUrl leaves unrelated listings unchanged", () => {
   const sourceUrl = "https://example.com/jobs/123";
   assert.equal(resolveApplicationUrl({ company: "Acme", sourceUrl }), sourceUrl);
 });
+
+test("pageHasBlockingCaptcha is exported for worker use", async () => {
+  const { pageHasBlockingCaptcha } = await import("../src/automation.js");
+  assert.equal(typeof pageHasBlockingCaptcha, "function");
+});
