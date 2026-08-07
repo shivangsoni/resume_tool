@@ -1598,7 +1598,7 @@ function Applications({
         {visibleApps.map((application) => (
           <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
-              <CompanyLogo job={{ company: application.company, sourceUrl: application.sourceUrl, source: application.source }} />
+              <CompanyLogo job={{ company: application.company, sourceUrl: application.sourceUrl }} />
               <div>
                 <b>{application.title}</b>
                 <small>
