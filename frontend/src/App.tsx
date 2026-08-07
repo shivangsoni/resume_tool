@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Avatar,
   Button,
@@ -395,37 +396,49 @@ export default function App() {
           }}
         />
         <div className="sa-header-actions">
-          <Tooltip content="Email notifications" relationship="label" positioning={{ position: "below", align: "end" }}>
-            <Button
-              appearance="transparent"
-              className="header-icon-btn"
-              icon={
-                <span className="header-bell">
-                  <Alert24Regular />
-                  {unreadMailCount > 0 ? <CounterBadge count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
-                </span>
-              }
+          <Tooltip
+            content="Email notifications"
+            relationship="description"
+            withArrow
+            positioning="below"
+            mountNode={typeof document !== "undefined" ? document.body : undefined}
+          >
+            <button
+              type="button"
+              className="header-icon-btn sa-header-icon"
               aria-label="Email notifications"
               onClick={() => setPage("inbox")}
-            />
+            >
+              <span className="header-bell">
+                <Alert24Regular />
+                {unreadMailCount > 0 ? <CounterBadge count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+              </span>
+            </button>
           </Tooltip>
-          <Tooltip content="Product tour" relationship="label" positioning={{ position: "below", align: "end" }}>
-            <Button
-              appearance="transparent"
-              className="header-icon-btn"
-              icon={<QuestionCircle24Regular />}
+          <Tooltip
+            content="Product tour"
+            relationship="description"
+            withArrow
+            positioning="below"
+            mountNode={typeof document !== "undefined" ? document.body : undefined}
+          >
+            <button
+              type="button"
+              className="header-icon-btn sa-header-icon"
               aria-label="Product tour"
               onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}
-            />
+            >
+              <QuestionCircle24Regular />
+            </button>
           </Tooltip>
-          <Button
-            appearance="transparent"
-            className="header-profile-btn"
+          <button
+            type="button"
+            className="header-profile-btn sa-header-icon"
             aria-label="Open profile"
             onClick={() => setProfileOpen(true)}
           >
             <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
-          </Button>
+          </button>
         </div>
       </header>
 
@@ -438,7 +451,7 @@ export default function App() {
           className="sa-nav"
         >
           <NavDrawerBody>
-            <NavSectionHeader>Operations</NavSectionHeader>
+            <NavSectionHeader>OPERATIONS</NavSectionHeader>
             <NavItem value="dashboard" icon={<Board24Regular />}>Job Matches</NavItem>
             <NavItem value="applications" icon={<Briefcase24Regular />}>
               Applications
@@ -449,11 +462,11 @@ export default function App() {
               {unreadMailCount > 0 ? <CounterBadge className="nav-count" count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
             </NavItem>
             <NavItem value="search" icon={<Search24Regular />}>Job Search</NavItem>
-            <NavSectionHeader>Candidate</NavSectionHeader>
+            <NavSectionHeader>CANDIDATE</NavSectionHeader>
             <NavItem value="resume" icon={<Document24Regular />}>Résumé</NavItem>
             <NavItem value="profile" icon={<Person24Regular />}>Profile</NavItem>
             <NavItem value="preferences" icon={<Options24Regular />}>Preferences</NavItem>
-            <NavSectionHeader>Account</NavSectionHeader>
+            <NavSectionHeader>ACCOUNT</NavSectionHeader>
             <NavItem value="settings" icon={<Settings24Regular />}>Settings</NavItem>
             <NavItem value="credits" icon={<Payment24Regular />}>Usage</NavItem>
           </NavDrawerBody>
@@ -793,11 +806,11 @@ function Dashboard(p: {
         selectedValue={p.status}
         onTabSelect={(_e, data) => p.setStatus(String(data.value) as typeof p.status)}
       >
-        <Tab value="all">All matches</Tab>
-        <Tab value="ready">Not applied</Tab>
-        <Tab value="queued">Queued</Tab>
-        <Tab value="applied">Applied</Tab>
-        <Tab value="failed">Failed</Tab>
+        <Tab value="all" content="All matches" />
+        <Tab value="ready" content="Not applied" />
+        <Tab value="queued" content="Queued" />
+        <Tab value="applied" content="Applied" />
+        <Tab value="failed" content="Failed" />
       </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton
@@ -813,8 +826,7 @@ function Dashboard(p: {
         >
           {p.status === "ready" ? "Clear filter" : "Not applied"}
         </ToolbarButton>
-        <div className="page-command-spacer" />
-        <span className={`feed ${p.feedState}`}>
+        <span className={`feed toolbar-feed ${p.feedState}`}>
           {p.feedState === "live"
             ? "Live API data"
             : p.feedState === "loading"
@@ -826,14 +838,14 @@ function Dashboard(p: {
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "queued").length)}
           label="Queued"
-          color="purple"
+          color="brand"
           active={p.status === "queued"}
           onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
-          color="purple"
+          color="brand"
           active={p.status === "ready"}
           onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
         />
@@ -1346,8 +1358,8 @@ function Applications({
         selectedValue={appTab}
         onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "action")}
       >
-        <Tab value="all">All applications</Tab>
-        <Tab value="action">Needs action</Tab>
+        <Tab value="all" content="All applications" />
+        <Tab value="action" content="Needs action" />
       </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton appearance="primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
@@ -2035,29 +2047,30 @@ function ProductTour({
     if (open) setPage(productTourSteps[index].page);
   }, [open, index, setPage]);
   if (!open) return null;
-  const step = productTourSteps[index];
+  const step = productTourSteps[index] || productTourSteps[0];
   const finish = () => {
     try { localStorage.setItem("applypilot.tour.done", "1"); } catch { /* ignore */ }
     setOpen(false);
   };
-  return (
+  return createPortal(
     <div className="tour-overlay" role="dialog" aria-modal="true" aria-label="ApplyPilot walkthrough">
       <div className="tour-card">
         <small>Step {index + 1} of {productTourSteps.length}</small>
         <h2>{step.title}</h2>
         <p>{step.body}</p>
         <div className="tour-actions">
-          <button className="not" onClick={finish}>Skip</button>
-          {index > 0 && <button className="not" onClick={() => setIndex((value) => value - 1)}>Back</button>}
+          <button type="button" className="not" onClick={finish}>Skip</button>
+          {index > 0 && <button type="button" className="not" onClick={() => setIndex((value) => value - 1)}>Back</button>}
           {index < productTourSteps.length - 1 ? (
-            <button className="apply" onClick={() => setIndex((value) => value + 1)}>Next</button>
+            <button type="button" className="apply" onClick={() => setIndex((value) => value + 1)}>Next</button>
           ) : (
-            <button className="apply" onClick={finish}>Done</button>
+            <button type="button" className="apply" onClick={finish}>Done</button>
           )}
         </div>
-        <p className="tour-hint">You are on: <b>{page}</b>. Restart anytime with Tour in the top nav.</p>
+        <p className="tour-hint">You are on: <b>{pageTitles[page] || page}</b>. Restart anytime from the help icon in the top bar.</p>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
