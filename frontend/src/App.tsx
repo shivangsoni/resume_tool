@@ -75,6 +75,8 @@ import {
   renameResume,
   getAuthProviders,
   beginSignOut,
+  loginWithPassword,
+  registerWithPassword,
   setDevSignedIn,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
@@ -1588,6 +1590,12 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
 }
 
 function AuthPage({ signedIn }: { signedIn: boolean }) {
+  const [mode, setMode] = useState<"create" | "login">("create");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [providers, setProviders] = useState<Array<{ id: string; label: string; href: string; enabled: boolean }>>([
     { id: "aad", label: "Microsoft", href: "/.auth/login/aad?post_login_redirect_uri=/dashboard", enabled: true },
   ]);
@@ -1610,15 +1618,32 @@ function AuthPage({ signedIn }: { signedIn: boolean }) {
     }
     window.location.assign(provider.href);
   };
+  const submitPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (mode === "create") {
+        await registerWithPassword({ username, email, password });
+      } else {
+        await loginWithPassword({ username, password });
+      }
+      window.location.assign("/dashboard");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Sign in failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="auth-page">
       <section className="auth-card">
         <div className="auth-brand"><Sparkle24Filled /></div>
-        <h1>{signedIn ? "You’re signed in" : "Create your ApplyPilot account"}</h1>
+        <h1>{signedIn ? "You’re signed in" : mode === "create" ? "Create your ApplyPilot account" : "Log in to ApplyPilot"}</h1>
         <p>
           {signedIn
-            ? "Continue to your dashboard, sign out, or switch accounts with another provider."
-            : "Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity."}
+            ? "Continue to your dashboard, sign out, or switch accounts."
+            : "Create an account with a username and password, or continue with a social provider."}
         </p>
         {signedIn && (
           <div className="landing-actions auth-session-actions">
@@ -1626,6 +1651,30 @@ function AuthPage({ signedIn }: { signedIn: boolean }) {
             <button type="button" className="secondary-action" onClick={() => beginSignOut()}>Sign out</button>
           </div>
         )}
+        {!signedIn && (
+          <form className="auth-password-form" onSubmit={submitPassword}>
+            <div className="auth-mode-toggle" role="tablist" aria-label="Account mode">
+              <button type="button" className={mode === "create" ? "active" : ""} onClick={() => { setMode("create"); setError(""); }}>Create account</button>
+              <button type="button" className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setError(""); }}>Log in</button>
+            </div>
+            <label>Username
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required minLength={3} maxLength={64} placeholder="your_name" />
+            </label>
+            {mode === "create" && (
+              <label>Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required placeholder="you@example.com" />
+              </label>
+            )}
+            <label>Password
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "create" ? "new-password" : "current-password"} required minLength={8} placeholder="At least 8 characters" />
+            </label>
+            {error ? <p className="auth-error">{error}</p> : null}
+            <button className="orange-action" type="submit" disabled={busy}>
+              {busy ? "Please wait…" : mode === "create" ? "Create account" : "Log in"}
+            </button>
+          </form>
+        )}
+        <div className="auth-divider"><span>Or continue with</span></div>
         {providers.map((provider) =>
           provider.enabled ? (
             <button
@@ -1708,17 +1757,9 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
         <div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div>
         <nav>
           <a href="#features">Features</a>
-          {signedIn ? (
-            <>
-              <a href="/dashboard" className="orange-action">Dashboard</a>
-              <button type="button" className="public-link" onClick={() => beginSignOut()}>Sign out</button>
-            </>
-          ) : (
-            <>
-              <a href="/login" className="public-link">Log in</a>
-              <a href="/login" className="orange-action">Create account</a>
-            </>
-          )}
+          {signedIn ? <a href="/dashboard" className="public-link">Dashboard</a> : null}
+          <a href="/login" className="public-link">Log in</a>
+          <a href="/login" className="orange-action">Create account</a>
         </nav>
       </header>
       <section className="landing-hero">
@@ -1728,19 +1769,11 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
           <p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p>
           <p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p>
           <div className="landing-actions">
-            {signedIn ? (
-              <>
-                <a className="orange-action" href="/dashboard">Open dashboard</a>
-                <button type="button" className="secondary-action" onClick={() => beginSignOut()}>Sign out</button>
-              </>
-            ) : (
-              <>
-                <a className="orange-action" href="/login">Create account</a>
-                <a className="secondary-action" href="/login">Log in</a>
-              </>
-            )}
+            <a className="orange-action" href="/login">Create account</a>
+            <a className="secondary-action" href="/login">Log in</a>
+            {signedIn ? <a className="secondary-action" href="/dashboard">Open dashboard</a> : null}
           </div>
-          <small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small>
+          <small>Create an account with username and password, or sign in with Microsoft, Google, or GitHub.</small>
         </div>
         <div className="landing-preview">
           <div className="preview-top"><span /><span /><span /></div>

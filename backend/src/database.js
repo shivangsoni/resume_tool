@@ -50,6 +50,78 @@ export async function ensureUser(principal) {
   return result.recordset[0].Id;
 }
 
+export async function registerLocalAccount({ username, email, passwordHash, subject }) {
+  const connection = pool();
+  if (!connection) throw new Error("Database is not configured.");
+  const db = await connection;
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    const existing = await new sql.Request(transaction)
+      .input("username", sql.NVarChar(64), username)
+      .input("email", sql.NVarChar(320), email)
+      .input("subject", sql.NVarChar(200), subject)
+      .query(`
+        SELECT TOP (1) 'username' AS Conflict
+        FROM dbo.UserCredentials WHERE Username=@username
+        UNION ALL
+        SELECT TOP (1) 'email' FROM dbo.Users WHERE LOWER(Email)=LOWER(@email)
+        UNION ALL
+        SELECT TOP (1) 'subject' FROM dbo.UserIdentities WHERE ExternalSubject=@subject;
+      `);
+    if (existing.recordset.length) {
+      const conflict = existing.recordset[0].Conflict;
+      const error = new Error(
+        conflict === "username"
+          ? "That username is already taken."
+          : conflict === "email"
+            ? "An account with that email already exists. Log in or use a social provider."
+            : "Account already exists.",
+      );
+      error.status = 409;
+      throw error;
+    }
+    const userId = cryptoRandomUuid();
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("subject", sql.NVarChar(200), subject)
+      .input("email", sql.NVarChar(320), email)
+      .query("INSERT dbo.Users (Id,ExternalSubject,Email) VALUES (@userId,@subject,@email);");
+    await new sql.Request(transaction)
+      .input("subject", sql.NVarChar(200), subject)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .query("INSERT dbo.UserIdentities (ExternalSubject,UserId) VALUES (@subject,@userId);");
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("username", sql.NVarChar(64), username)
+      .input("passwordHash", sql.NVarChar(500), passwordHash)
+      .query("INSERT dbo.UserCredentials (UserId,Username,PasswordHash) VALUES (@userId,@username,@passwordHash);");
+    await transaction.commit();
+    return { userId, subject, email, username };
+  } catch (error) {
+    try { await transaction.rollback(); } catch { /* ignore */ }
+    throw error;
+  }
+}
+
+export async function findLocalAccountByUsername(username) {
+  const db = await pool();
+  if (!db) throw new Error("Database is not configured.");
+  const result = await db.request()
+    .input("username", sql.NVarChar(64), username)
+    .query(`
+      SELECT c.UserId, c.Username, c.PasswordHash, u.Email, u.ExternalSubject
+      FROM dbo.UserCredentials c
+      JOIN dbo.Users u ON u.Id=c.UserId
+      WHERE c.Username=@username;
+    `);
+  return result.recordset[0] || null;
+}
+
+function cryptoRandomUuid() {
+  return globalThis.crypto.randomUUID();
+}
+
 export async function getProfile(principal) {
   const userId = await ensureUser(principal);
   const db = await pool();

@@ -1,11 +1,28 @@
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
+const SESSION_KEY = "applypilot.session";
+const DEV_AUTH_KEY = "applypilot.devAuth";
+const DEV_USER = {
+  userId: "local-development-user",
+  userDetails: "local@example.test",
+  userRoles: ["authenticated"],
+};
+
+function sessionHeaders(): HeadersInit {
+  const token = localStorage.getItem(SESSION_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...sessionHeaders(),
+      ...(init?.headers || {}),
+    },
   });
   if (response.status === 401) throw new Error("AUTH_REQUIRED");
   const body = await response.json().catch(() => ({}));
@@ -14,13 +31,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-const DEV_AUTH_KEY = "applypilot.devAuth";
-const DEV_USER = {
-  userId: "local-development-user",
-  userDetails: "local@example.test",
-  userRoles: ["authenticated"],
-};
-
 export type AuthUser = {
   userId: string;
   userDetails?: string;
@@ -28,7 +38,12 @@ export type AuthUser = {
   identityProvider?: string;
 };
 
-/** Local-only sign-in so the landing page stays public until you click Sign in. */
+export function setSessionToken(token: string | null) {
+  if (token) localStorage.setItem(SESSION_KEY, token);
+  else localStorage.removeItem(SESSION_KEY);
+}
+
+/** Local-only OAuth stub so the landing page stays public until you click Sign in. */
 export function setDevSignedIn(signedIn: boolean) {
   if (!import.meta.env.DEV) return;
   if (signedIn) localStorage.setItem(DEV_AUTH_KEY, "1");
@@ -43,7 +58,6 @@ function isValidPrincipal(principal: unknown): AuthUser | null {
   const roles = Array.isArray(record.userRoles)
     ? record.userRoles.map((role) => String(role))
     : [];
-  // When SWA returns roles, require the authenticated role so stale/anonymous principals are ignored.
   if (roles.length > 0 && !roles.includes("authenticated")) return null;
   return {
     userId,
@@ -54,24 +68,77 @@ function isValidPrincipal(principal: unknown): AuthUser | null {
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  if (import.meta.env.DEV) {
-    return localStorage.getItem(DEV_AUTH_KEY) === "1" ? DEV_USER : null;
+  if (import.meta.env.DEV && localStorage.getItem(DEV_AUTH_KEY) === "1") {
+    return DEV_USER;
   }
-  const response = await fetch("/.auth/me");
-  if (!response.ok) return null;
-  const body = await response.json().catch(() => ({}));
-  return isValidPrincipal(body.clientPrincipal);
+
+  if (!import.meta.env.DEV) {
+    try {
+      const response = await fetch("/.auth/me");
+      if (response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const principal = isValidPrincipal(body.clientPrincipal);
+        if (principal) return principal;
+      }
+    } catch {
+      /* fall through to password session */
+    }
+  }
+
+  const token = localStorage.getItem(SESSION_KEY);
+  if (!token) return null;
+  try {
+    const response = await fetch(`${API}/auth/me`, {
+      credentials: "same-origin",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      setSessionToken(null);
+      return null;
+    }
+    const body = await response.json().catch(() => ({}));
+    return isValidPrincipal(body.user);
+  } catch {
+    return null;
+  }
 }
 
-/** Clear Easy Auth (or local DEV) session so login stays reachable. */
+export async function registerWithPassword(input: {
+  username: string;
+  email: string;
+  password: string;
+}) {
+  const result = await request<{ token: string; user: AuthUser }>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setSessionToken(result.token);
+  setDevSignedIn(false);
+  return result.user;
+}
+
+export async function loginWithPassword(input: { username: string; password: string }) {
+  const result = await request<{ token: string; user: AuthUser }>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  setSessionToken(result.token);
+  setDevSignedIn(false);
+  return result.user;
+}
+
+/** Clear Easy Auth, password session, and local DEV stub. */
 export function beginSignOut() {
+  setSessionToken(null);
+  setDevSignedIn(false);
+  void fetch(`${API}/auth/logout`, { method: "POST", credentials: "same-origin" }).catch(() => undefined);
   if (import.meta.env.DEV) {
-    setDevSignedIn(false);
     window.location.assign("/logged-out");
     return;
   }
   window.location.assign("/.auth/logout?post_logout_redirect_uri=/logged-out");
 }
+
 
 export async function getAllJobs(signal?: AbortSignal) {
   const jobs: unknown[] = [];
@@ -127,7 +194,12 @@ export const deleteApplication = (id: string) =>
 export async function uploadResume(file: File) {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`${API}/resume`, { method: "POST", body: form });
+  const response = await fetch(`${API}/resume`, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+    headers: { ...sessionHeaders() },
+  });
   const body = await response.json().catch(() => ({}));
   if (!response.ok)
     throw new Error(body.error || `Upload failed (${response.status})`);
@@ -143,7 +215,11 @@ export async function uploadResume(file: File) {
 export const getResumes = () => request<{ documents: ResumeDocument[] }>("/resumes");
 export const getResumeContentUrl = (id: string) => `${API}/resumes/${encodeURIComponent(id)}/content`;
 export async function getResumeBlob(id: string) {
-  const response = await fetch(getResumeContentUrl(id), { credentials: "same-origin", cache: "no-store" });
+  const response = await fetch(getResumeContentUrl(id), {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { ...sessionHeaders() },
+  });
   if (response.status === 401) throw new Error("AUTH_REQUIRED");
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

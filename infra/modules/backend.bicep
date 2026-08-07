@@ -121,6 +121,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
         { name: 'OPS_ALERT_EMAIL', value: opsAlertEmail }
         { name: 'AUTH_PROVIDERS', value: authProviders }
+        { name: 'AUTH_SESSION_SECRET', value: uniqueString(resourceGroup().id, functionAppName, 'auth-session-v1') }
       ], empty(packageUrl) ? [] : [
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: packageUrl }
         { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: functionIdentity.id }
