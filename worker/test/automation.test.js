@@ -29,6 +29,26 @@ test("knownAnswer still matches when label text is noisy", () => {
   assert.equal(knownAnswer("Highest education", profile, {}), "Bachelor's");
 });
 
+test("knownAnswer prefers authorization over incidental location wording", () => {
+  const profile = {
+    location: "Redmond, WA, United States",
+    city: "Redmond",
+    state: "WA",
+    country: "United States",
+    workAuthorization: "Authorized to work",
+    sponsorship: "No",
+  };
+  assert.equal(
+    knownAnswer("Are you authorized to work in the location(s) you selected in your previous response?", profile, {}),
+    "Authorized to work",
+  );
+  assert.equal(
+    knownAnswer("Will you require Stripe to sponsor you for a work permit now or in the future for the location(s) you selected?", profile, {}),
+    "No",
+  );
+  assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, WA, United States");
+});
+
 test("humanizeFieldName turns Greenhouse-style names into labels", () => {
   assert.equal(humanizeFieldName("job_application[first_name]"), "First Name");
   assert.equal(humanizeFieldName("candidate.email"), "Email");
