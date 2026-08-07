@@ -104,6 +104,15 @@ test("matchOptionLabel maps country aliases onto select options", () => {
     matchOptionLabel(["🇺🇸 United States +1", "🇦🇫 Afghanistan +93"], "United States"),
     "🇺🇸 United States +1",
   );
+  // Short "US" must not substring-match "Australia"
+  assert.equal(matchOptionLabel(["Australia", "US"], "US"), "US");
+});
+
+test("knownAnswer maps Stripe residence country to US short code", () => {
+  assert.equal(
+    knownAnswer("Please select the country where you currently reside.", { country: "United States" }, {}),
+    "US",
+  );
 });
 
 test("formatLocationQuery builds Greenhouse-shaped city strings", () => {

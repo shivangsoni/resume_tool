@@ -1333,13 +1333,22 @@ function JobDetail({
         <div className="submission-banner queued">
           <Clock24Regular />
           <div>
-            <b>{job.applicationStatus === "processing" ? "Submitting now" : "Queued for submission"}</b>
+            <b>
+              {job.applicationStatus === "processing"
+                ? (Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000
+                  ? "Submission stuck"
+                  : "Submitting now")
+                : "Queued for submission"}
+            </b>
             <p>
               {job.applicationStatus === "processing"
-                ? "A browser worker is filling out the employer application."
+                ? (Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000
+                  ? "Taking longer than expected. Retry the queue or finish on the employer page."
+                  : "A browser worker is filling out the employer application.")
                 : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
             </p>
-            {job.applicationId && job.applicationStatus !== "processing" && (
+            {job.applicationId && (job.applicationStatus !== "processing"
+              || Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000) && (
               <>
                 <button
                   className="apply"
@@ -1625,12 +1634,15 @@ function Applications({
                 <div className="queued-message">
                   <span>
                     {application.status === "processing"
-                      ? "Browser worker is submitting this application now."
+                      ? (Date.now() - new Date(application.updatedAt).getTime() > 10 * 60 * 1000
+                        ? "Taking longer than expected. The worker may be stuck — retry the queue or open the employer page."
+                        : "Browser worker is submitting this application now.")
                       : application.status === "review"
                         ? "Ready to queue. Submission was not accepted by the queue yet."
                         : "Waiting in the submission queue for a browser worker."}
                   </span>
-                  {application.status !== "processing" && (
+                  {(application.status !== "processing"
+                    || Date.now() - new Date(application.updatedAt).getTime() > 10 * 60 * 1000) && (
                     <>
                       <button onClick={() => void requeue(application.id)}>Retry queue</button>
                       <EmployerApplicationChrome

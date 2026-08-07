@@ -248,7 +248,8 @@ async function processApplicationId(id, { completeMessage, alreadyClaimed = fals
       resumePath = path.join(os.tmpdir(), `${id}-${data.document.fileName.replace(/[^a-z0-9._-]/gi, "_")}`);
       await blobs.getBlobClient(data.document.blobName).downloadToFile(resumePath);
     }
-    await record(id, await runApplication({ ...data, resumePath }), data.notify);
+    const APPLICATION_TIMEOUT_MS = Number(process.env.APPLICATION_TIMEOUT_MS || 8 * 60 * 1000);
+    await record(id, await runApplication({ ...data, resumePath, timeoutMs: APPLICATION_TIMEOUT_MS }), data.notify);
     if (completeMessage) await completeMessage();
   } catch (error) {
     await record(id, { outcome: "needs_action", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify);

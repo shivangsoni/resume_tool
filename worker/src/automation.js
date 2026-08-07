@@ -312,6 +312,13 @@ const knownAnswer = (label, profile, answers) => {
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
+  if (/\bcountry where you currently reside\b|\bcountry.*currently reside\b/.test(text)) {
+    const country = String(answers.country || profile.country || "").trim();
+    if (/united states|u\.?s\.?a\.?|^us$/i.test(country)) return "US";
+    if (/united kingdom|^uk$|great britain/i.test(country)) return "UK";
+    if (/united arab|^uae$/i.test(country)) return "UAE";
+    return country;
+  }
   if (/\bcountry\b/.test(text)) return answers.country || profile.country;
   // Stripe free-text: "If located in the US, in what city and state do you reside?"
   if (/\bcity and state\b|\bin what city and state\b|\blocate[d]? in the (us|united states).*\breside\b/.test(text)) {
@@ -346,10 +353,28 @@ const knownAnswer = (label, profile, answers) => {
   }
   if (/\bemployed by stripe\b|\bstripe affiliate\b/.test(text)) return "No";
   if (/\byears? of experience\b|\bfull time, industry\b/.test(text)) {
-    return profile.experienceLevel || answers.experienceLevel || "";
+    const raw = String(profile.experienceLevel || answers.experienceLevel || "").trim();
+    if (!raw) return "";
+    // Map profile buckets onto Stripe-style option labels when possible.
+    if (/5\s*[-–]\s*8|5\s*to\s*8|5\+|5-10|5\s*[-–]\s*10/i.test(raw) || /^[5-9]$/.test(raw)) {
+      return "5 - 10 years of experience as a software engineer";
+    }
+    if (/1\.5\s*[-–]\s*5|2\s*[-–]\s*5|3\s*[-–]\s*5|^[2-4]$/i.test(raw)) {
+      return "1.5 - 5 years of experience as a software engineer";
+    }
+    if (/0\s*[-–]\s*1|new grad|entry/i.test(raw)) {
+      return "0 - 1.5 years of experience as a software engineer";
+    }
+    if (/10\+|10\s*\+|senior|staff/i.test(raw)) {
+      return "10+ years of experience as a software engineer";
+    }
+    return raw;
   }
   if (/\bdegree\b/.test(text) && !/\bhighest\b/.test(text)) {
-    return profile.educationLevel || "";
+    const level = String(profile.educationLevel || "").trim();
+    if (/master/i.test(level) && !/mba|business/i.test(level)) return "Master's Degree";
+    if (/bachelor/i.test(level)) return "Bachelor's Degree";
+    return level;
   }
   // Recruiting WhatsApp / marketing opt-in — default No when unanswered.
   if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) {
@@ -374,7 +399,12 @@ const knownAnswer = (label, profile, answers) => {
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
     return formatLocationQuery(answers.location || "", profile);
   }
-  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
+  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) {
+    const school = String(profile.school || "").trim();
+    // Greenhouse school typeahead matches "Davis" → "University of California - Davis"
+    if (/university of california.*davis|uc\s*davis/i.test(school)) return "Davis";
+    return school;
+  }
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
     return profile.currentEmployer;
   }
@@ -532,6 +562,17 @@ const matchOptionLabel = (options, answer) => {
   // Country aliases: "United States" ↔ "US" / "USA", etc.
   const aliasHit = usable.find((option) => optionMatchesTokens(option, [wanted]));
   if (aliasHit) return aliasHit;
+
+  // Prefer Master's Degree over MBA when answer is a generic master/degree level.
+  if (/master/i.test(wanted) && !/mba|business/i.test(wanted)) {
+    const masters = usable.find((option) => /master'?s degree/i.test(option) && !/mba|business administration/i.test(option));
+    if (masters) return masters;
+  }
+
+  // Short codes (US, UK) must not substring-match (Australia contains "us").
+  if (needle.length <= 3) {
+    return usable.find((option) => normalize(option) === needle) || "";
+  }
 
   const includes = usable.find((option) => {
     const label = normalize(option);
@@ -787,6 +828,14 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
   if (!wanted) return true;
   const page = phoneField.page();
 
+  // Greenhouse remix phone Country is often a react-select with id=country (e.g. "United States +1").
+  const countryInput = page.locator("#country").first();
+  if (await countryInput.isVisible().catch(() => false)) {
+    const dialWanted = /united states|^us$|usa/i.test(wanted) ? "United States" : wanted;
+    const ok = await fillCustomBooleanChoice(countryInput, dialWanted);
+    if (ok) return true;
+  }
+
   const containers = [
     phoneField.locator("xpath=ancestor::*[contains(@class,'phone') or contains(@class,'field') or contains(@class,'application')][1]"),
     phoneField.locator("xpath=../.."),
@@ -807,7 +856,7 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
       await trigger.click({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(350);
 
-      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li');
+      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li, .select__option');
       const optionCount = await options.count().catch(() => 0);
       if (!optionCount) {
         await page.keyboard.press("Escape").catch(() => {});
@@ -825,12 +874,20 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
       const matched = matchOptionLabel(labels.filter(Boolean), wanted)
         || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
       if (matched) {
-        const index = labels.findIndex((label) => label === matched);
-        if (index >= 0) {
-          await options.nth(index).click({ timeout: 3000 }).catch(() => {});
-          await page.waitForTimeout(200);
+        const clicked = await page.evaluate((label) => {
+          const opt = [...document.querySelectorAll(".select__option, [role=option], .iti__country")].find(
+            (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+          );
+          if (!opt) return false;
+          opt.click();
           return true;
+        }, matched);
+        if (!clicked) {
+          const index = labels.findIndex((label) => label === matched);
+          if (index >= 0) await options.nth(index).click({ timeout: 3000 }).catch(() => {});
         }
+        await page.waitForTimeout(200);
+        return true;
       }
       await page.keyboard.press("Escape").catch(() => {});
     }
@@ -912,26 +969,34 @@ const fillCustomBooleanChoice = async (field, answer) => {
   const wanted = matchOptionLabel(["Yes", "No"], wantedRaw) || wantedRaw;
 
   await field.scrollIntoViewIfNeeded().catch(() => {});
-  await field.click({ timeout: 4000 }).catch(() => {});
+  // Prefer clicking the react-select control chrome, not a leaked phone dial menu.
+  const control = field.locator("xpath=ancestor::div[contains(@class,'select__container')][1]//div[contains(@class,'select__control')]").first();
+  if (await control.isVisible().catch(() => false)) {
+    await control.click({ timeout: 4000 }).catch(() => {});
+  } else {
+    await field.click({ timeout: 4000 }).catch(() => {});
+  }
   await page.waitForTimeout(400);
 
   // Searchable selects (School, Degree, experience): type to filter options.
   const isSearchable = await field.evaluate((el) => {
     const role = (el.getAttribute("role") || "").toLowerCase();
-    return role === "combobox" || el.className.includes("select__input") || /^question_|education|school|degree/i.test(el.id || "");
+    return role === "combobox" || el.className.includes("select__input") || /^question_|education|school|degree|country/i.test(el.id || "");
   }).catch(() => true);
-  if (isSearchable && wanted.length > 2 && !/^(yes|no)$/i.test(wanted)) {
+  const typeFilter = isSearchable && wanted.length >= 1 && !/^(yes|no)$/i.test(wanted);
+  if (typeFilter) {
     await field.fill("").catch(() => {});
-    await field.pressSequentially(wanted.slice(0, 48), { delay: 35 }).catch(() => {});
-    await page.waitForTimeout(700);
+    await field.pressSequentially(wanted.slice(0, 48), { delay: 40 }).catch(() => {});
+    // School/location typeaheads need longer for remote options.
+    const fieldId = await field.getAttribute("id").catch(() => "");
+    await page.waitForTimeout(/school|degree/i.test(fieldId || "") ? 1800 : 900);
   }
 
   const optionSelectors = [
+    ".select__menu .select__option",
     ".select__option",
     '[role="listbox"] [role="option"]',
     '[role="option"]',
-    ".select2-results__option",
-    "[class*='option' i]",
   ];
   for (let pass = 0; pass < 2; pass += 1) {
     for (const selector of optionSelectors) {
@@ -939,30 +1004,54 @@ const fillCustomBooleanChoice = async (field, answer) => {
       const count = await options.count().catch(() => 0);
       if (!count) continue;
       const labels = [];
-      for (let i = 0; i < Math.min(count, 40); i += 1) {
+      for (let i = 0; i < Math.min(count, 80); i += 1) {
         const option = options.nth(i);
         if (!(await option.isVisible().catch(() => false))) continue;
         const text = String(await option.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        // Ignore leftover intl-tel dial menus (Afghanistan+93) when filling other fields.
+        if (/\+\d+$/.test(text) && !/\+/.test(wanted) && !/united states|country/i.test(wanted)) continue;
         if (text) labels.push({ i, text });
       }
       if (!labels.length) continue;
-      const matched = matchOptionLabel(labels.map((row) => row.text), wanted)
-        || labels.find((row) => normalize(row.text).includes(normalize(wanted)))?.text
-        || (/^(yes|no)$/i.test(wanted)
-          ? labels.find((row) => normalize(row.text) === normalize(wanted))?.text
-          : "");
+      let matched = matchOptionLabel(labels.map((row) => row.text), wanted);
+      if (!matched && wanted.length > 3) {
+        matched = labels.find((row) => normalize(row.text).includes(normalize(wanted)))?.text || "";
+      }
+      if (!matched && /^(yes|no)$/i.test(wanted)) {
+        matched = labels.find((row) => normalize(row.text) === normalize(wanted)
+          || normalize(row.text).startsWith(normalize(wanted)))?.text || "";
+      }
+      // School: prefer UC Davis over Davis College when typing Davis.
+      if (/davis/i.test(wanted) && labels.some((row) => /california\s*-\s*davis/i.test(row.text))) {
+        matched = labels.find((row) => /california\s*-\s*davis/i.test(row.text))?.text || matched;
+      }
       if (!matched) continue;
-      const hit = labels.find((row) => normalize(row.text) === normalize(matched)) || labels[0];
-      await options.nth(hit.i).click({ timeout: 4000 }).catch(() => {});
+      // Exact option text click — Playwright hasText("US") wrongly matches "Australia".
+      const clicked = await page.evaluate((label) => {
+        const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+        for (const menu of menus) {
+          const opt = [...menu.querySelectorAll(".select__option, [role=option]")].find(
+            (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+          );
+          if (opt) {
+            opt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+            opt.click();
+            return true;
+          }
+        }
+        return false;
+      }, matched);
+      if (!clicked) {
+        const hit = labels.find((row) => row.text === matched) || labels.find((row) => normalize(row.text) === normalize(matched));
+        if (hit) await options.nth(hit.i).click({ timeout: 4000 }).catch(() => {});
+      }
       await page.waitForTimeout(350);
-      const display = await readLocationDisplayValue(field).catch(() => "");
-      const value = String(await field.inputValue().catch(() => "")).trim();
-      if (display || value || true) return true;
+      return true;
     }
     await page.waitForTimeout(500);
   }
 
-  await page.getByRole("option", { name: new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).first().click({ timeout: 3000 }).catch(() => {});
+  await page.getByRole("option", { name: wanted, exact: wanted.length <= 3 }).first().click({ timeout: 3000 }).catch(() => {});
   await page.waitForTimeout(300);
   return true;
 };
@@ -1055,13 +1144,15 @@ async function pageHasBlockingCaptcha(page) {
   return false;
 }
 
-export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false }) {
+export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false, timeoutMs = 8 * 60 * 1000 }) {
   const browser = await chromium.launch({
     headless: !headed,
     args: ["--disable-dev-shm-usage", "--no-sandbox"],
   });
   const page = await browser.newPage();
+  let timeoutHandle;
   try {
+    const work = (async () => {
     await page.goto(resolveApplicationUrl(application), { waitUntil: "domcontentloaded", timeout: 45000 });
     // If the embed/application form is already present, do not click listing CTAs
     // like "Quick Apply with MyGreenhouse" (those match /apply/ and derail the flow).
@@ -1582,6 +1673,19 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         await page.waitForLoadState("networkidle", { timeout: 45000 }).catch(() => {});
         await page.waitForTimeout(1500);
         const confirmation = await page.locator("body").innerText().catch(() => "");
+        if (/verification code was sent|enter the \d+-character code|confirm you.?re a human/i.test(confirmation)) {
+          return {
+            outcome: "needs_action",
+            detail: "Greenhouse emailed a verification code. Enter it on the employer page, then retry or mark submitted.",
+            questions: [{
+              key: "email_verification",
+              label: "Enter the verification code from your email on the employer application page.",
+              type: "blocking",
+              required: true,
+            }],
+            confirmationSnippet: confirmation.slice(0, 500),
+          };
+        }
         if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent|we (have )?received your application/i.test(confirmation)) {
           return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }], confirmationSnippet: confirmation.slice(0, 500) };
         }
@@ -1593,7 +1697,28 @@ export async function runApplication({ application, profile, resumePath, dryRun 
     }
 
     return { outcome: "needs_action", detail: "The employer submission control could not be identified.", questions: [{ key: "submission_control", label: "Open the original listing to review its unsupported submission step.", type: "blocking", required: true }] };
-  } finally { await browser.close(); }
+    })();
+
+    const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 8 * 60 * 1000;
+    const timedOut = new Promise((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve({
+          outcome: "needs_action",
+          detail: `Browser submission timed out after ${Math.round(limit / 60000)} minutes.`,
+          questions: [{
+            key: "submission_timeout",
+            label: "Submission timed out. Retry queue or finish on the employer page.",
+            type: "blocking",
+            required: true,
+          }],
+        });
+      }, limit);
+    });
+    return await Promise.race([work, timedOut]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    await browser.close();
+  }
 }
 
 const SUBMIT_NAME = /submit(\s+(my\s+)?application)?|send(\s+my)?\s+application|finish(\s+application)?|complete(\s+application)?/i;
