@@ -400,7 +400,7 @@ export default function App() {
             <b>{pageTitles[page]}</b>
           </div>
           <div className="header-spacer" />
-          <Tooltip content="Email notifications" relationship="label">
+          <Tooltip content="Email notifications" relationship="label" positioning={{ position: "below", align: "end" }}>
             <Button
               appearance="transparent"
               className="header-icon-btn"

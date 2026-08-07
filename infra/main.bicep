@@ -247,6 +247,7 @@ module emailAccess 'modules/email-access.bicep' = {
   params: {
     communicationServiceName: email.outputs.name
     functionPrincipalId: backend.outputs.principalId
+    workerPrincipalId: browserWorker.outputs.identityPrincipalId
   }
 }
 

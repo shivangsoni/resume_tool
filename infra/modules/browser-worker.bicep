@@ -160,3 +160,4 @@ output registryServer string = registry.properties.loginServer
 output identityName string = workerIdentity.name
 output identityId string = workerIdentity.id
 output identityClientId string = workerIdentity.properties.clientId
+output identityPrincipalId string = workerIdentity.properties.principalId
