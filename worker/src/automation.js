@@ -291,6 +291,20 @@ const stabilizeField = (scope, item) => {
   return field;
 };
 
+/** Labels that are true yes/no prompts (not country / multi-select lists). */
+const isBooleanChoiceLabel = (label) => {
+  const text = normalize(label);
+  if (!text) return false;
+  if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
+  if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
+  if (/\b(yes or no|y\/n)\b/.test(text)) return true;
+  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
+  return false;
+};
+
+/** Keep array-style Greenhouse names as groups even when only one option was collected. */
+const isCheckboxGroupName = (name) => /\[\]/.test(String(name || ""));
+
 /** Option labels for a checkbox/radio group — never treat the shared prompt as an option. */
 const choiceOptionLabels = (group, groupLabel) => {
   const prompt = normalize(groupLabel);
@@ -483,7 +497,14 @@ export async function runApplication({ application, profile, resumePath }) {
     const collected = [];
     for (let index = 0; index < await fields.count(); index += 1) {
       const field = fields.nth(index);
-      if (!await field.isVisible().catch(() => false) || await field.isDisabled().catch(() => true)) continue;
+      const choiceType = await field.evaluate((el) => {
+        if (!(el instanceof HTMLInputElement)) return "";
+        return String(el.type || "").toLowerCase();
+      }).catch(() => "");
+      const isChoice = choiceType === "checkbox" || choiceType === "radio";
+      // Keep off-screen country/checkbox options so groups are not demoted to Yes/No.
+      if (!isChoice && (!await field.isVisible().catch(() => false) || await field.isDisabled().catch(() => true))) continue;
+      if (isChoice && await field.isDisabled().catch(() => true)) continue;
       const info = await field.evaluate((element) => {
         const id = element.id || "";
         const name = element.getAttribute("name") || "";
@@ -669,12 +690,13 @@ export async function runApplication({ application, profile, resumePath }) {
         singles.push(item);
       }
     }
-    // Lone checkboxes stay as boolean singles.
+    // Lone boolean checkboxes stay as singles; array names / multi prompts stay grouped.
     for (const [name, list] of [...checkboxGroups.entries()]) {
-      if (list.length < 2) {
-        checkboxGroups.delete(name);
-        singles.push(...list);
-      }
+      if (list.length >= 2 || isCheckboxGroupName(name)) continue;
+      const label = list[0]?.info?.groupLabel || list[0]?.info?.label || "";
+      if (!isBooleanChoiceLabel(label) && /\b(country|countries|select all|which of)\b/i.test(label)) continue;
+      checkboxGroups.delete(name);
+      singles.push(...list);
     }
 
     for (const [, group] of checkboxGroups) {
@@ -749,7 +771,12 @@ export async function runApplication({ application, profile, resumePath }) {
         } else if (info.required && !await field.isChecked().catch(() => false)) {
           if (!seenKeys.has(key)) {
             seenKeys.add(key);
-            missing.push({ key, label: displayLabel, type: "checkbox", required: true });
+            if (isBooleanChoiceLabel(displayLabel)) {
+              missing.push({ key, label: displayLabel, type: "checkbox", required: true });
+            } else {
+              // Country / free-text prompts must not become Yes/No in the UI.
+              missing.push({ key, label: displayLabel, type: "text", required: true });
+            }
           }
         }
         continue;
@@ -862,4 +889,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

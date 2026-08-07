@@ -79,14 +79,39 @@ export function lookupStoredAnswer(stored: Record<string, string>, candidates: s
   return "";
 }
 
+export function isBooleanQuestionLabel(label: string) {
+  const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!text) return false;
+  if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
+  if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
+  if (/\b(yes or no|y n)\b/.test(text)) return true;
+  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote|hybrid)\b/.test(text)) return true;
+  return false;
+}
+
+/** Normalize worker question types so country prompts are not rendered as Yes/No. */
+export function resolveQuestionInputType(question: { type?: string; label?: string; options?: string[] }) {
+  const options = (question.options || []).filter((option) => String(option).trim());
+  const type = String(question.type || "text").toLowerCase();
+  if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file") return type;
+  if (type === "select") return options.length ? "select" : "text";
+  if (type === "checkbox") {
+    if (options.length > 1) return "multiselect";
+    if (options.length === 1 || isBooleanQuestionLabel(question.label || "")) return "checkbox";
+    return "text";
+  }
+  return type || "text";
+}
+
 export function coerceQuestionAnswer(
-  question: { type?: string; options?: string[] },
+  question: { type?: string; label?: string; options?: string[] },
   value: string,
 ) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (question.type === "select" || question.type === "checkbox") {
-    const options = question.type === "checkbox" && !(question.options || []).length
+  const inputType = resolveQuestionInputType(question);
+  if (inputType === "select" || inputType === "checkbox") {
+    const options = inputType === "checkbox" && !(question.options || []).length
       ? ["yes", "no"]
       : (question.options || []);
     return matchSelectOption(options, raw) || raw;
@@ -95,20 +120,21 @@ export function coerceQuestionAnswer(
 }
 
 export function isQuestionAnswered(
-  question: { type?: string; options?: string[]; key: string },
+  question: { type?: string; label?: string; options?: string[]; key: string },
   answers: Record<string, string>,
 ) {
   const raw = String(answers[question.key] || "").trim();
   if (!raw) return false;
-  if (question.type === "select") {
+  const inputType = resolveQuestionInputType(question);
+  if (inputType === "select") {
     const options = (question.options || []).filter((option) => String(option).trim());
     if (!options.length) return true;
     return Boolean(matchSelectOption(options, raw));
   }
-  if (question.type === "checkbox") {
+  if (inputType === "checkbox") {
     return Boolean(matchSelectOption(["yes", "no", ...(question.options || [])], raw) || /^(yes|no)$/i.test(raw));
   }
-  if (question.type === "multiselect") {
+  if (inputType === "multiselect") {
     try {
       const parsed = raw.startsWith("[") ? JSON.parse(raw) : raw.split(/[,;\n|]+/);
       return Array.isArray(parsed) ? parsed.some((item) => String(item || "").trim()) : Boolean(raw);

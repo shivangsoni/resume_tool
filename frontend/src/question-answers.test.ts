@@ -8,6 +8,7 @@ import {
   lookupStoredAnswer,
   matchSelectOption,
   priorAnswerKeys,
+  resolveQuestionInputType,
 } from "./question-answers";
 
 describe("question-answers helpers", () => {
@@ -31,6 +32,22 @@ describe("question-answers helpers", () => {
     expect(coerceQuestionAnswer({ type: "select", options: ["Yes", "No"] }, "yes")).toBe("Yes");
     expect(isQuestionAnswered({ key: "q", type: "select", options: ["Yes", "No"] }, { q: "Yes" })).toBe(true);
     expect(isQuestionAnswered({ key: "q", type: "select", options: ["Yes", "No"] }, { q: "maybe" })).toBe(false);
+  });
+
+  it("does not render country checkbox prompts as Yes/No", () => {
+    expect(resolveQuestionInputType({
+      type: "checkbox",
+      label: "Please select the country where you currently reside.",
+    })).toBe("text");
+    expect(resolveQuestionInputType({
+      type: "checkbox",
+      label: "Are you authorized to work in the United States?",
+    })).toBe("checkbox");
+    expect(resolveQuestionInputType({
+      type: "checkbox",
+      label: "Please select the country or countries you anticipate working in",
+      options: ["United States", "Canada"],
+    })).toBe("multiselect");
   });
 
   it("answersCoverQuestionKey matches by base key", () => {

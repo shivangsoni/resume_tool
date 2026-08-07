@@ -97,6 +97,7 @@ import {
   lookupStoredAnswer,
   matchSelectOption,
   priorAnswerKeys,
+  resolveQuestionInputType,
 } from "./question-answers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -1704,22 +1705,23 @@ function ApplicationQuestions({
       <p>{application.lastSubmissionError}</p>
       <div className="action-required-fields">
         {questions.map((question, index) => {
+          const inputType = resolveQuestionInputType(question);
           const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
           const selectedOptions = parseStoredMultiselect(answers[question.key] || "");
-          const selectValue = question.type === "select"
+          const selectValue = inputType === "select"
             ? (matchSelectOption(selectOptions, answers[question.key] || "") || "")
             : (answers[question.key] || "");
           return (
-          <label key={question.key} className={question.type === "multiselect" ? "multiselect-field" : undefined}>
+          <label key={question.key} className={inputType === "multiselect" ? "multiselect-field" : undefined}>
             <span>{question.label || `Question ${index + 1}`}</span>
-            {question.type === "blocking" ? (
+            {inputType === "blocking" ? (
               <a href={resolveEmployerApplicationUrl({
                 sourceUrl: application.sourceUrl,
                 company: application.company,
                 source: application.source,
                 jobExternalId: application.jobExternalId,
               }) || application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
-            ) : question.type === "multiselect" ? (
+            ) : inputType === "multiselect" ? (
               <div className="multiselect-options">
                 {selectOptions.map((option, optionIndex) => (
                   <label key={`${question.key}::${optionIndex}::${option}`} className="multiselect-option">
@@ -1732,7 +1734,7 @@ function ApplicationQuestions({
                   </label>
                 ))}
               </div>
-            ) : question.type === "select" ? (
+            ) : inputType === "select" ? (
               <select
                 required={question.required !== false}
                 value={selectValue}
@@ -1743,7 +1745,7 @@ function ApplicationQuestions({
                   <option key={`${question.key}::${optionIndex}::${option}`} value={option}>{option}</option>
                 ))}
               </select>
-            ) : question.type === "checkbox" ? (
+            ) : inputType === "checkbox" ? (
               <select
                 required={question.required !== false}
                 value={matchSelectOption(["yes", "no"], answers[question.key] || "") || answers[question.key] || ""}
@@ -1753,7 +1755,7 @@ function ApplicationQuestions({
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
               </select>
-            ) : question.type === "textarea" ? (
+            ) : inputType === "textarea" ? (
               <textarea
                 required={question.required !== false}
                 value={answers[question.key] || ""}
@@ -1764,6 +1766,7 @@ function ApplicationQuestions({
                 required={question.required !== false}
                 value={answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
+                placeholder={/\bcountry\b/i.test(question.label || "") ? "e.g. United States" : undefined}
               />
             )}
           </label>

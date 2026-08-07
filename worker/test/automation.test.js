@@ -15,6 +15,8 @@ import {
   resolveMultiselectSelections,
   matchOptionLabel,
   choiceOptionLabels,
+  isBooleanChoiceLabel,
+  isCheckboxGroupName,
 } from "../src/automation.js";
 
 test("maps standard employer fields from the saved profile", () => {
@@ -169,6 +171,13 @@ test("choiceOptionLabels ignores shared country prompt text", () => {
     { info: { optionLabel: "", label: prompt, groupLabel: prompt } },
   ];
   assert.deepEqual(choiceOptionLabels(group, prompt), ["United States", "Canada"]);
+});
+
+test("country prompts are not treated as boolean checkbox questions", () => {
+  assert.equal(isBooleanChoiceLabel("Please select the country where you currently reside."), false);
+  assert.equal(isBooleanChoiceLabel("Are you legally authorized to work in the United States?"), true);
+  assert.equal(isCheckboxGroupName("question_68165587[]"), true);
+  assert.equal(isCheckboxGroupName("agree_terms"), false);
 });
 
 test("matchOptionLabel fuzzy-matches radio answers", () => {
