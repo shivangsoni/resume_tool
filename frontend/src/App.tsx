@@ -1255,6 +1255,25 @@ function JobRow({
     </article>
   );
 }
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
+
+/** Wall clock for stale-processing checks — updated on an interval, never read via Date.now in render. */
+function useNow(intervalMs = 30_000) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return nowMs;
+}
+
+function isStaleTimestamp(updatedAt: string | undefined, nowMs: number, maxAgeMs = STALE_PROCESSING_MS) {
+  if (!updatedAt) return false;
+  const updatedMs = new Date(updatedAt).getTime();
+  if (Number.isNaN(updatedMs)) return false;
+  return nowMs - updatedMs > maxAgeMs;
+}
+
 function JobDetail({
   job,
   dismiss,
@@ -1276,8 +1295,10 @@ function JobDetail({
   onMobileClose?: () => void;
   onOpenApplications?: () => void;
 }) {
+  const nowMs = useNow();
   const [applying, setApplying] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
+  const processingStale = job.applicationStatus === "processing" && isStaleTimestamp(job.applicationUpdatedAt, nowMs);
   const failedApplication = job.status === "failed" && job.applicationId
     ? {
         id: job.applicationId,
@@ -1335,20 +1356,17 @@ function JobDetail({
           <div>
             <b>
               {job.applicationStatus === "processing"
-                ? (Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000
-                  ? "Submission stuck"
-                  : "Submitting now")
+                ? (processingStale ? "Submission stuck" : "Submitting now")
                 : "Queued for submission"}
             </b>
             <p>
               {job.applicationStatus === "processing"
-                ? (Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000
+                ? (processingStale
                   ? "Taking longer than expected. Retry the queue or finish on the employer page."
                   : "A browser worker is filling out the employer application.")
                 : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
             </p>
-            {job.applicationId && (job.applicationStatus !== "processing"
-              || Date.now() - new Date(job.applicationUpdatedAt || 0).getTime() > 10 * 60 * 1000) && (
+            {job.applicationId && (job.applicationStatus !== "processing" || processingStale) && (
               <>
                 <button
                   className="apply"
@@ -1573,6 +1591,7 @@ function Applications({
   requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
+  const nowMs = useNow();
   const [appTab, setAppTab] = useState<"all" | "action">("all");
   useEffect(() => {
     if (!focusedApplicationId) return;
@@ -1634,15 +1653,14 @@ function Applications({
                 <div className="queued-message">
                   <span>
                     {application.status === "processing"
-                      ? (Date.now() - new Date(application.updatedAt).getTime() > 10 * 60 * 1000
+                      ? (isStaleTimestamp(application.updatedAt, nowMs)
                         ? "Taking longer than expected. The worker may be stuck — retry the queue or open the employer page."
                         : "Browser worker is submitting this application now.")
                       : application.status === "review"
                         ? "Ready to queue. Submission was not accepted by the queue yet."
                         : "Waiting in the submission queue for a browser worker."}
                   </span>
-                  {(application.status !== "processing"
-                    || Date.now() - new Date(application.updatedAt).getTime() > 10 * 60 * 1000) && (
+                  {(application.status !== "processing" || isStaleTimestamp(application.updatedAt, nowMs)) && (
                     <>
                       <button onClick={() => void requeue(application.id)}>Retry queue</button>
                       <EmployerApplicationChrome
