@@ -1649,7 +1649,9 @@ body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
   gap: 12px;
 }
 .action-required p { margin: 0; color: #8a332b; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
-.action-required label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 600; }
+.action-required label,
+.action-required .action-field { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 600; }
+.action-required .action-field-label,
 .action-required label > span { white-space: pre-wrap; line-height: 1.45; }
 .action-required input,.action-required select,.action-required textarea { width: 100%; border: 1px solid #d0d5dd; border-radius: 7px; padding: 9px 10px; background: white; }
 .action-required textarea { min-height: 80px; resize: vertical; }

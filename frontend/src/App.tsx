@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import {
   Avatar,
   Button,
-  Combobox,
   CounterBadge,
   DrawerBody,
   DrawerHeader,
@@ -13,7 +12,6 @@ import {
   NavDrawerFooter,
   NavItem,
   NavSectionHeader,
-  Option,
   OverlayDrawer,
   SearchBox,
   Tab,
@@ -1855,11 +1853,12 @@ function ApplicationQuestions({
   const [phoneDialCountries, setPhoneDialCountries] = useState(seedDialCountries);
   const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
-  if (appliedSeedKey !== seedKey) {
+  useEffect(() => {
+    if (appliedSeedKey === seedKey) return;
     setAppliedSeedKey(seedKey);
     setAnswers(seedAnswers);
     setPhoneDialCountries(seedDialCountries);
-  }
+  }, [appliedSeedKey, seedKey, seedAnswers, seedDialCountries]);
 
   if (!questions.length) {
     return (
@@ -1955,19 +1954,19 @@ function ApplicationQuestions({
             formatLocationAnswer(profile.city || "", profile),
           ].filter(Boolean))];
           return (
-          <label
+          <div
             key={question.key}
             className={
               inputType === "multiselect"
-                ? "multiselect-field"
+                ? "action-field multiselect-field"
                 : inputType === "phone"
-                  ? "phone-field"
+                  ? "action-field phone-field"
                   : inputType === "autocomplete"
-                    ? "autocomplete-field"
-                    : undefined
+                    ? "action-field autocomplete-field"
+                    : "action-field"
             }
           >
-            <span>{question.label || `Question ${index + 1}`}</span>
+            <span className="action-field-label">{question.label || `Question ${index + 1}`}</span>
             {inputType === "blocking" ? (
               <a href={resolveEmployerApplicationUrl({
                 sourceUrl: application.sourceUrl,
@@ -2017,21 +2016,19 @@ function ApplicationQuestions({
               />
             ) : inputType === "autocomplete" ? (
               <>
-                <Combobox
-                  freeform
+                <input
+                  list={`location-options-${index}`}
                   required={question.required !== false}
-                  placeholder={(question as { placeholder?: string }).placeholder || "e.g. Redmond, Washington, United States"}
                   value={answers[question.key] || ""}
-                  selectedOptions={answers[question.key] ? [answers[question.key]] : []}
-                  onInput={(event) => setAnswer(question.key, (event.target as HTMLInputElement).value)}
-                  onOptionSelect={(_event, data) => {
-                    if (data.optionValue) setAnswer(question.key, data.optionValue);
-                  }}
-                >
+                  onChange={(event) => setAnswer(question.key, event.target.value)}
+                  placeholder={(question as { placeholder?: string }).placeholder || "e.g. Redmond, Washington, United States"}
+                  autoComplete="off"
+                />
+                <datalist id={`location-options-${index}`}>
                   {locationOptions.map((option) => (
-                    <Option key={option} value={option}>{option}</Option>
+                    <option key={option} value={option} />
                   ))}
-                </Combobox>
+                </datalist>
                 <small className="field-hint">Pick a full city match like the employer form (City, Region, Country).</small>
               </>
             ) : inputType === "phone" ? (
@@ -2068,7 +2065,7 @@ function ApplicationQuestions({
                 placeholder={/\bcountry\b/i.test(question.label || "") ? "e.g. United States" : undefined}
               />
             )}
-          </label>
+          </div>
           );
         })}
       </div>
@@ -2474,16 +2471,12 @@ function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
 
 function InboxPage({ openApplication }: { openApplication: (applicationId: string) => void }) {
   const [messages, setMessages] = useState<MailMessage[]>([]);
-  const [address, setAddress] = useState<string | null>(null);
-  const [routingNote, setRoutingNote] = useState("");
   const [selected, setSelected] = useState<MailMessage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     getMailbox().then((result) => {
-      setAddress(result.address);
-      setRoutingNote(result.routingNote || "");
       setMessages(result.messages);
       setSelected(result.messages[0] || null);
     }).catch((cause) => setError(cause.message === "AUTH_REQUIRED" ? "Sign in to open your mailbox." : cause.message)).finally(() => setLoading(false));
@@ -2501,8 +2494,7 @@ function InboxPage({ openApplication }: { openApplication: (applicationId: strin
   return (
     <div className="simple-page">
       <div className="page-heading left"><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
-      {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
-      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
+      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Application status updates and recruiter replies will appear here.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
           <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase24Regular /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
