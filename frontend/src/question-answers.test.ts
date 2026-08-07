@@ -4,6 +4,7 @@ import {
   answersCoverQuestionKey,
   coerceQuestionAnswer,
   dedupeEmployerQuestions,
+  expandLocationStates,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel,
@@ -97,6 +98,10 @@ describe("question-answers helpers", () => {
       type: "text",
       label: "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?",
     }, "no")).toBe("No");
+  });
+
+  it("expands US city and state answers", () => {
+    expect(expandLocationStates("Redmond, WA")).toBe("Redmond, Washington");
   });
 
   it("dedupes duplicate Phone employer questions", () => {

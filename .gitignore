@@ -12,3 +12,4 @@ vite.config.d.ts
 .swa/
 *.zip
 /infra/main.json
+worker/tmp/

@@ -190,6 +190,7 @@ const isLocationAutocompleteLabel = (label, name = "") => {
   const text = normalize(`${label} ${name}`);
   if (!text) return false;
   if (/\bwork authorization\b|\bauthorized to work\b|\bsponsor|\bvisa\b|\bremot(e|ely)\b|\bhybrid\b/.test(text)) return false;
+  if (/\bcandidate.?location\b|\bjob_application\[location\]/.test(text)) return true;
   if (/\blocation\b.*\bcity\b|\bcity\b.*\blocation\b|\blocation \(city\)/.test(text)) return true;
   if (/\b(job_application\[)?location\b/.test(text) && !/\bcountries\b|\bcountry selection\b/.test(text)) return true;
   if (/^location$|^city$|\blocation \(city\)$/.test(text)) return true;
@@ -266,6 +267,24 @@ const lookupAnswer = (answers, { key, name, label }, profile = {}) => {
       }
     }
   }
+  // Greenhouse questionnaire ids drift (answers[12] → answers[45]); recover Yes/No by leaf + label.
+  const labelNorm = normalize(label);
+  const looksBoolean = /^(do you|are you|have you|will you|can you|did you)\b/.test(labelNorm)
+    || /\b(whatsapp|opt-?in|yes or no)\b/.test(labelNorm)
+    || /boolean_value/i.test(`${key} ${name}`);
+  if (looksBoolean) {
+    const leaf = String(name || key).match(/\[([^\]]+)\]/g)?.map((part) => part.slice(1, -1)).pop() || "";
+    for (const [storedKey, storedValue] of Object.entries(store)) {
+      const hit = tryValue(storedValue);
+      if (!hit || !/^(yes|no|true|false)$/i.test(hit)) continue;
+      if (leaf && storedKey.includes(`[${leaf}]`)) {
+        return /^(yes|true)$/i.test(hit) ? "Yes" : "No";
+      }
+      if (/\bwhatsapp\b|\bopt-?in\b/.test(labelNorm) && /boolean_value|whatsapp|opt.?in/i.test(storedKey)) {
+        return /^(yes|true)$/i.test(hit) ? "Yes" : "No";
+      }
+    }
+  }
   return knownAnswer(label, profile, store) || "";
 };
 
@@ -294,6 +313,12 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return answers.country || profile.country;
+  // Stripe free-text: "If located in the US, in what city and state do you reside?"
+  if (/\bcity and state\b|\bin what city and state\b|\blocate[d]? in the (us|united states).*\breside\b/.test(text)) {
+    const city = answers.city || profile.city || "";
+    const state = expandLocationStates(String(answers.state || profile.state || "").trim());
+    return [city, state].filter(Boolean).join(", ");
+  }
   if (/\bcity\b/.test(text)) {
     // Greenhouse "Location (City)" needs "City, Region, Country" for typeahead commit.
     if (/\blocation\b/.test(text)) {
@@ -308,6 +333,15 @@ const knownAnswer = (label, profile, answers) => {
   // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  // Recruiting WhatsApp / marketing opt-in — default No when unanswered.
+  if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) {
+    for (const [key, value] of Object.entries(answers || {})) {
+      if (!/whatsapp|opt.?in|boolean_value/i.test(key) && !/whatsapp|opt.?in/i.test(String(key))) continue;
+      const textValue = String(value || "").trim();
+      if (/^(yes|no)$/i.test(textValue)) return /^(yes)$/i.test(textValue) ? "Yes" : "No";
+    }
+    return "No";
+  }
   // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
   if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
     const prefs = normalize([
@@ -591,6 +625,19 @@ const locationLatLonCommitted = async (field) => {
   return result;
 };
 
+/** Read committed location from input or react-select single-value display. */
+const readLocationDisplayValue = async (field) => {
+  const inputValue = String(await field.inputValue().catch(() => "")).trim();
+  if (inputValue) return inputValue;
+  return field.evaluate((el) => {
+    const root = el.closest(".select__control, .select, [class*='select']")
+      || el.closest("[class*='field' i], [class*='question' i]")
+      || el.parentElement;
+    const single = root?.querySelector(".select__single-value, [class*='single-value' i]");
+    return String(single?.textContent || "").replace(/\s+/g, " ").trim();
+  }).catch(() => "");
+};
+
 /**
  * Greenhouse Location (City) typeahead: type, wait for geocode suggestions, click one.
  * Typing alone leaves hidden latitude/longitude empty and validation fails.
@@ -613,9 +660,10 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
     await field.scrollIntoViewIfNeeded().catch(() => {});
     await field.click({ timeout: 3000 }).catch(() => {});
     await field.fill("").catch(() => {});
-    await field.pressSequentially(searchToken, { delay: 35 }).catch(() => {});
+    await field.pressSequentially(searchToken, { delay: 40 }).catch(() => {});
 
     const optionSelectors = [
+      ".select__option",
       '[role="listbox"] [role="option"]',
       '[role="option"]',
       ".select2-results__option",
@@ -627,7 +675,7 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
 
     let optionTexts = [];
     let optionLocator = null;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       await page.waitForTimeout(250);
       for (const selector of optionSelectors) {
         const locator = page.locator(selector);
@@ -635,7 +683,6 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
         if (!count) continue;
         const texts = [];
         for (let i = 0; i < Math.min(count, 40); i += 1) {
-          if (!(await locator.nth(i).isVisible().catch(() => false))) continue;
           const text = String(await locator.nth(i).innerText().catch(() => ""))
             .replace(/\s+/g, " ")
             .trim()
@@ -659,19 +706,49 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
         || optionTexts.find((option) => normalize(option).includes(normalize(searchToken)))
         || optionTexts[0];
       const index = optionTexts.findIndex((option) => normalize(option) === normalize(matched));
-      const target = optionLocator.nth(index >= 0 ? index : 0);
-      await target.click({ timeout: 3000 }).catch(async () => {
-        await field.press("ArrowDown").catch(() => {});
-        await field.press("Enter").catch(() => {});
+
+      // Prefer exact option role click — more reliable on Greenhouse react-select.
+      await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(async () => {
+        const target = optionLocator.nth(index >= 0 ? index : 0);
+        await target.click({ timeout: 3000 }).catch(async () => {
+          await field.press("Enter").catch(() => {});
+        });
       });
-    } else {
-      await field.press("ArrowDown").catch(() => {});
-      await page.waitForTimeout(150);
-      await field.press("Enter").catch(() => {});
+      await page.waitForTimeout(450);
+
+      let value = await readLocationDisplayValue(field);
+      const region = normalize(parts[1] || "");
+      const matchedOk = Boolean(value) && (
+        normalize(value) === normalize(matched)
+        || (region && normalize(value).includes(region))
+        || looksLikePlaceString(value, profile)
+      );
+
+      // Only retry when nothing committed — retries can replace Washington with Oregon.
+      if (!value) {
+        await field.click({ timeout: 2000 }).catch(() => {});
+        await field.pressSequentially(searchToken, { delay: 30 }).catch(() => {});
+        await page.waitForTimeout(600);
+        await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(400);
+        value = await readLocationDisplayValue(field);
+      }
+
+      const latLon = await locationLatLonCommitted(field);
+      if (latLon.hasHidden) return Boolean(value) && latLon.ok;
+      return Boolean(value) && (
+        matchedOk
+        || normalize(value) === normalize(matched)
+        || (region && normalize(value).includes(region))
+        || looksLikePlaceString(value, profile)
+      );
     }
 
+    await field.press("ArrowDown").catch(() => {});
+    await page.waitForTimeout(150);
+    await field.press("Enter").catch(() => {});
     await page.waitForTimeout(450);
-    const value = String(await field.inputValue().catch(() => "")).trim();
+    const value = await readLocationDisplayValue(field);
     const latLon = await locationLatLonCommitted(field);
     if (latLon.hasHidden) return Boolean(value) && latLon.ok;
     return Boolean(value) && looksLikePlaceString(value, profile);
@@ -809,6 +886,62 @@ async function fillSelect(field, answer) {
   return field.selectOption(match.value).then(() => true).catch(() => false);
 }
 
+/** Fill Yes/No when the control is a custom combobox rather than a native <select>. */
+const fillCustomBooleanChoice = async (field, answer) => {
+  const wanted = matchOptionLabel(["Yes", "No"], answer) || String(answer || "").trim();
+  if (!wanted) return false;
+  const page = field.page();
+
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(350);
+
+  const optionSelectors = [
+    '[role="listbox"] [role="option"]',
+    '[role="option"]',
+    ".select__option",
+    ".select2-results__option",
+    "[class*='option' i]",
+    "li",
+  ];
+  for (const selector of optionSelectors) {
+    const options = page.locator(selector);
+    const count = await options.count().catch(() => 0);
+    if (!count) continue;
+    for (let i = 0; i < Math.min(count, 30); i += 1) {
+      const option = options.nth(i);
+      if (!(await option.isVisible().catch(() => false))) continue;
+      const text = String(await option.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      if (normalize(text) !== normalize(wanted) && !new RegExp(`^${wanted}$`, "i").test(text)) continue;
+      await option.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(200);
+      const value = String(await field.inputValue().catch(() => "")).trim();
+      if (normalize(value) === normalize(wanted) || /^(yes|no)$/i.test(value)) return true;
+      // Some widgets keep placeholder on the input but store selection elsewhere — treat click as success.
+      return true;
+    }
+  }
+
+  await page.getByRole("option", { name: new RegExp(`^${wanted}$`, "i") }).first().click({ timeout: 2000 }).catch(() => {});
+  await page.waitForTimeout(200);
+  const value = String(await field.inputValue().catch(() => "")).trim();
+  return normalize(value) === normalize(wanted) || Boolean(value);
+};
+
+/** True when a text input behaves like a Greenhouse custom select/combobox. */
+const isCustomSelectInput = async (field) => {
+  return field.evaluate((el) => {
+    if (!(el instanceof HTMLInputElement) && el.tagName !== "INPUT") return false;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    if (role === "combobox" || role === "listbox") return true;
+    if (el.getAttribute("aria-haspopup") === "listbox") return true;
+    if (el.readOnly) return true;
+    const id = String(el.id || "");
+    if (/^question_/i.test(id)) return true;
+    return false;
+  }).catch(() => false);
+};
+
 const isSkippableFieldMeta = (info) => {
   const haystack = normalize(`${info.name} ${info.label} ${info.type}`);
   if (info.type === "search" || info.type === "button" || info.type === "reset" || info.type === "image") return true;
@@ -883,8 +1016,11 @@ async function pageHasBlockingCaptcha(page) {
   return false;
 }
 
-export async function runApplication({ application, profile, resumePath }) {
-  const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] });
+export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false }) {
+  const browser = await chromium.launch({
+    headless: !headed,
+    args: ["--disable-dev-shm-usage", "--no-sandbox"],
+  });
   const page = await browser.newPage();
   try {
     await page.goto(resolveApplicationUrl(application), { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -1182,11 +1318,14 @@ export async function runApplication({ application, profile, resumePath }) {
         if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
         continue;
       }
-      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile)
+        || (isBooleanChoiceLabel(displayLabel) ? "No" : "");
       let filled = false;
       const isSelect = info.tag === "select" || liveType === "select";
-      const isLocationField = isLocationAutocompleteLabel(displayLabel, info.name);
+      const isLocationField = isLocationAutocompleteLabel(displayLabel, `${info.name} ${info.id || ""}`);
       const isPhoneField = isPhoneFieldLabel(displayLabel, info.name);
+      const customSelect = !isSelect && !isLocationField && !isPhoneField
+        && (isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field));
       let dialOk = true;
       if (answer || isLocationField || isPhoneField) {
         if (isPhoneField) {
@@ -1202,22 +1341,32 @@ export async function runApplication({ application, profile, resumePath }) {
           const options = await selectOptionTexts(field);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(field, coerced);
+          if (!filled && isBooleanChoiceLabel(displayLabel)) {
+            filled = await fillCustomBooleanChoice(field, answer || "No");
+          }
           if (!filled && options.length) {
-            // City fields often list "Redmond, WA" — retry with includes match already in matchOptionLabel;
-            // if still empty try the first option that contains the answer token.
             const token = normalize(answer).split(/\s+/)[0];
             const fuzzy = options.find((option) => normalize(option).includes(token) && token.length >= 3);
             if (fuzzy) filled = await fillSelect(field, fuzzy);
           }
+        } else if (customSelect && answer) {
+          // Stripe Greenhouse: Yes/No and many questionnaire fields are text inputs + popup lists.
+          if (isBooleanChoiceLabel(displayLabel) || /^(yes|no)$/i.test(answer)) {
+            filled = await fillCustomBooleanChoice(field, answer);
+          } else {
+            filled = await fillCustomBooleanChoice(field, answer);
+            if (!filled) filled = await fillTextControl(field, answer);
+          }
         } else if (answer) {
           filled = await fillTextControl(field, answer);
-          // Some Greenhouse "text" questions are actually selects rematerialized after load.
           if (!filled) {
             const retryType = await liveFieldType(field, liveType);
             if (retryType === "select") {
               const options = await selectOptionTexts(field);
               const coerced = matchOptionLabel(options, answer) || answer;
               filled = await fillSelect(field, coerced);
+            } else if (isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field)) {
+              filled = await fillCustomBooleanChoice(field, answer);
             }
           }
         }
@@ -1238,23 +1387,29 @@ export async function runApplication({ application, profile, resumePath }) {
         value = await retryField.inputValue().catch(() => "");
       }
       if (isLocationField && filled) {
+        const display = await readLocationDisplayValue(stabilizeField(scope, item));
         const latLon = await locationLatLonCommitted(stabilizeField(scope, item));
         if (latLon.hasHidden && !latLon.ok) filled = false;
+        if (!latLon.hasHidden && !display) filled = false;
       }
       const digits = (text) => String(text || "").replace(/\D+/g, "");
-      const hasValue = Boolean(String(value || "").trim());
+      const displayValue = isLocationField
+        ? (await readLocationDisplayValue(stabilizeField(scope, item))) || String(value || "")
+        : String(value || "");
+      const hasValue = Boolean(String(displayValue || "").trim());
       const digitsMatch = Boolean(
         answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
       );
       // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
       // Phone: number filled is enough — dial-code widget failure must not re-ask Phone.
-      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled);
+      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled)
+        || (customSelect && filled) || (isBooleanChoiceLabel(displayLabel) && filled);
       void dialOk;
       if (info.required && !looksFilled) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         const options = isSelect ? await selectOptionTexts(field) : undefined;
-        let missingType = isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
+        let missingType = isSelect || customSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
         if (isLocationField && !isSelect) missingType = "autocomplete";
         if (isPhoneField) missingType = "phone";
         let missingOptions = options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt));
@@ -1355,6 +1510,15 @@ export async function runApplication({ application, profile, resumePath }) {
       };
     }
 
+    if (dryRun) {
+      return {
+        outcome: "dry_run",
+        detail: "Filled employer fields without submitting (dryRun=true).",
+        questions: [],
+        url: page.url(),
+      };
+    }
+
     // Advance multi-step employer flows (Continue/Next) until a final submit appears.
     for (let step = 0; step < 4; step += 1) {
       const submit = await findSubmitControl([scope, root, page]);
@@ -1429,4 +1593,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, fillLocationAutocomplete, fillCustomBooleanChoice, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

@@ -117,6 +117,7 @@ import { CompanyLogo } from "./company-logo";
 import {
   coerceQuestionAnswer,
   dedupeEmployerQuestions,
+  expandLocationStates,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel as isUselessQuestionLabelHelper,
@@ -1691,6 +1692,11 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
+  if (/\bcity and state\b|\bin what city and state\b|\blocate[d]? in the (us|united states).*\breside\b/.test(text)) {
+    const city = String(profile.city || "").trim();
+    const state = expandLocationStates(String(profile.state || "").trim()) || String(profile.state || "").trim();
+    return [city, state].filter(Boolean).join(", ");
+  }
   if (/\bcity\b/.test(text)) {
     if (/\blocation\b/.test(text)) {
       return formatLocationAnswer("", profile);
@@ -1704,6 +1710,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) return "No";
   // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
   if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
     const prefs = [profile.preferredLocations, profile.location, profile.employmentTypes]

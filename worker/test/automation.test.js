@@ -240,15 +240,26 @@ test("knownAnswer does not map remote-intent questions to city/location", () => 
   assert.equal(knownAnswer("Would you consider a hybrid role?", profile, {}), "");
 });
 
-test("knownAnswer maps school employer and job title from profile", () => {
+test("knownAnswer maps Stripe US city/state and WhatsApp opt-in", () => {
   const profile = {
-    school: "University of Washington",
-    currentEmployer: "Contoso",
-    currentJobTitle: "Senior Software Engineer",
+    city: "Redmond",
+    state: "WA",
+    country: "United States",
   };
-  assert.equal(knownAnswer("School / University", profile, {}), "University of Washington");
-  assert.equal(knownAnswer("Current employer", profile, {}), "Contoso");
-  assert.equal(knownAnswer("Previous job title", profile, {}), "Senior Software Engineer");
+  assert.equal(
+    knownAnswer("If located in the US, in what city and state do you reside?", profile, {}),
+    "Redmond, Washington",
+  );
+  assert.equal(
+    knownAnswer("Do you opt-in to receive WhatsApp messages from Stripe Recruiting?", profile, {}),
+    "No",
+  );
+  assert.equal(
+    knownAnswer("Do you opt-in to receive WhatsApp messages from Stripe Recruiting?", profile, {
+      "job_application[answers][99][boolean_value]": "Yes",
+    }),
+    "Yes",
+  );
 });
 
 test("multiselect helpers pick country options from profile and answers", () => {
