@@ -1057,37 +1057,34 @@ function JobDetail({
         </div>
       )}
       {failedApplication && (
-        <>
-          <div className="submission-banner failed">
-            <ErrorCircle24Regular />
-            <div>
-              <b>Action needed</b>
-              <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
-              {job.applicationId && (
-                <>
-                  <button
-                    className="apply"
-                    disabled={requeuing}
-                    onClick={async () => {
-                      setRequeuing(true);
-                      try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
-                    }}
-                  >
-                    {requeuing ? "Re-queuing…" : "Retry queue"}
-                  </button>
-                  <EmployerApplicationChrome
-                    sourceUrl={job.sourceUrl}
-                    company={job.company}
-                    source={job.source}
-                    jobExternalId={job.jobExternalId}
-                    applicationId={job.applicationId}
-                  />
-                </>
-              )}
-            </div>
+        <div className="submission-banner failed">
+          <ErrorCircle24Regular />
+          <div>
+            <b>Action needed</b>
+            <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
+            {job.applicationId && (
+              <>
+                <button
+                  className="apply"
+                  disabled={requeuing}
+                  onClick={async () => {
+                    setRequeuing(true);
+                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                  }}
+                >
+                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                </button>
+                <EmployerApplicationChrome
+                  sourceUrl={job.sourceUrl}
+                  company={job.company}
+                  source={job.source}
+                  jobExternalId={job.jobExternalId}
+                  applicationId={job.applicationId}
+                />
+              </>
+            )}
           </div>
-          <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
-        </>
+        </div>
       )}
       {job.status === "applied" && (
         <div className="submission-banner applied">
@@ -1140,6 +1137,9 @@ function JobDetail({
                   : "Queued"}
         </button>
       </div>
+      {failedApplication && (
+        <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
+      )}
       <EmployerApplicationChrome
         sourceUrl={job.sourceUrl}
         company={job.company}
@@ -1344,7 +1344,24 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
-  if (/\blocation\b|\bwork from\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
+  if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
+    const prefs = [profile.preferredLocations, profile.location, profile.employmentTypes]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (/\bremote\b/.test(prefs)) return "Yes";
+    if (/\bon.?site\b|\bin.?office\b/.test(prefs)) return "No";
+    return "";
+  }
+  if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
+    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  }
+  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
+  if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
+    return profile.currentEmployer;
+  }
+  if (/\b(current |most recent |previous |last )?(job )?title\b|\bposition title\b/.test(text)) return profile.currentJobTitle;
   if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
   if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
   if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
@@ -1386,6 +1403,8 @@ function isUselessQuestionLabel(label: string) {
   if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
   if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
   if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
+  if (/^select(\s+\w+)?\.?$|^select\.{0,3}$|^please select\.?$|^choose(\s+one)?\.?$/i.test(text)) return true;
+  if (/^select\s*\.{1,3}$/i.test(text)) return true;
   return false;
 }
 
@@ -1459,6 +1478,13 @@ function ApplicationQuestions({
     country: profile.country,
     workAuthorization: profile.workAuthorization,
     sponsorship: profile.sponsorship,
+    school: profile.school,
+    currentEmployer: profile.currentEmployer,
+    currentJobTitle: profile.currentJobTitle,
+    educationLevel: profile.educationLevel,
+    location: profile.location,
+    preferredLocations: profile.preferredLocations,
+    employmentTypes: profile.employmentTypes,
   });
   const seedAnswers = useMemo(() => {
     const next: Record<string, string> = {};
@@ -2179,6 +2205,9 @@ function ProfileView({
     "experienceLevel",
     "minSalary",
     "educationLevel",
+    "school",
+    "currentEmployer",
+    "currentJobTitle",
     "preferredLanguages",
     "companiesToExclude",
     "additionalInfo",

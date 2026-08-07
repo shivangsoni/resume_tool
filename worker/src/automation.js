@@ -35,6 +35,9 @@ const isUselessLabel = (label) => {
   if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
   if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
   if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
+  // Placeholder prompts like "Select...", "Please select", "Choose one"
+  if (/^select(\s+\w+)?\.?$|^select\.{0,3}$|^please select\.?$|^choose(\s+one)?\.?$/i.test(text)) return true;
+  if (/^select\s*\.{1,3}$/i.test(text)) return true;
   return false;
 };
 
@@ -71,7 +74,21 @@ const knownAnswer = (label, profile, answers) => {
   // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
-  if (/\blocation\b|\bwork from\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
+  if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
+    const prefs = normalize([profile.preferredLocations, profile.location, profile.employmentTypes].filter(Boolean).join(" "));
+    if (/\bremote\b/.test(prefs)) return "Yes";
+    if (/\bon.?site\b|\bin.?office\b/.test(prefs)) return "No";
+    return "";
+  }
+  if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
+    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  }
+  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
+  if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
+    return profile.currentEmployer;
+  }
+  if (/\b(current |most recent |previous |last )?(job )?title\b|\bposition title\b/.test(text)) return profile.currentJobTitle;
   if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
   if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
   if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
@@ -448,6 +465,8 @@ export async function runApplication({ application, profile, resumePath }) {
             if (/^(required|\*|optional|question\s*\d+)$/i.test(cleaned)) continue;
             if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(cleaned)) continue;
             if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(cleaned)) continue;
+            if (/^select(\s+\w+)?\.?$|^select\.{0,3}$|^please select\.?$|^choose(\s+one)?\.?$/i.test(cleaned)) continue;
+            if (/^select\s*\.{1,3}$/i.test(cleaned)) continue;
             return cleaned;
           }
           return "";
@@ -460,6 +479,7 @@ export async function runApplication({ application, profile, resumePath }) {
             : raw.split(/[./#]/).pop() || raw;
           const spaced = leaf.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
           if (!spaced || /^(input|field|select|textarea|question|required)[\d\s_-]*$/i.test(spaced)) return "";
+          if (/^select(\s+\w+)?\.?$|^select\.{0,3}$|^please select|^choose(\s+one)?$/i.test(spaced)) return "";
           return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
         };
         const type = element.getAttribute("type") || "text";
@@ -467,9 +487,10 @@ export async function runApplication({ application, profile, resumePath }) {
         const groupLabel = isChoice
           ? pickText(groupHeading(), labelledBy, humanize(name), humanize(dataHint))
           : "";
+        // Prefer fieldset/group heading and name/id humanization over placeholder/"Select..."
         const label = isChoice
-          ? pickText(groupLabel, labelledBy, readLabelText(labelNode), element.getAttribute("aria-label"), siblingText(), humanize(dataHint), humanize(name), humanize(id))
-          : pickText(labelledBy, readLabelText(labelNode), element.getAttribute("aria-label"), siblingText(), element.getAttribute("placeholder"), element.getAttribute("title"), humanize(dataHint), humanize(name), humanize(id));
+          ? pickText(groupLabel, labelledBy, readLabelText(labelNode), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), siblingText())
+          : pickText(groupHeading(), labelledBy, readLabelText(labelNode), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), siblingText(), element.getAttribute("placeholder"), element.getAttribute("title"));
         const selfRequired = element.required || element.getAttribute("aria-required") === "true";
         const groupRequired = !!element.closest("fieldset[required], [aria-required='true'], .required");
         // For choice options, do not treat every option as required just because the group is.
