@@ -31,9 +31,9 @@ env:
 
 jobs:
   infrastructure:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'workflow_call'
+    # Do not gate on github.event_name == 'workflow_call'. Inside a reusable
+    # workflow that value is the caller's event (push/pull_request), so this
+    # job was always skipped when CI called deploy via workflow_call.
     runs-on: ubuntu-latest
     environment: non-production
     outputs:
