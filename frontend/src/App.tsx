@@ -194,10 +194,20 @@ export default function App() {
   } | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
-  const [navOpen, setNavOpen] = useState(true);
+  const [navOpen, setNavOpen] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width: 1051px)").matches);
   const [profileOpen, setProfileOpen] = useState(false);
   const [headerQuery, setHeaderQuery] = useState("");
   const [unreadMailCount, setUnreadMailCount] = useState(0);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1050px)");
+    const sync = () => {
+      if (mq.matches) setNavOpen(false);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
@@ -368,6 +378,9 @@ export default function App() {
   const avatarInitials = (profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase();
   const onNavSelect = (_event: Event | React.SyntheticEvent, data: OnNavItemSelectData) => {
     if (data.value) setPage(String(data.value) as Page);
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1050px)").matches) {
+      setNavOpen(false);
+    }
   };
 
   return (
@@ -444,6 +457,14 @@ export default function App() {
       </header>
 
       <div className="sa-body">
+        {navOpen ? (
+          <button
+            type="button"
+            className="sa-nav-backdrop"
+            aria-label="Close navigation"
+            onClick={() => setNavOpen(false)}
+          />
+        ) : null}
         <NavDrawer
           open
           type="inline"
@@ -525,6 +546,13 @@ export default function App() {
             setPage={setJobPage}
             selected={selected}
             setSelected={setSelected}
+            mobileDetailOpen={mobileDetailOpen}
+            setMobileDetailOpen={setMobileDetailOpen}
+            openApplications={(applicationId) => {
+              setMobileDetailOpen(false);
+              if (applicationId) setFocusedApplicationId(applicationId);
+              setPage("applications");
+            }}
             job={job}
             query={query}
             setQuery={(value) => { setQuery(value); setJobPage(1); }}
@@ -780,6 +808,9 @@ function Dashboard(p: {
   setPage: (page: number) => void;
   selected: number;
   setSelected: (n: number) => void;
+  mobileDetailOpen: boolean;
+  setMobileDetailOpen: (open: boolean) => void;
+  openApplications: (applicationId?: string) => void;
   job?: Job;
   query: string;
   setQuery: (s: string) => void;
@@ -932,7 +963,10 @@ function Dashboard(p: {
               key={j.id}
               j={j}
               active={p.selected === j.id}
-              click={() => p.setSelected(j.id)}
+              click={() => {
+                p.setSelected(j.id);
+                p.setMobileDetailOpen(true);
+              }}
             />
           ))}
           {!p.visible.length && (
@@ -962,7 +996,19 @@ function Dashboard(p: {
             </div>
           )}
         </section>
-        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} requeue={p.requeue} profile={p.profile} />}
+        {p.job && (
+          <JobDetail
+            job={p.job}
+            dismiss={p.dismiss}
+            apply={p.apply}
+            resolve={p.resolve}
+            requeue={p.requeue}
+            profile={p.profile}
+            mobileOpen={p.mobileDetailOpen}
+            onMobileClose={() => p.setMobileDetailOpen(false)}
+            onOpenApplications={() => p.openApplications(p.job?.applicationId)}
+          />
+        )}
       </div>
     </div>
   );
@@ -1002,7 +1048,7 @@ function JobRow({
   click: () => void;
 }) {
   return (
-    <button className={`job-row ${active ? "active" : ""}`} onClick={click}>
+    <button className={`job-row ${active ? "active" : ""}`} onClick={click} type="button">
       <span className="job-logo">
         {j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}
       </span>
@@ -1037,9 +1083,12 @@ function JobRow({
         {j.status === "failed" && (
           <p className="job-error">
             <ErrorCircle24Regular />
-            {j.applicationError || "Submission failed. Open the job for details or retry from Applications."}
+            {j.applicationError || "Submission failed. Tap to answer questions and retry."}
           </p>
         )}
+        <span className="job-row-cta">
+          {j.status === "ready" ? "Tap to apply" : j.status === "failed" ? "Tap to answer & retry" : "Tap to view"}
+        </span>
       </div>
       <div className="job-score">
         <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
@@ -1057,6 +1106,9 @@ function JobDetail({
   resolve,
   requeue,
   profile,
+  mobileOpen = false,
+  onMobileClose,
+  onOpenApplications,
 }: {
   job: Job;
   dismiss: (job: Job) => void;
@@ -1064,6 +1116,9 @@ function JobDetail({
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
   profile: Profile;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  onOpenApplications?: () => void;
 }) {
   const [applying, setApplying] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
@@ -1085,7 +1140,17 @@ function JobDetail({
       }
     : null;
   return (
-    <section className="job-detail">
+    <section className={`job-detail ${mobileOpen ? "mobile-open" : ""}`}>
+      <div className="mobile-detail-bar">
+        <button type="button" className="mobile-detail-back" onClick={onMobileClose}>
+          <ChevronLeft24Regular /> Back to matches
+        </button>
+        {job.applicationId && onOpenApplications ? (
+          <button type="button" className="mobile-detail-apps" onClick={onOpenApplications}>
+            Applications
+          </button>
+        ) : null}
+      </div>
       <div className="detail-top">
         <span className="big-logo">
           {job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}
@@ -1096,7 +1161,7 @@ function JobDetail({
             {job.company} · {job.location}
           </p>
         </div>
-        <button className="icon-btn">
+        <button className="icon-btn" type="button" aria-label="Close detail" onClick={onMobileClose || (() => dismiss(job))}>
           <Dismiss24Regular />
         </button>
       </div>
