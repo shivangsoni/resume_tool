@@ -269,8 +269,16 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
     .query("SELECT AnswersJson,RequiredQuestionsJson FROM dbo.Applications WHERE Id=@id AND UserId=@userId");
   if (!current.recordset.length) return null;
   const answers = { ...(current.recordset[0].AnswersJson ? JSON.parse(current.recordset[0].AnswersJson) : {}), ...suppliedAnswers };
+  const answerKeyBase = (key) => String(key || "").replace(/__(?:g)?\d+(?:_\d+)?$/i, "").trim();
+  const isAnswered = (questionKey) => {
+    if (String(answers[questionKey] ?? "").trim()) return true;
+    const base = answerKeyBase(questionKey);
+    if (!base) return false;
+    if (String(answers[base] ?? "").trim()) return true;
+    return Object.entries(answers).some(([key, value]) => answerKeyBase(key) === base && String(value ?? "").trim());
+  };
   const questions = (current.recordset[0].RequiredQuestionsJson ? JSON.parse(current.recordset[0].RequiredQuestionsJson) : [])
-    .filter((question) => !String(answers[question.key] ?? "").trim());
+    .filter((question) => !isAnswered(question.key));
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
     .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers)).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions)).query(`
       UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status='review',LastSubmissionError=NULL,UpdatedAt=SYSUTCDATETIME()
