@@ -6,7 +6,8 @@ import react from "@vitejs/plugin-react";
 const NONPROD_SWA = "https://icy-water-0ce7d5b10.7.azurestaticapps.net";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
+  // Vite is started from the frontend/ directory, so "." resolves env files correctly.
+  const env = loadEnv(mode, ".", "");
   // Local Functions: set VITE_DEV_API_PROXY=http://127.0.0.1:7071
   const proxyTarget = (env.VITE_DEV_API_PROXY || NONPROD_SWA).replace(/\/$/, "");
 

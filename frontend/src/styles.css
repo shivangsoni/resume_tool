@@ -354,6 +354,14 @@ select {
 .sa-profile-drawer.fui-OverlayDrawer,
 .sa-profile-drawer {
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  z-index: 50 !important;
+}
+/* Non-modal profile drawer must not blank the dashboard */
+.fui-OverlayDrawer__backdrop:has(+ .sa-profile-drawer),
+.sa-profile-drawer + .fui-OverlayDrawer__backdrop,
+body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 .sa-profile-drawer .fui-DrawerBody {
   padding-top: 8px;
@@ -365,10 +373,64 @@ select {
 }
 .sa-profile-drawer-user {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   padding-bottom: 16px;
   border-bottom: 1px solid #e0e0e0;
+}
+.sa-profile-photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.profile-page-photo {
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  background: #fff;
+  width: max-content;
+  max-width: 100%;
+}
+.sa-profile-photo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.sa-profile-photo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  color: #0f6cbd;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sa-profile-photo-btn input {
+  display: none;
+}
+.sa-profile-photo-btn:has(input:disabled) {
+  opacity: 0.6;
+  cursor: wait;
+}
+.sa-profile-photo-remove {
+  border: 0;
+  background: transparent;
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
 }
 .sa-profile-drawer-user b {
   display: block;

@@ -29,6 +29,8 @@ export type Profile = {
   preferredLanguages: string;
   companiesToExclude: string;
   additionalInfo: string;
+  /** Optional avatar as a compressed data URL (JPEG/WebP). */
+  photoUrl: string;
 };
 
 export type Application = {

@@ -50,6 +50,7 @@ import {
   Options24Regular,
   Payment24Regular,
   Person24Regular,
+  Camera24Regular,
   QuestionCircle24Regular,
   Search24Regular,
   Settings24Regular,
@@ -61,6 +62,7 @@ import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
+import { readImageAsAvatarDataUrl } from "./avatar-image";
 import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFILE_FIELDS } from "./profileCompleteness";
 import {
   answerApplicationQuestions,
@@ -195,13 +197,16 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
   const [navOpen, setNavOpen] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width: 1051px)").matches);
+  const [compactShell, setCompactShell] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1050px)").matches);
   const [profileOpen, setProfileOpen] = useState(false);
   const [headerQuery, setHeaderQuery] = useState("");
   const [unreadMailCount, setUnreadMailCount] = useState(0);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1050px)");
     const sync = () => {
+      setCompactShell(mq.matches);
       if (mq.matches) setNavOpen(false);
     };
     sync();
@@ -375,7 +380,40 @@ export default function App() {
   if (!currentUser) return <LandingPage signedIn={false} />;
 
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in";
-  const avatarInitials = (profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase();
+  const avatarInitials = (
+    `${profile.firstName?.[0] || ""}${profile.lastName?.[0] || ""}`
+    || (currentUser.userDetails?.includes("@") ? currentUser.userDetails[0] : currentUser.userDetails?.[0])
+    || "U"
+  ).toUpperCase();
+  const avatarImage = profile.photoUrl ? { src: profile.photoUrl } : undefined;
+  const persistPhoto = async (photoUrl: string) => {
+    const next = { ...profile, photoUrl };
+    setProfile(next);
+    saveProfile(next);
+    setPhotoBusy(true);
+    try {
+      const result = await putRemoteProfile(next);
+      const normalized = { ...emptyProfile, ...result.profile };
+      setProfile(normalized);
+      saveProfile(normalized);
+      notify(photoUrl ? "Profile photo updated" : "Profile photo removed");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not save photo");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+  const onPickPhoto = async (file: File | null | undefined) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await readImageAsAvatarDataUrl(file);
+      await persistPhoto(dataUrl);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not read photo");
+      setPhotoBusy(false);
+    }
+  };
   const onNavSelect = (_event: Event | React.SyntheticEvent, data: OnNavItemSelectData) => {
     if (data.value) setPage(String(data.value) as Page);
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 1050px)").matches) {
@@ -451,13 +489,13 @@ export default function App() {
             aria-label="Open profile"
             onClick={() => setProfileOpen(true)}
           >
-            <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
+            <Avatar name={displayName} initials={avatarInitials} image={avatarImage} color="colorful" size={32} />
           </button>
         </div>
       </header>
 
       <div className="sa-body">
-        {navOpen ? (
+        {navOpen && compactShell ? (
           <button
             type="button"
             className="sa-nav-backdrop"
@@ -754,6 +792,7 @@ export default function App() {
       <OverlayDrawer
         position="end"
         size="medium"
+        modalType="non-modal"
         open={profileOpen}
         onOpenChange={(_e, data) => setProfileOpen(data.open)}
         className="sa-profile-drawer"
@@ -775,7 +814,33 @@ export default function App() {
         <DrawerBody>
           <div className="sa-profile-drawer-body">
             <div className="sa-profile-drawer-user">
-              <Avatar name={displayName} initials={avatarInitials} color="colorful" size={64} />
+              <div className="sa-profile-photo">
+                <Avatar name={displayName} initials={avatarInitials} image={avatarImage} color="colorful" size={72} />
+                <label className="sa-profile-photo-btn">
+                  <Camera24Regular />
+                  <span>{photoBusy ? "Saving…" : profile.photoUrl ? "Change photo" : "Upload photo"}</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={photoBusy}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      void onPickPhoto(file);
+                    }}
+                  />
+                </label>
+                {profile.photoUrl ? (
+                  <button
+                    type="button"
+                    className="sa-profile-photo-remove"
+                    disabled={photoBusy}
+                    onClick={() => void persistPhoto("")}
+                  >
+                    Remove photo
+                  </button>
+                ) : null}
+              </div>
               <div>
                 <b>{displayName}</b>
                 <span>{currentUser.userDetails || currentUser.userId}</span>
@@ -2381,10 +2446,11 @@ function ProfileView({
 }: {
   profile: Profile;
   setProfile: (p: Profile) => void;
-  save: () => void;
+  save: () => void | Promise<void>;
   hasResume: boolean;
   goResume: () => void;
 }) {
+  const [photoBusy, setPhotoBusy] = useState(false);
   const missing = missingProfileFields(profile);
   const required = new Set<string>(REQUIRED_PROFILE_FIELDS);
   const selectOptions: Partial<Record<keyof Profile, string[]>> = {
@@ -2423,6 +2489,8 @@ function ProfileView({
     "companiesToExclude",
     "additionalInfo",
   ] as (keyof Profile)[];
+  const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.email || "You";
+  const initials = (`${profile.firstName?.[0] || ""}${profile.lastName?.[0] || ""}` || displayName[0] || "U").toUpperCase();
 
   return (
     <div className="basic-page screenshot-profile">
@@ -2430,6 +2498,73 @@ function ProfileView({
         Required fields are collected once and reused by the browser worker on every Simple Apply.
         Uploading a résumé auto-fills blank contact and skills fields from extraction.
       </p>
+      <div className="sa-profile-photo profile-page-photo">
+        <Avatar
+          name={displayName}
+          initials={initials}
+          image={profile.photoUrl ? { src: profile.photoUrl } : undefined}
+          color="colorful"
+          size={96}
+        />
+        <div className="sa-profile-photo-actions">
+          <label className="sa-profile-photo-btn">
+            <Camera24Regular />
+            <span>{photoBusy ? "Processing…" : profile.photoUrl ? "Change photo" : "Upload photo"}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={photoBusy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                setPhotoBusy(true);
+                void readImageAsAvatarDataUrl(file)
+                  .then(async (photoUrl) => {
+                    const next = { ...profile, photoUrl };
+                    setProfile(next);
+                    saveProfile(next);
+                    try {
+                      const result = await putRemoteProfile(next);
+                      const normalized = { ...emptyProfile, ...result.profile };
+                      setProfile(normalized);
+                      saveProfile(normalized);
+                    } catch {
+                      /* keep local photo; user can retry Save profile */
+                    }
+                  })
+                  .catch(() => {
+                    /* ignore local decode errors */
+                  })
+                  .finally(() => setPhotoBusy(false));
+              }}
+            />
+          </label>
+          {profile.photoUrl ? (
+            <button
+              type="button"
+              className="sa-profile-photo-remove"
+              disabled={photoBusy}
+              onClick={() => {
+                const next = { ...profile, photoUrl: "" };
+                setProfile(next);
+                saveProfile(next);
+                void putRemoteProfile(next)
+                  .then((result) => {
+                    const normalized = { ...emptyProfile, ...result.profile };
+                    setProfile(normalized);
+                    saveProfile(normalized);
+                  })
+                  .catch(() => {
+                    /* ignore */
+                  });
+              }}
+            >
+              Remove photo
+            </button>
+          ) : null}
+        </div>
+      </div>
       {(missing.length > 0 || !hasResume) && (
         <div className="onboarding-banner profile-setup">
           <div>
@@ -2469,7 +2604,7 @@ function ProfileView({
             </label>
           );
         })}
-        <button className="apply" onClick={save}>
+        <button className="apply" onClick={() => void save()}>
           Save profile
         </button>
       </div>
