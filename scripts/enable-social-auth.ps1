@@ -42,7 +42,7 @@ if ($GoogleClientId -and $GoogleClientSecret) {
 }
 
 if ($GitHubClientId -and $GitHubClientSecret) {
-  $providers | Add-Member -NotePropertyName gitHub -NotePropertyValue (@{
+  $providers | Add-Member -NotePropertyName github -NotePropertyValue (@{
       registration = @{
         clientIdSettingName     = "GITHUB_CLIENT_ID"
         clientSecretSettingName = "GITHUB_CLIENT_SECRET"

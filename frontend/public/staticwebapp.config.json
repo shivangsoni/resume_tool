@@ -20,10 +20,16 @@
           "clientSecretSettingName": "GOOGLE_CLIENT_SECRET"
         }
       },
-      "gitHub": {
+      "github": {
         "registration": {
           "clientIdSettingName": "GITHUB_CLIENT_ID",
           "clientSecretSettingName": "GITHUB_CLIENT_SECRET"
+        }
+      },
+      "facebook": {
+        "registration": {
+          "appIdSettingName": "FACEBOOK_APP_ID",
+          "appSecretSettingName": "FACEBOOK_APP_SECRET"
         }
       }
     }
