@@ -1864,12 +1864,12 @@ function ApplicationQuestions({
   const [phoneDialCountries, setPhoneDialCountries] = useState(seedDialCountries);
   const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    if (appliedSeedKey === seedKey) return;
+  // Reseed when the worker/profile signatures change (React: adjust state during render).
+  if (appliedSeedKey !== seedKey) {
     setAppliedSeedKey(seedKey);
     setAnswers(seedAnswers);
     setPhoneDialCountries(seedDialCountries);
-  }, [appliedSeedKey, seedKey, seedAnswers, seedDialCountries]);
+  }
 
   if (!questions.length) {
     return (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { companyDomain, companyInitial, resolveCompanyLogoUrl } from "./company-logo";
+import { companyDomain, companyInitial, resolveCompanyLogoUrl } from "./company-logo-utils";
 
 describe("company logo helpers", () => {
   it("maps greenhouse board tokens and company names to domains", () => {
