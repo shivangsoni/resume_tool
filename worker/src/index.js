@@ -24,7 +24,15 @@ async function load(id) {
       Status='queued'
       OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
     );
-    SELECT a.Id,a.UserId,u.Email,p.ProfileJson,d.BlobName,d.FileName,d.ExtractionJson,m.Alias AS MailboxAlias,m.Id AS MailboxId
+  `);
+  if (!result.recordset.length) return null;
+  return fetchApplicationContext(id);
+}
+
+/** Load application payload after SQL already claimed Status='processing'. */
+async function fetchApplicationContext(id) {
+  const result = await pool.request().input("id", sql.UniqueIdentifier, id).query(`
+    SELECT a.Id,a.UserId,a.JobExternalId,a.Company,a.Title,a.Source,a.SourceUrl,a.AnswersJson,u.Email,p.ProfileJson,d.BlobName,d.FileName,d.ExtractionJson,m.Alias AS MailboxAlias,m.Id AS MailboxId
     FROM dbo.Applications a
     JOIN dbo.Users u ON u.Id=a.UserId
     LEFT JOIN dbo.CandidateProfiles p ON p.UserId=a.UserId
@@ -32,8 +40,9 @@ async function load(id) {
     OUTER APPLY (SELECT TOP 1 BlobName,FileName,ExtractionJson FROM dbo.Documents WHERE UserId=a.UserId AND DocumentType='resume' ORDER BY IsPrimary DESC,CreatedAt DESC) d
     WHERE a.Id=@id;
   `);
-  if (!result.recordsets[0].length) return null;
-  const app = result.recordsets[0][0]; const context = result.recordsets[1][0];
+  if (!result.recordset.length) return null;
+  const app = result.recordset[0];
+  const context = app;
   const answers = app.AnswersJson ? JSON.parse(app.AnswersJson) : {};
   const extracted = (() => {
     try {
@@ -183,7 +192,15 @@ console.log("ApplyPilot browser worker listening", {
   environment: process.env.DEPLOYMENT_ENVIRONMENT || "production",
 });
 
-let workerBusy = false;
+/** Serialize SB + SQL sweeper so only one Playwright run executes at a time. */
+let workerLock = Promise.resolve();
+function withWorkerLock(fn) {
+  const run = workerLock.then(() => fn());
+  workerLock = run.catch((error) => {
+    console.error("Worker lock task failed", error);
+  });
+  return run;
+}
 
 async function claimNextQueuedApplication() {
   const result = await pool.request().query(`
@@ -195,22 +212,28 @@ async function claimNextQueuedApplication() {
       ORDER BY COALESCE(SubmissionQueuedAt, UpdatedAt) ASC
     )
     UPDATE dbo.Applications
-    SET Status = 'queued', UpdatedAt = SYSUTCDATETIME()
+    SET Status = 'processing', UpdatedAt = SYSUTCDATETIME()
     OUTPUT inserted.Id, inserted.Status
     WHERE Id IN (SELECT Id FROM nextApp);
   `);
   return result.recordset[0]?.Id ? String(result.recordset[0].Id) : null;
 }
 
-async function processApplicationId(id, { completeMessage, abandonMessage } = {}) {
-  const data = await load(id);
+const TERMINAL_STATUSES = ["submitted", "needs_action", "failed", "interview", "offer", "rejected", "review"];
+
+async function processApplicationId(id, { completeMessage, alreadyClaimed = false } = {}) {
+  const data = alreadyClaimed ? await fetchApplicationContext(id) : await load(id);
   if (!data) {
     const status = await applicationStatus(id);
-    if (!status || ["submitted", "needs_action", "failed", "interview", "offer", "rejected", "review"].includes(status)) {
+    if (!status || TERMINAL_STATUSES.includes(status)) {
+      if (completeMessage) await completeMessage();
+    } else if (status === "processing") {
+      // Sweeper or peer already owns this row — complete SB message so it cannot DLQ.
+      console.warn("Completing application message; already processing", { id, status });
       if (completeMessage) await completeMessage();
     } else {
-      console.warn("Deferring application message; claim unavailable", { id, status });
-      if (abandonMessage) await abandonMessage();
+      // Still queued — leave message unsettled so lock expires and it redelivers (do not abandon).
+      console.warn("Leaving application message unsettled; claim unavailable", { id, status });
     }
     return;
   }
@@ -231,44 +254,37 @@ async function processApplicationId(id, { completeMessage, abandonMessage } = {}
 }
 
 async function drainQueuedApplicationsFromSql() {
-  if (workerBusy) return;
-  workerBusy = true;
   try {
-    // When Service Bus is empty or a message was lost, still process rows already in SQL queue.
-    for (let i = 0; i < 5; i += 1) {
-      const id = await claimNextQueuedApplication();
-      if (!id) break;
-      console.log("Processing queued application from SQL (queue sweeper)", { id });
-      await processApplicationId(id);
-    }
+    await withWorkerLock(async () => {
+      // When Service Bus is empty or a message was lost, still process rows already in SQL queue.
+      for (let i = 0; i < 5; i += 1) {
+        const id = await claimNextQueuedApplication();
+        if (!id) break;
+        console.log("Processing queued application from SQL (queue sweeper)", { id });
+        await processApplicationId(id, { alreadyClaimed: true });
+      }
+    });
   } catch (error) {
     console.error("SQL queue sweeper failed", error);
-  } finally {
-    workerBusy = false;
   }
 }
 
 receiver.subscribe({ processMessage: async (message) => {
   const id = String(message.body?.applicationId || "");
-  if (workerBusy) {
-    await receiver.abandonMessage(message).catch(() => {});
-    return;
-  }
-  workerBusy = true;
-  try {
+  // Await the lock (do not abandon). Peek-lock + auto-renew keeps the message until we run.
+  await withWorkerLock(async () => {
     await processApplicationId(id, {
       completeMessage: () => receiver.completeMessage(message),
-      abandonMessage: () => receiver.abandonMessage(message),
     });
-  } finally {
-    workerBusy = false;
-  }
+  });
 }, processError: async (args) => console.error("Service Bus worker error", args.error) }, {
   autoCompleteMessages: false,
   maxConcurrentCalls: 1,
   maxAutoLockRenewalDurationInMs: 10 * 60 * 1000,
 });
 
-// Sweep SQL every 20s so queued apps still run when the bus has no pending messages.
-setInterval(() => { void drainQueuedApplicationsFromSql(); }, 20_000);
-void drainQueuedApplicationsFromSql();
+// Sweep SQL after subscribe settles, then every 20s when the bus has no pending messages.
+setTimeout(() => {
+  void drainQueuedApplicationsFromSql();
+  setInterval(() => { void drainQueuedApplicationsFromSql(); }, 20_000);
+}, 5_000);
