@@ -3,9 +3,11 @@ import {
   answerKeyBase,
   answersCoverQuestionKey,
   coerceQuestionAnswer,
+  formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel,
   lookupStoredAnswer,
+  matchPhoneDialCountry,
   matchSelectOption,
   priorAnswerKeys,
   resolveQuestionInputType,
@@ -48,6 +50,28 @@ describe("question-answers helpers", () => {
       label: "Please select the country or countries you anticipate working in",
       options: ["United States", "Canada"],
     })).toBe("multiselect");
+  });
+
+  it("maps Greenhouse location and phone widgets to matching input types", () => {
+    expect(resolveQuestionInputType({ type: "autocomplete", label: "Location (City)" })).toBe("autocomplete");
+    expect(resolveQuestionInputType({ type: "text", label: "Location (City)" })).toBe("autocomplete");
+    expect(resolveQuestionInputType({ type: "phone", label: "Phone" })).toBe("phone");
+    expect(resolveQuestionInputType({ type: "text", label: "Phone" })).toBe("phone");
+  });
+
+  it("formats location answers for Greenhouse typeaheads", () => {
+    expect(formatLocationAnswer("redmond", {
+      city: "redmond",
+      state: "Washington",
+      country: "United States",
+    })).toBe("redmond, Washington, United States");
+    expect(formatLocationAnswer("Redmond, Washington, United States", {
+      city: "Redmond",
+      state: "WA",
+      country: "United States",
+    })).toBe("Redmond, Washington, United States");
+    expect(matchPhoneDialCountry("USA")).toBe("United States");
+    expect(coerceQuestionAnswer({ type: "phone", label: "Phone" }, "(530) 204-8592")).toBe("5302048592");
   });
 
   it("answersCoverQuestionKey matches by base key", () => {

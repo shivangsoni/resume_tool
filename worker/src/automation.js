@@ -47,6 +47,43 @@ const isUselessLabel = (label) => {
 const answerKeyBase = (key) => String(key || "").replace(/__(?:g)?\d+(?:_\d+)?$/i, "").trim();
 
 /**
+ * Build a Greenhouse-shaped location query ("City, Region, Country").
+ * Bare city names alone rarely commit the geocode typeahead.
+ */
+const formatLocationQuery = (answer, profile = {}) => {
+  const raw = String(answer || "").trim();
+  const profileLocation = String(profile.location || "").trim();
+  const city = String(profile.city || "").trim();
+  const state = String(profile.state || "").trim();
+  const country = String(profile.country || "").trim();
+  if (raw.includes(",") && raw.split(",").filter((part) => part.trim()).length >= 2) return raw;
+  if (profileLocation && (!raw || normalize(profileLocation).includes(normalize(raw)))) return profileLocation;
+  const cityPart = raw || city;
+  if (!cityPart) return profileLocation || [city, state, country].filter(Boolean).join(", ");
+  // Avoid duplicating city when answer is already the city.
+  if (city && normalize(cityPart) === normalize(city)) {
+    return [city, state, country].filter(Boolean).join(", ");
+  }
+  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  return cityPart;
+};
+
+const isLocationAutocompleteLabel = (label, name = "") => {
+  const text = normalize(`${label} ${name}`);
+  if (!text) return false;
+  if (/\bwork authorization\b|\bauthorized to work\b|\bsponsor|\bvisa\b|\bremot(e|ely)\b|\bhybrid\b/.test(text)) return false;
+  if (/\blocation\b.*\bcity\b|\bcity\b.*\blocation\b|\blocation \(city\)/.test(text)) return true;
+  if (/\b(job_application\[)?location\b/.test(text) && !/\bcountries\b|\bcountry selection\b/.test(text)) return true;
+  if (/^location$|^city$|\blocation \(city\)$/.test(text)) return true;
+  return false;
+};
+
+const isPhoneFieldLabel = (label, name = "") => {
+  const text = normalize(`${label} ${name}`);
+  return /\bphone\b|\bmobile\b|\btel\b/.test(text);
+};
+
+/**
  * Resolve a saved answer even when DOM index suffixes shifted between attempts.
  * Order: exact key → bare name → any key sharing the same base → knownAnswer(label).
  */
@@ -110,7 +147,13 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return answers.country || profile.country;
-  if (/\bcity\b/.test(text)) return answers.city || profile.city;
+  if (/\bcity\b/.test(text)) {
+    // Greenhouse "Location (City)" needs "City, Region, Country" for typeahead commit.
+    if (/\blocation\b/.test(text)) {
+      return formatLocationQuery(answers.location || answers.city || profile.location || profile.city, profile);
+    }
+    return answers.city || profile.city;
+  }
   if (/\bstate\b|\bprovince\b/.test(text)) return answers.state || profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return answers.postalCode || profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
@@ -126,7 +169,7 @@ const knownAnswer = (label, profile, answers) => {
     return "";
   }
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
-    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+    return formatLocationQuery(answers.location || profile.location || "", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
@@ -345,6 +388,163 @@ const fillTextControl = async (field, answer) => {
   }, wanted).catch(() => {});
   value = await field.inputValue().catch(() => "");
   return matches(value);
+};
+
+/** True when Greenhouse hidden lat/lon are committed (or not present). */
+const locationLatLonCommitted = async (field) => {
+  const result = await field.evaluate((el) => {
+    const root = el.closest("form")
+      || el.closest(".field, .form-group, .application-question, .question, [class*='question' i], [class*='field' i]")
+      || el.parentElement
+      || document;
+    const lat = root.querySelector('input[name*="latitude" i], input[id*="latitude" i], input[name="latitude"]');
+    const lon = root.querySelector('input[name*="longitude" i], input[id*="longitude" i], input[name="longitude"]');
+    // Also check the whole form when lat/lon are siblings outside the field wrapper.
+    const form = el.closest("form") || document;
+    const formLat = lat || form.querySelector('input[name*="latitude" i], input[name="latitude"]');
+    const formLon = lon || form.querySelector('input[name*="longitude" i], input[name="longitude"]');
+    if (!formLat && !formLon) return { hasHidden: false, ok: true };
+    const latVal = String(formLat?.value || "").trim();
+    const lonVal = String(formLon?.value || "").trim();
+    return { hasHidden: true, ok: Boolean(latVal && lonVal) };
+  }).catch(() => ({ hasHidden: false, ok: true }));
+  return result;
+};
+
+/**
+ * Greenhouse Location (City) typeahead: type, wait for geocode suggestions, click one.
+ * Typing alone leaves hidden latitude/longitude empty and validation fails.
+ */
+const fillLocationAutocomplete = async (field, answer, profile = {}) => {
+  const query = formatLocationQuery(answer, profile);
+  if (!query) return false;
+  const searchToken = query.split(",")[0].trim() || query;
+  const page = field.page();
+
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await field.fill("").catch(() => {});
+  await field.pressSequentially(searchToken.slice(0, 48), { delay: 35 }).catch(() => {});
+
+  const optionSelectors = [
+    '[role="listbox"] [role="option"]',
+    '[role="option"]',
+    ".select2-results__option",
+    "ul[class*='suggestion' i] li",
+    "div[class*='autocomplete' i] li",
+    ".pac-item",
+    "[class*='dropdown' i] [class*='option' i]",
+  ];
+
+  let optionTexts = [];
+  let optionLocator = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.waitForTimeout(250);
+    for (const selector of optionSelectors) {
+      const locator = page.locator(selector);
+      const count = await locator.count().catch(() => 0);
+      if (!count) continue;
+      const texts = [];
+      for (let i = 0; i < Math.min(count, 40); i += 1) {
+        if (!(await locator.nth(i).isVisible().catch(() => false))) continue;
+        const text = String(await locator.nth(i).innerText().catch(() => ""))
+          .replace(/\s+/g, " ")
+          .trim()
+          .split("\n")[0]
+          .trim();
+        if (text) texts.push(text);
+      }
+      if (texts.length) {
+        optionTexts = texts;
+        optionLocator = locator;
+        break;
+      }
+    }
+    if (optionTexts.length) break;
+  }
+
+  if (optionTexts.length && optionLocator) {
+    const matched = matchOptionLabel(optionTexts, query)
+      || matchOptionLabel(optionTexts, searchToken)
+      || optionTexts.find((option) => normalize(option).includes(normalize(searchToken)))
+      || optionTexts[0];
+    const index = optionTexts.findIndex((option) => normalize(option) === normalize(matched));
+    const target = optionLocator.nth(index >= 0 ? index : 0);
+    await target.click({ timeout: 3000 }).catch(async () => {
+      await field.press("ArrowDown").catch(() => {});
+      await field.press("Enter").catch(() => {});
+    });
+  } else {
+    await field.press("ArrowDown").catch(() => {});
+    await page.waitForTimeout(150);
+    await field.press("Enter").catch(() => {});
+  }
+
+  await page.waitForTimeout(400);
+  const value = String(await field.inputValue().catch(() => "")).trim();
+  const latLon = await locationLatLonCommitted(field);
+  if (latLon.hasHidden) return Boolean(value) && latLon.ok;
+  return Boolean(value);
+};
+
+/**
+ * Select the custom phone Country dial-code widget (flags + +1) next to Phone.
+ * Returns true when no dial widget exists or a matching country was chosen.
+ */
+const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => {
+  const wanted = String(countryAnswer || profile.country || "").trim();
+  if (!wanted) return true;
+  const page = phoneField.page();
+
+  const containers = [
+    phoneField.locator("xpath=ancestor::*[contains(@class,'phone') or contains(@class,'field') or contains(@class,'application')][1]"),
+    phoneField.locator("xpath=../.."),
+    phoneField.locator("xpath=.."),
+  ];
+
+  for (const container of containers) {
+    const triggers = container.locator('button, [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="true"]');
+    const triggerCount = await triggers.count().catch(() => 0);
+    for (let i = 0; i < triggerCount; i += 1) {
+      const trigger = triggers.nth(i);
+      if (!(await trigger.isVisible().catch(() => false))) continue;
+      const box = await trigger.boundingBox().catch(() => null);
+      const phoneBox = await phoneField.boundingBox().catch(() => null);
+      // Prefer controls sitting to the left of / beside the phone input.
+      if (box && phoneBox && box.x > phoneBox.x + 20) continue;
+
+      await trigger.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(350);
+
+      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li');
+      const optionCount = await options.count().catch(() => 0);
+      if (!optionCount) {
+        await page.keyboard.press("Escape").catch(() => {});
+        continue;
+      }
+
+      const labels = [];
+      const max = Math.min(optionCount, 320);
+      for (let j = 0; j < max; j += 1) {
+        const text = String(await options.nth(j).innerText().catch(() => ""))
+          .replace(/\s+/g, " ")
+          .trim();
+        labels.push(text);
+      }
+      const matched = matchOptionLabel(labels.filter(Boolean), wanted)
+        || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
+      if (matched) {
+        const index = labels.findIndex((label) => label === matched);
+        if (index >= 0) {
+          await options.nth(index).click({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(200);
+          return true;
+        }
+      }
+      await page.keyboard.press("Escape").catch(() => {});
+    }
+  }
+  return false;
 };
 
 /** Labels that are true yes/no prompts (not country / multi-select lists). */
@@ -789,8 +989,20 @@ export async function runApplication({ application, profile, resumePath }) {
       const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
       let filled = false;
       const isSelect = info.tag === "select" || liveType === "select";
-      if (answer) {
-        if (isSelect) {
+      const isLocationField = isLocationAutocompleteLabel(displayLabel, info.name);
+      const isPhoneField = isPhoneFieldLabel(displayLabel, info.name);
+      let dialOk = true;
+      if (answer || isLocationField || isPhoneField) {
+        if (isPhoneField) {
+          const countryAnswer = lookupAnswer(application.answers, { key: "country", name: "country", label: "Country" }, profile)
+            || application.answers?.country
+            || profile.country
+            || "";
+          dialOk = await fillPhoneCountryDial(field, countryAnswer, profile);
+        }
+        if (isLocationField && !isSelect) {
+          filled = await fillLocationAutocomplete(field, answer || formatLocationQuery("", profile), profile);
+        } else if (isSelect) {
           const options = await selectOptionTexts(field);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(field, coerced);
@@ -801,7 +1013,7 @@ export async function runApplication({ application, profile, resumePath }) {
             const fuzzy = options.find((option) => normalize(option).includes(token) && token.length >= 3);
             if (fuzzy) filled = await fillSelect(field, fuzzy);
           }
-        } else {
+        } else if (answer) {
           filled = await fillTextControl(field, answer);
           // Some Greenhouse "text" questions are actually selects rematerialized after load.
           if (!filled) {
@@ -818,7 +1030,9 @@ export async function runApplication({ application, profile, resumePath }) {
       if (answer && !String(value || "").trim() && !filled) {
         // nth() locators can rematerialize — retry once with a fresh stable locator.
         const retryField = stabilizeField(scope, item);
-        if (isSelect || await liveFieldType(retryField, liveType) === "select") {
+        if (isLocationField && !isSelect) {
+          filled = await fillLocationAutocomplete(retryField, answer, profile);
+        } else if (isSelect || await liveFieldType(retryField, liveType) === "select") {
           const options = await selectOptionTexts(retryField);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(retryField, coerced);
@@ -827,24 +1041,33 @@ export async function runApplication({ application, profile, resumePath }) {
         }
         value = await retryField.inputValue().catch(() => "");
       }
+      if (isLocationField && filled) {
+        const latLon = await locationLatLonCommitted(stabilizeField(scope, item));
+        if (latLon.hasHidden && !latLon.ok) filled = false;
+      }
       const digits = (text) => String(text || "").replace(/\D+/g, "");
       const hasValue = Boolean(String(value || "").trim());
       const digitsMatch = Boolean(
         answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
       );
       // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
-      const looksFilled = hasValue || digitsMatch || (isSelect && filled);
-      if (info.required && !looksFilled) {
+      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled);
+      const phoneLooksFilled = isPhoneField ? (looksFilled && dialOk) : looksFilled;
+      if (info.required && !phoneLooksFilled) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         const options = isSelect ? await selectOptionTexts(field) : undefined;
+        let missingType = isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
+        if (isLocationField && !isSelect) missingType = "autocomplete";
+        if (isPhoneField) missingType = "phone";
         missing.push({
           key,
           label: displayLabel,
-          type: isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
+          type: missingType,
           options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
           required: true,
           hadAnswer: Boolean(answer),
+          placeholder: missingType === "autocomplete" ? "e.g. Redmond, Washington, United States" : undefined,
         });
       }
     }
@@ -1002,4 +1225,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

@@ -57,7 +57,7 @@ export type Application = {
   submissionQueuedAt?: string;
   lastSubmissionError?: string;
   answers?: Record<string, string>;
-  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "blocking"; options?: string[]; required: boolean }>;
+  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "autocomplete" | "phone" | "blocking"; options?: string[]; required: boolean; placeholder?: string }>;
 };
 
 export type MailMessage = {

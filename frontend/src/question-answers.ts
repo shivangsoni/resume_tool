@@ -112,18 +112,70 @@ export function resolveQuestionInputType(question: { type?: string; label?: stri
   const options = (question.options || []).filter((option) => String(option).trim());
   const type = String(question.type || "text").toLowerCase();
   if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file") return type;
+  if (type === "autocomplete" || type === "phone") return type;
   if (type === "select") return options.length ? "select" : "text";
   if (type === "checkbox") {
     if (options.length > 1) return "multiselect";
     if (options.length === 1 || isBooleanQuestionLabel(question.label || "")) return "checkbox";
     return "text";
   }
+  // Heuristic: Location (City) without a typed autocomplete still benefits from combobox UX.
+  const label = String(question.label || "").toLowerCase();
+  if (/\blocation\b/.test(label) && /\bcity\b/.test(label)) return "autocomplete";
+  if (/^(phone|mobile|tel)\b/.test(label) || /\bphone\b/.test(label)) return "phone";
   return type || "text";
+}
+
+/** Shape a city answer for Greenhouse-style typeaheads. */
+export function formatLocationAnswer(
+  value: string,
+  profile?: { city?: string; state?: string; country?: string; location?: string },
+) {
+  const raw = String(value || "").trim();
+  const location = String(profile?.location || "").trim();
+  const city = String(profile?.city || "").trim();
+  const state = String(profile?.state || "").trim();
+  const country = String(profile?.country || "").trim();
+  if (raw.includes(",") && raw.split(",").filter((part) => part.trim()).length >= 2) return raw;
+  if (location && (!raw || location.toLowerCase().includes(raw.toLowerCase()))) return location;
+  const cityPart = raw || city;
+  if (!cityPart) return location || [city, state, country].filter(Boolean).join(", ");
+  if (city && cityPart.toLowerCase() === city.toLowerCase()) {
+    return [city, state, country].filter(Boolean).join(", ");
+  }
+  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  return cityPart;
+}
+
+/** Common dial-code countries for Greenhouse phone Country widgets. */
+export const PHONE_DIAL_OPTIONS = [
+  { country: "United States", dial: "+1" },
+  { country: "Canada", dial: "+1" },
+  { country: "United Kingdom", dial: "+44" },
+  { country: "India", dial: "+91" },
+  { country: "Australia", dial: "+61" },
+  { country: "Germany", dial: "+49" },
+  { country: "France", dial: "+33" },
+  { country: "Ireland", dial: "+353" },
+  { country: "Singapore", dial: "+65" },
+  { country: "Brazil", dial: "+55" },
+  { country: "Mexico", dial: "+52" },
+  { country: "Japan", dial: "+81" },
+  { country: "South Korea", dial: "+82" },
+  { country: "Netherlands", dial: "+31" },
+] as const;
+
+export function matchPhoneDialCountry(country: string) {
+  const wanted = String(country || "").trim();
+  if (!wanted) return PHONE_DIAL_OPTIONS[0].country;
+  const hit = matchSelectOption(PHONE_DIAL_OPTIONS.map((item) => item.country), wanted);
+  return hit || PHONE_DIAL_OPTIONS[0].country;
 }
 
 export function coerceQuestionAnswer(
   question: { type?: string; label?: string; options?: string[] },
   value: string,
+  profile?: { city?: string; state?: string; country?: string; location?: string },
 ) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -134,6 +186,8 @@ export function coerceQuestionAnswer(
       : (question.options || []);
     return matchSelectOption(options, raw) || raw;
   }
+  if (inputType === "autocomplete") return formatLocationAnswer(raw, profile);
+  if (inputType === "phone") return raw.replace(/[^\d+]/g, "") || raw;
   return raw;
 }
 

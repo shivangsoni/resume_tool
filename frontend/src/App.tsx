@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Avatar,
   Button,
+  Combobox,
   CounterBadge,
   DrawerBody,
   DrawerHeader,
@@ -12,6 +13,7 @@ import {
   NavDrawerFooter,
   NavItem,
   NavSectionHeader,
+  Option,
   OverlayDrawer,
   SearchBox,
   Tab,
@@ -34,6 +36,8 @@ import {
   ChevronDown24Regular,
   ChevronLeft24Regular,
   ChevronRight24Regular,
+  CalendarLtr24Regular,
+  Building24Regular,
   Clock24Regular,
   DataBarVertical24Regular,
   Delete24Regular,
@@ -43,6 +47,7 @@ import {
   ErrorCircle24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
+  Home24Regular,
   Location24Regular,
   Mail24Regular,
   Navigation24Regular,
@@ -91,12 +96,16 @@ import {
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
 import { resolveEmployerApplicationUrl } from "./employer-application-url";
+import { CompanyLogo } from "./company-logo";
 import {
   coerceQuestionAnswer,
+  formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel as isUselessQuestionLabelHelper,
   lookupStoredAnswer,
+  matchPhoneDialCountry,
   matchSelectOption,
+  PHONE_DIAL_OPTIONS,
   priorAnswerKeys,
   resolveQuestionInputType,
 } from "./question-answers";
@@ -154,6 +163,7 @@ type Job = {
   sourceUrl?: string;
   logoUrl?: string;
   source?: string;
+  sourceBoard?: string;
   postedAt?: string;
   applicationId?: string;
   jobExternalId?: string;
@@ -1005,15 +1015,18 @@ function Dashboard(p: {
               Sorted by best match <ChevronDown24Regular />
             </span>
           </div>
-          {p.visible.map((j) => (
+          {p.visible.map((j, index) => (
             <JobRow
               key={j.id}
               j={j}
+              index={(p.page - 1) * 10 + index + 1}
               active={p.selected === j.id}
               click={() => {
                 p.setSelected(j.id);
                 p.setMobileDetailOpen(true);
               }}
+              dismiss={p.dismiss}
+              apply={p.apply}
             />
           ))}
           {!p.visible.length && (
@@ -1109,63 +1122,127 @@ function failureHint(job: Job) {
 
 function JobRow({
   j,
+  index,
   active,
   click,
+  dismiss,
+  apply,
 }: {
   j: Job;
+  index: number;
   active: boolean;
   click: () => void;
+  dismiss: (job: Job) => void;
+  apply: (job: Job) => Promise<void>;
 }) {
+  const [applying, setApplying] = useState(false);
+  const statusLabel = j.status === "applied"
+    ? "Applied"
+    : j.status === "queued"
+      ? (j.applicationStatus === "processing" ? "Submitting" : "Queued")
+      : j.status === "failed"
+        ? "Needs attention"
+        : "Auto-Apply Ready";
+  const workplaceLabel = j.remote ? "Remote" : "On-site";
   return (
-    <button className={`job-row ${active ? "active" : ""}`} onClick={click} type="button">
-      <span className="job-logo">
-        {j.logoUrl ? <img src={j.logoUrl} alt="" /> : j.logo}
-      </span>
-      <div className="job-main">
-        <div>
-          <b>{j.title}</b>
-          {j.status === "applied" && (
-            <em className="status-tag applied">
-              <Checkmark24Regular /> Applied
-            </em>
-          )}
-          {j.status === "queued" && (
-            <em className="status-tag queued">
-              <Clock24Regular /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
-            </em>
-          )}
-          {j.status === "failed" && (
-            <em className="status-tag failed">
-              <Dismiss24Regular /> Failed
-            </em>
-          )}
+    <article className={`job-card ${active ? "active" : ""} ${j.status}`}>
+      <button type="button" className="job-card-main" onClick={click}>
+        <div className="job-card-top">
+          <span className="job-card-index">#{index} · Job Match</span>
+          <span className={`job-card-match ${j.match > 88 ? "great" : ""}`}>{j.match}% Match</span>
         </div>
-        <strong>{j.company}</strong>
-        <small>
+        <div className="job-card-company">
+          <CompanyLogo job={j} />
+          <div className="job-card-heading">
+            <strong>{j.company}</strong>
+            <b>{j.title}</b>
+            <em className={`job-card-status ${j.status}`}>
+              {j.status === "ready" && <Sparkle24Filled />}
+              {j.status === "applied" && <Checkmark24Regular />}
+              {j.status === "queued" && <Clock24Regular />}
+              {j.status === "failed" && <ErrorCircle24Regular />}
+              {statusLabel}
+            </em>
+          </div>
+        </div>
+        <div className="job-card-tags">
+          <i className={j.remote ? "tag-remote" : "tag-onsite"}>
+            {j.remote ? <Home24Regular /> : <Building24Regular />}
+            {workplaceLabel}
+          </i>
+          {j.posted && (
+            <i className="tag-date">
+              <CalendarLtr24Regular />
+              {j.posted}
+            </i>
+          )}
+          {j.level && (
+            <i className="tag-level">
+              <DataBarVertical24Regular />
+              {j.level}
+            </i>
+          )}
+          {j.salary && (
+            <i className="tag-salary">{j.salary}</i>
+          )}
+          {j.source && <i className="tag-source">{j.source}</i>}
+        </div>
+        <p className="job-card-location">
           <Location24Regular />
-          {j.location} · {j.level}
-        </small>
-        <div className="row-tags">
-          {j.remote && <i>Remote</i>}
-          <i>{j.salary}</i>
-        </div>
+          {j.location || "Location not listed"}
+        </p>
         {j.status === "failed" && (
           <p className="job-error">
             <ErrorCircle24Regular />
             {failureHint(j)}
           </p>
         )}
-        <span className="job-row-cta">
-          {j.status === "ready" ? "Tap to apply" : j.status === "failed" ? "Tap to answer & retry" : "Tap to view"}
-        </span>
+      </button>
+      <div className="job-card-actions">
+        <button type="button" onClick={click}>
+          <Document24Regular />
+          Job details
+        </button>
+        <button
+          type="button"
+          className="job-card-apply"
+          disabled={applying}
+          onClick={async (event) => {
+            event.stopPropagation();
+            if (j.status !== "ready") {
+              click();
+              return;
+            }
+            setApplying(true);
+            try {
+              await apply(j);
+            } finally {
+              setApplying(false);
+            }
+          }}
+        >
+          <CheckmarkCircle24Regular />
+          {j.status === "ready"
+            ? (applying ? "Applying…" : "Apply")
+            : j.status === "failed"
+              ? "Fix & retry"
+              : j.status === "queued"
+                ? "View queue"
+                : "View"}
+        </button>
+        <button
+          type="button"
+          className="job-card-dismiss"
+          onClick={(event) => {
+            event.stopPropagation();
+            dismiss(j);
+          }}
+        >
+          <Dismiss24Regular />
+          Not interested
+        </button>
       </div>
-      <div className="job-score">
-        <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
-        <small>match</small>
-        <time>{j.posted}</time>
-        {j.source && <em className="source-badge">{j.source}</em>}
-      </div>
-    </button>
+    </article>
   );
 }
 function JobDetail({
@@ -1221,9 +1298,7 @@ function JobDetail({
         ) : null}
       </div>
       <div className="detail-top">
-        <span className="big-logo">
-          {job.logoUrl ? <img src={job.logoUrl} alt="" /> : job.logo}
-        </span>
+        <CompanyLogo job={job} className="big-logo" />
         <div>
           <h2>{job.title}</h2>
           <p>
@@ -1392,25 +1467,27 @@ function JobDetail({
       {failedApplication && (
         <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
       )}
-      <EmployerApplicationChrome
-        sourceUrl={job.sourceUrl}
-        company={job.company}
-        source={job.source}
-        jobExternalId={job.jobExternalId}
-        applicationId={job.applicationId}
-      />
-      {job.sourceUrl && (
-        <a
-          className="source-link"
-          href={job.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-        >
-          View original listing{job.source ? ` on ${job.source}` : ""}
-        </a>
-      )}
-      <div className="safe-note">
-        <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
+      <div className="detail-footer">
+        <EmployerApplicationChrome
+          sourceUrl={job.sourceUrl}
+          company={job.company}
+          source={job.source}
+          jobExternalId={job.jobExternalId}
+          applicationId={job.applicationId}
+        />
+        {job.sourceUrl && (
+          <a
+            className="source-link"
+            href={job.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View original listing{job.source ? ` on ${job.source}` : ""}
+          </a>
+        )}
+        <p className="safe-note">
+          <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
+        </p>
       </div>
     </section>
   );
@@ -1521,9 +1598,7 @@ function Applications({
         {visibleApps.map((application) => (
           <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
-              <span className="job-logo">
-                {application.company?.slice(0, 1) || "?"}
-              </span>
+              <CompanyLogo job={{ company: application.company, sourceUrl: application.sourceUrl, source: application.source }} />
               <div>
                 <b>{application.title}</b>
                 <small>
@@ -1607,7 +1682,12 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
-  if (/\bcity\b/.test(text)) return profile.city;
+  if (/\bcity\b/.test(text)) {
+    if (/\blocation\b/.test(text)) {
+      return formatLocationAnswer(profile.location || profile.city, profile);
+    }
+    return profile.city;
+  }
   if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
@@ -1626,7 +1706,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
     return "";
   }
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
-    return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+    return formatLocationAnswer(profile.location || "", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
@@ -1754,19 +1834,31 @@ function ApplicationQuestions({
       const fromStored = lookupStoredAnswer(stored, question.priorKeys);
       const raw = fromStored || profileAnswerForLabel(question.label, profile, question.options) || "";
       if (!raw) continue;
-      next[question.key] = coerceQuestionAnswer(question, raw);
+      next[question.key] = coerceQuestionAnswer(question, raw, profile);
     }
     return next;
     // Signatures keep seed stable across poll-driven object identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [application.id, answersSignature, questionsSignature, profileSignature]);
+  const seedDialCountries = useMemo(() => {
+    const next: Record<string, string> = {};
+    const storedCountry = String(application.answers?.country || profile.country || "").trim();
+    for (const question of questions) {
+      if (resolveQuestionInputType(question) !== "phone") continue;
+      next[question.key] = matchPhoneDialCountry(storedCountry);
+    }
+    return next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [application.id, answersSignature, questionsSignature, profileSignature]);
   const seedKey = `${application.id}|${answersSignature}|${questionsSignature}|${profileSignature}`;
   const [answers, setAnswers] = useState(seedAnswers);
+  const [phoneDialCountries, setPhoneDialCountries] = useState(seedDialCountries);
   const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
   if (appliedSeedKey !== seedKey) {
     setAppliedSeedKey(seedKey);
     setAnswers(seedAnswers);
+    setPhoneDialCountries(seedDialCountries);
   }
 
   if (!questions.length) {
@@ -1811,13 +1903,20 @@ function ApplicationQuestions({
         try {
           const coerced: Record<string, string> = {};
           for (const question of questions) {
-            const value = coerceQuestionAnswer(question, answers[question.key] || "");
+            const value = coerceQuestionAnswer(question, answers[question.key] || "", profile);
             if (value) coerced[question.key] = value;
             // Also persist under the original worker key base so index shifts still resolve.
             const original = String(question.priorKeys[0] || question.key);
             if (original && original !== question.key && value) coerced[original] = value;
             const base = original.replace(/__(?:g)?\d+(?:_\d+)?$/i, "");
             if (base && value) coerced[base] = value;
+            if (resolveQuestionInputType(question) === "phone" && phoneDialCountries[question.key]) {
+              coerced.country = phoneDialCountries[question.key];
+            }
+            if (resolveQuestionInputType(question) === "autocomplete" && value) {
+              coerced.city = value.split(",")[0]?.trim() || value;
+              coerced.location = value;
+            }
           }
           await resolve(application.id, coerced);
         } finally {
@@ -1849,8 +1948,25 @@ function ApplicationQuestions({
           const selectValue = inputType === "select"
             ? (matchSelectOption(selectOptions, answers[question.key] || "") || "")
             : (answers[question.key] || "");
+          const locationSuggestion = formatLocationAnswer(profile.location || profile.city || "", profile);
+          const locationOptions = [...new Set([
+            answers[question.key] || "",
+            locationSuggestion,
+            formatLocationAnswer(profile.city || "", profile),
+          ].filter(Boolean))];
           return (
-          <label key={question.key} className={inputType === "multiselect" ? "multiselect-field" : undefined}>
+          <label
+            key={question.key}
+            className={
+              inputType === "multiselect"
+                ? "multiselect-field"
+                : inputType === "phone"
+                  ? "phone-field"
+                  : inputType === "autocomplete"
+                    ? "autocomplete-field"
+                    : undefined
+            }
+          >
             <span>{question.label || `Question ${index + 1}`}</span>
             {inputType === "blocking" ? (
               <a href={resolveEmployerApplicationUrl({
@@ -1899,6 +2015,51 @@ function ApplicationQuestions({
                 value={answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               />
+            ) : inputType === "autocomplete" ? (
+              <>
+                <Combobox
+                  freeform
+                  required={question.required !== false}
+                  placeholder={(question as { placeholder?: string }).placeholder || "e.g. Redmond, Washington, United States"}
+                  value={answers[question.key] || ""}
+                  selectedOptions={answers[question.key] ? [answers[question.key]] : []}
+                  onInput={(event) => setAnswer(question.key, (event.target as HTMLInputElement).value)}
+                  onOptionSelect={(_event, data) => {
+                    if (data.optionValue) setAnswer(question.key, data.optionValue);
+                  }}
+                >
+                  {locationOptions.map((option) => (
+                    <Option key={option} value={option}>{option}</Option>
+                  ))}
+                </Combobox>
+                <small className="field-hint">Pick a full city match like the employer form (City, Region, Country).</small>
+              </>
+            ) : inputType === "phone" ? (
+              <>
+                <div className="phone-field-row">
+                  <select
+                    aria-label="Phone country"
+                    value={phoneDialCountries[question.key] || matchPhoneDialCountry(profile.country)}
+                    onChange={(event) => {
+                      setPhoneDialCountries((prev) => ({ ...prev, [question.key]: event.target.value }));
+                    }}
+                  >
+                    {PHONE_DIAL_OPTIONS.map((item) => (
+                      <option key={`${item.country}-${item.dial}`} value={item.country}>
+                        {item.country} {item.dial}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    required={question.required !== false}
+                    value={answers[question.key] || ""}
+                    onChange={(event) => setAnswer(question.key, event.target.value)}
+                    placeholder="Phone number"
+                  />
+                </div>
+                <small className="field-hint">Country dial code + phone, same layout as the employer application.</small>
+              </>
             ) : (
               <input
                 required={question.required !== false}

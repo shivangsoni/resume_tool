@@ -17,6 +17,10 @@ import {
   choiceOptionLabels,
   isBooleanChoiceLabel,
   isCheckboxGroupName,
+  formatLocationQuery,
+  isLocationAutocompleteLabel,
+  isPhoneFieldLabel,
+  pageHasBlockingCaptcha,
 } from "../src/automation.js";
 
 test("maps standard employer fields from the saved profile", () => {
@@ -90,6 +94,33 @@ test("matchOptionLabel maps country aliases onto select options", () => {
   assert.equal(matchOptionLabel(["US", "CA", "MX"], "United States"), "US");
   assert.equal(matchOptionLabel(["United States", "Canada"], "USA"), "United States");
   assert.equal(matchOptionLabel(["United States of America", "Canada"], "US"), "United States of America");
+  assert.equal(
+    matchOptionLabel(["🇺🇸 United States +1", "🇦🇫 Afghanistan +93"], "United States"),
+    "🇺🇸 United States +1",
+  );
+});
+
+test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
+  assert.equal(
+    formatLocationQuery("redmond", { city: "redmond", state: "Washington", country: "United States" }),
+    "redmond, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("Redmond, Washington, United States", { city: "Redmond", state: "WA", country: "US" }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("", { location: "Seattle, Washington, United States", city: "Seattle" }),
+    "Seattle, Washington, United States",
+  );
+});
+
+test("detects Greenhouse location autocomplete and phone field labels", () => {
+  assert.equal(isLocationAutocompleteLabel("Location (City)", "job_application[location]"), true);
+  assert.equal(isLocationAutocompleteLabel("Phone", "job_application[phone]"), false);
+  assert.equal(isLocationAutocompleteLabel("Are you authorized to work in the location(s) you selected?", ""), false);
+  assert.equal(isPhoneFieldLabel("Phone", "job_application[phone]"), true);
+  assert.equal(isPhoneFieldLabel("Location (City)", "job_application[location]"), false);
 });
 
 test("matchOptionLabel coerces Yes/No onto clear options", () => {
