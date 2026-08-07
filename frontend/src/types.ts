@@ -22,6 +22,9 @@ export type Profile = {
   postalCode: string;
   github: string;
   educationLevel: string;
+  school: string;
+  currentEmployer: string;
+  currentJobTitle: string;
   employmentTypes: string;
   preferredLanguages: string;
   companiesToExclude: string;

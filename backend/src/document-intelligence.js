@@ -5,6 +5,76 @@ const skillNames = [
   "Kubernetes", "Node.js", "Python", "React", "SQL", "Terraform", "TypeScript",
 ];
 
+const TITLE_HINT = /\b(engineer|developer|manager|analyst|designer|architect|consultant|intern|lead|director|specialist|scientist|administrator|officer|founder|ceo|cto)\b/i;
+const SCHOOL_HINT = /\b(university|college|institute|school)\b/i;
+const SECTION_STOP = /^(experience|education|skills|projects|certifications|awards|summary|work experience|employment)\b/i;
+
+function extractSchool(lines) {
+  const eduStart = lines.findIndex((line) => /^(education|academic background)\b/i.test(line));
+  const slice = eduStart >= 0 ? lines.slice(eduStart + 1, eduStart + 12) : lines.filter((line) => SCHOOL_HINT.test(line)).slice(0, 5);
+  for (const line of slice) {
+    if (eduStart >= 0 && SECTION_STOP.test(line) && !/^education/i.test(line)) break;
+    if (!SCHOOL_HINT.test(line) || /@|https?:/i.test(line)) continue;
+    const named = line.match(/\b([A-Z][^|]{1,90}?(?:University|College|Institute|School)[^|]{0,40})/);
+    if (named) return named[1].replace(/\s+/g, " ").trim().slice(0, 120);
+    const cleaned = line.replace(/^[-•*\d.]+\s*/, "").split(/[|,•]/)[0].trim();
+    if (cleaned.length >= 4 && cleaned.length <= 120) return cleaned;
+  }
+  return "";
+}
+
+function extractRecentExperience(lines) {
+  const expStart = lines.findIndex((line) =>
+    /^(experience|work experience|employment|professional experience|work history)\b/i.test(line),
+  );
+  if (expStart < 0) return { currentEmployer: "", currentJobTitle: "" };
+  const slice = [];
+  for (let i = expStart + 1; i < lines.length && slice.length < 10; i += 1) {
+    if (/^(education|skills|projects|certifications|awards)\b/i.test(lines[i])) break;
+    slice.push(lines[i]);
+  }
+
+  let currentEmployer = "";
+  let currentJobTitle = "";
+  for (const line of slice) {
+    if (/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)/i.test(line) && line.length < 48) continue;
+    if (/@|https?:/i.test(line)) continue;
+
+    const atMatch = line.match(/^(.+?)\s+at\s+(.+)$/i);
+    if (atMatch) {
+      currentJobTitle = atMatch[1].trim().slice(0, 120);
+      currentEmployer = atMatch[2].split(/[|,•]/)[0].trim().slice(0, 120);
+      break;
+    }
+
+    const pipeMatch = line.match(/^(.+?)\s*[|•·]\s*(.+)$/);
+    if (pipeMatch) {
+      const left = pipeMatch[1].trim();
+      const right = pipeMatch[2].trim();
+      if (TITLE_HINT.test(left)) {
+        currentJobTitle = left.slice(0, 120);
+        currentEmployer = right.split(/[,]/)[0].trim().slice(0, 120);
+      } else {
+        currentEmployer = left.slice(0, 120);
+        if (TITLE_HINT.test(right)) currentJobTitle = right.split(/[,]/)[0].trim().slice(0, 120);
+      }
+      break;
+    }
+
+    if (!currentEmployer && line.length < 80) {
+      if (/\b(Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Labs|Group)\b/i.test(line) || /^[A-Z][\w .&'-]{1,60}$/.test(line)) {
+        currentEmployer = line.split(/[|,•]/)[0].trim().slice(0, 120);
+        continue;
+      }
+    }
+    if (currentEmployer && !currentJobTitle && TITLE_HINT.test(line) && line.length < 100) {
+      currentJobTitle = line.split(/[|,•]/)[0].trim().slice(0, 120);
+      break;
+    }
+  }
+  return { currentEmployer, currentJobTitle };
+}
+
 export function extractProfileFromText(content) {
   const text = String(content || "").replace(/\r/g, "");
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -53,6 +123,9 @@ export function extractProfileFromText(content) {
       : /\bbachelor'?s\b|\bb\.?s\.?\b|\bb\.?a\.?\b/i.test(text) ? "Bachelor's"
         : "";
 
+  const school = extractSchool(lines);
+  const { currentEmployer, currentJobTitle } = extractRecentExperience(lines);
+
   return {
     firstName: name[0] || "",
     lastName: name.length > 1 ? name.slice(1).join(" ") : "",
@@ -67,6 +140,9 @@ export function extractProfileFromText(content) {
     state,
     country,
     educationLevel,
+    school,
+    currentEmployer,
+    currentJobTitle,
   };
 }
 

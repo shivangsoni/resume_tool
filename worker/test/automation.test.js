@@ -6,6 +6,7 @@ import {
   groupQuestionKey,
   compactLabel,
   humanizeFieldName,
+  isUselessLabel,
   resolveApplicationUrl,
   parseMultiselectAnswer,
   optionMatchesTokens,
@@ -18,6 +19,15 @@ test("maps standard employer fields from the saved profile", () => {
   assert.equal(knownAnswer("First name", profile, {}), "Shivang");
   assert.equal(knownAnswer("Email address", profile, {}), "candidate@example.com");
   assert.equal(knownAnswer("LinkedIn Profile", profile, {}), "https://linkedin.example/me");
+});
+
+test("isUselessLabel rejects select placeholders and keeps real questions", () => {
+  assert.equal(isUselessLabel("Select..."), true);
+  assert.equal(isUselessLabel("Select"), true);
+  assert.equal(isUselessLabel("Please select"), true);
+  assert.equal(isUselessLabel("Choose one"), true);
+  assert.equal(isUselessLabel("Country"), false);
+  assert.equal(isUselessLabel("Do you plan to work remotely?"), false);
 });
 
 test("questionKey stays unique when HTML names collide", () => {
@@ -63,6 +73,29 @@ test("knownAnswer prefers authorization over incidental location wording", () =>
     "No",
   );
   assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, WA, United States");
+});
+
+test("knownAnswer does not map remote-intent questions to city/location", () => {
+  const profile = {
+    location: "Redmond, WA, United States",
+    city: "Redmond",
+    state: "WA",
+    country: "United States",
+  };
+  assert.equal(knownAnswer("Do you plan to work remotely for this role?", profile, {}), "");
+  assert.equal(knownAnswer("Is remote work an option for you?", profile, {}), "");
+  assert.equal(knownAnswer("Would you consider a hybrid role?", profile, {}), "");
+});
+
+test("knownAnswer maps school employer and job title from profile", () => {
+  const profile = {
+    school: "University of Washington",
+    currentEmployer: "Contoso",
+    currentJobTitle: "Senior Software Engineer",
+  };
+  assert.equal(knownAnswer("School / University", profile, {}), "University of Washington");
+  assert.equal(knownAnswer("Current employer", profile, {}), "Contoso");
+  assert.equal(knownAnswer("Previous job title", profile, {}), "Senior Software Engineer");
 });
 
 test("multiselect helpers pick country options from profile and answers", () => {

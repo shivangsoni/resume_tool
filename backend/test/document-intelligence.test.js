@@ -24,3 +24,37 @@ Senior developer using React, TypeScript, Node.js, Azure and SQL.`);
   assert.equal(profile.country, "United States");
   assert.equal(profile.educationLevel, "Bachelor's");
 });
+
+test("extracts school employer and job title from structured resume sections", () => {
+  const profile = extractProfileFromText(`Jane Doe
+Redmond, WA, United States
+jane@example.com
+
+Experience
+Contoso Technologies
+Senior Software Engineer
+Jan 2020 - Present
+Built cloud platforms with React and TypeScript.
+
+Education
+University of Washington
+Bachelor's degree in Computer Science
+`);
+  assert.equal(profile.school, "University of Washington");
+  assert.equal(profile.currentEmployer, "Contoso Technologies");
+  assert.equal(profile.currentJobTitle, "Senior Software Engineer");
+  assert.equal(profile.educationLevel, "Bachelor's");
+});
+
+test("extracts title at company experience lines", () => {
+  const profile = extractProfileFromText(`Alex Rivera
+Experience
+Staff Engineer at Fabrikam Inc.
+2021 - Present
+Education
+Massachusetts Institute of Technology
+`);
+  assert.equal(profile.currentJobTitle, "Staff Engineer");
+  assert.equal(profile.currentEmployer, "Fabrikam Inc.");
+  assert.equal(profile.school, "Massachusetts Institute of Technology");
+});
