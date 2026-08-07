@@ -126,26 +126,101 @@ export function resolveQuestionInputType(question: { type?: string; label?: stri
   return type || "text";
 }
 
-/** Shape a city answer for Greenhouse-style typeaheads. */
+const PLACE_COUNTRY_TOKENS = [
+  "united states", "usa", "us", "america", "canada", "united kingdom", "uk", "england",
+  "australia", "germany", "france", "ireland", "india", "singapore", "netherlands",
+  "brazil", "mexico", "japan", "south korea", "spain", "italy", "sweden", "switzerland",
+  "new zealand",
+];
+
+/** Reject course titles / brand strings that pollute Location (City). */
+export function looksLikePlaceString(
+  value: string,
+  profile?: { city?: string; state?: string; country?: string },
+) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 120) return false;
+  const text = raw.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/\b(deeplearning|deep learning|coursera|udemy|advancement|certificate|bootcamp|nanodegree|mooc|andrew ng)\b/.test(text)) {
+    return false;
+  }
+  if (/\b\w+\.(ai|io|com|org|net|dev)\b/i.test(raw)) return false;
+  const countryHints = [
+    ...PLACE_COUNTRY_TOKENS,
+    String(profile?.country || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+    String(profile?.state || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+  ].filter(Boolean);
+  const hasCountryHint = countryHints.some((hint) => hint.length >= 2 && text.includes(hint));
+  const commaParts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  if (commaParts.length >= 2) {
+    if (hasCountryHint) return true;
+    if (commaParts.length === 2 && /^[A-Za-z]{2}$/.test(commaParts[1])) return true;
+    if (raw.length > 48 || commaParts.some((part) => part.split(/\s+/).length > 5)) return false;
+    return commaParts.every((part) => part.split(/\s+/).length <= 4);
+  }
+  return raw.split(/\s+/).length <= 4 && raw.length <= 48;
+}
+
+/** Shape a city answer for Greenhouse-style typeaheads. Prefer city/state/country over junk location. */
 export function formatLocationAnswer(
   value: string,
   profile?: { city?: string; state?: string; country?: string; location?: string },
 ) {
   const raw = String(value || "").trim();
-  const location = String(profile?.location || "").trim();
   const city = String(profile?.city || "").trim();
   const state = String(profile?.state || "").trim();
   const country = String(profile?.country || "").trim();
-  if (raw.includes(",") && raw.split(",").filter((part) => part.trim()).length >= 2) return raw;
-  if (location && (!raw || location.toLowerCase().includes(raw.toLowerCase()))) return location;
-  const cityPart = raw || city;
-  if (!cityPart) return location || [city, state, country].filter(Boolean).join(", ");
+  const residence = [city, state, country].filter(Boolean).join(", ");
+  const fullResidence = Boolean(city && (state || country));
+  const location = String(profile?.location || "").trim();
+  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+  const norm = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  if (fullResidence) {
+    // Keep an already-shaped place answer; don't append state/country again.
+    if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+      return safeRaw;
+    }
+    if (!safeRaw || norm(residence).includes(norm(safeRaw)) || (city && norm(safeRaw) === norm(city))) {
+      return residence;
+    }
+    return [safeRaw, state, country].filter(Boolean).join(", ");
+  }
+
+  if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
+    return safeRaw;
+  }
+  if (safeLocation && (!safeRaw || norm(safeLocation).includes(norm(safeRaw)))) {
+    return safeLocation;
+  }
+
+  const cityPart = safeRaw || city;
+  if (!cityPart) return safeLocation || residence;
   if (city && cityPart.toLowerCase() === city.toLowerCase()) {
-    return [city, state, country].filter(Boolean).join(", ");
+    return residence || cityPart;
   }
   if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
   return cityPart;
 }
+
+/** Dedupe worker missing questions so users never see two Phone blocks. */
+export function dedupeEmployerQuestions<T extends { key?: string; label?: string; type?: string }>(items: T[]) {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const type = resolveQuestionInputType(item);
+    const labelNorm = String(item.label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const soft = `${type}|${labelNorm}`;
+    const hard = type === "phone" ? "phone" : soft;
+    if (seen.has(hard) || seen.has(soft)) continue;
+    seen.add(hard);
+    seen.add(soft);
+    out.push(item);
+  }
+  return out;
+}
+
 
 /** Common dial-code countries for Greenhouse phone Country widgets. */
 export const PHONE_DIAL_OPTIONS = [

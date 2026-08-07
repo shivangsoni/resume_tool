@@ -67,6 +67,25 @@ import { emptyProfile, loadProfile, saveProfile } from "./storage";
 import { readImageAsAvatarDataUrl } from "./avatar-image";
 import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFILE_FIELDS } from "./profileCompleteness";
 import {
+  EMPLOYMENT_TYPE_OPTIONS,
+  EXPERIENCE_YEARS_OPTIONS,
+  emptyWorkLocation,
+  flattenWorkLocationsForWorker,
+  isUnitedStates,
+  listFieldHas,
+  parseListField,
+  parseWorkLocations,
+  PROFILE_COUNTRIES,
+  residenceLocationString,
+  serializeListField,
+  serializeWorkLocations,
+  summarizeWorkLocation,
+  toggleListItem,
+  US_STATES,
+  WORKPLACE_TYPES,
+  type WorkLocationCard,
+} from "./profile-form";
+import {
   answerApplicationQuestions,
   createApplication,
   deleteApplication,
@@ -97,6 +116,7 @@ import { resolveEmployerApplicationUrl } from "./employer-application-url";
 import { CompanyLogo } from "./company-logo";
 import {
   coerceQuestionAnswer,
+  dedupeEmployerQuestions,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel as isUselessQuestionLabelHelper,
@@ -758,9 +778,9 @@ export default function App() {
             setProfile={setProfile}
             hasResume={resumeDocuments.length > 0}
             goResume={() => setPage("resume")}
-            save={async () => {
+            save={async (nextProfile) => {
               try {
-                const result = await putRemoteProfile(profile);
+                const result = await putRemoteProfile(nextProfile ?? profile);
                 setProfile(result.profile);
                 saveProfile(result.profile);
                 try {
@@ -951,15 +971,6 @@ function Dashboard(p: {
           active={p.status === "failed"}
           onClick={() => p.setStatus(p.status === "failed" ? "all" : "failed")}
         />
-        <div className="ready-card">
-          <span>
-            <Checkmark24Regular />
-          </span>
-          <div>
-            <b>One-click application workflow</b>
-            <small>Simple Apply queues a background worker to submit for you</small>
-          </div>
-        </div>
       </div>
       <div className="toolbar">
         <div className="searchbox">
@@ -1682,7 +1693,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   if (/\bcountry\b/.test(text)) return profile.country;
   if (/\bcity\b/.test(text)) {
     if (/\blocation\b/.test(text)) {
-      return formatLocationAnswer(profile.location || profile.city, profile);
+      return formatLocationAnswer("", profile);
     }
     return profile.city;
   }
@@ -1704,7 +1715,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
     return "";
   }
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
-    return formatLocationAnswer(profile.location || "", profile);
+    return formatLocationAnswer("", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
@@ -1782,7 +1793,7 @@ function ApplicationQuestions({
   profile: Profile;
 }) {
   const questions = useMemo(() => {
-    const list = application.requiredQuestions || [];
+    const list = dedupeEmployerQuestions(application.requiredQuestions || []);
     const used = new Set<string>();
     return list.map((question, index) => {
       let key = String(question.key || `question_${index + 1}`);
@@ -1947,7 +1958,7 @@ function ApplicationQuestions({
           const selectValue = inputType === "select"
             ? (matchSelectOption(selectOptions, answers[question.key] || "") || "")
             : (answers[question.key] || "");
-          const locationSuggestion = formatLocationAnswer(profile.location || profile.city || "", profile);
+          const locationSuggestion = formatLocationAnswer("", profile);
           const locationOptions = [...new Set([
             answers[question.key] || "",
             locationSuggestion,
@@ -2603,58 +2614,92 @@ function ProfileView({
 }: {
   profile: Profile;
   setProfile: (p: Profile) => void;
-  save: () => void | Promise<void>;
+  save: (next?: Profile) => void | Promise<void>;
   hasResume: boolean;
   goResume: () => void;
 }) {
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [expandedLocation, setExpandedLocation] = useState(0);
+  const [titleDraft, setTitleDraft] = useState("");
   const missing = missingProfileFields(profile);
   const required = new Set<string>(REQUIRED_PROFILE_FIELDS);
-  const selectOptions: Partial<Record<keyof Profile, string[]>> = {
-    workAuthorization: ["US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"],
-    sponsorship: ["No", "Yes", "Not sure"],
-    educationLevel: ["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"],
-    experienceLevel: ["0-1 years", "1-3 years", "3-5 years", "5-8 years", "8+ years"],
-  };
-  const fields = [
-    "firstName",
-    "lastName",
-    "email",
-    "phone",
-    "location",
-    "country",
-    "state",
-    "city",
-    "address",
-    "postalCode",
-    "linkedin",
-    "github",
-    "portfolio",
-    "workAuthorization",
-    "sponsorship",
-    "skills",
-    "targetRoles",
-    "preferredLocations",
-    "employmentTypes",
-    "experienceLevel",
-    "minSalary",
-    "educationLevel",
-    "school",
-    "currentEmployer",
-    "currentJobTitle",
-    "preferredLanguages",
-    "companiesToExclude",
-    "additionalInfo",
-  ] as (keyof Profile)[];
+  const workLocations = parseWorkLocations(profile.preferredLocations);
+  const titles = parseListField(profile.targetRoles);
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.email || "You";
   const initials = (`${profile.firstName?.[0] || ""}${profile.lastName?.[0] || ""}` || displayName[0] || "U").toUpperCase();
+  const canSave = missing.length === 0 && hasResume;
+
+  useEffect(() => {
+    if (String(profile.preferredLocations || "").trim()) return;
+    setProfile({
+      ...profile,
+      preferredLocations: serializeWorkLocations([emptyWorkLocation(profile.country || "United States")]),
+    });
+    // Seed once when the page opens with empty work locations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patch = (partial: Partial<Profile>) => {
+    const next = { ...profile, ...partial };
+    if (partial.city !== undefined || partial.state !== undefined || partial.country !== undefined) {
+      next.location = residenceLocationString(next);
+    }
+    setProfile(next);
+  };
+
+  const setWorkLocations = (cards: WorkLocationCard[]) => {
+    patch({
+      preferredLocations: serializeWorkLocations(cards),
+    });
+  };
+
+  const updateWorkLocation = (index: number, partial: Partial<WorkLocationCard>) => {
+    const cards = workLocations.length ? [...workLocations] : [emptyWorkLocation(profile.country || "United States")];
+    cards[index] = { ...cards[index], ...partial };
+    setWorkLocations(cards);
+  };
+
+  const addTitle = () => {
+    const next = titleDraft.trim();
+    if (!next) return;
+    patch({ targetRoles: serializeListField([...titles, next]) });
+    setTitleDraft("");
+  };
+
+  const persist = async () => {
+    setSaving(true);
+    try {
+      const cards = workLocations.length
+        ? workLocations
+        : [emptyWorkLocation(profile.country || "United States")];
+      const next = {
+        ...profile,
+        preferredLocations: serializeWorkLocations(cards),
+        location: residenceLocationString(profile),
+      };
+      setProfile(next);
+      await save(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldClass = (key: keyof Profile) =>
+    required.has(key) && !String(profile[key] || "").trim() ? "required-missing" : undefined;
 
   return (
-    <div className="basic-page screenshot-profile">
-      <p>
-        Required fields are collected once and reused by the browser worker on every Simple Apply.
-        Uploading a résumé auto-fills blank contact and skills fields from extraction.
-      </p>
+    <div className="basic-page screenshot-profile profile-form-page">
+      <div className="profile-form-intro">
+        <div>
+          <h2>Profile information</h2>
+          <p>Update your details once — Simple Apply reuses them on every employer form.</p>
+        </div>
+        <button className="apply" disabled={saving || !canSave} onClick={() => void persist()}>
+          {saving ? "Saving…" : "Save profile"}
+        </button>
+      </div>
+
       <div className="sa-profile-photo profile-page-photo">
         <Avatar
           name={displayName}
@@ -2687,12 +2732,10 @@ function ProfileView({
                       setProfile(normalized);
                       saveProfile(normalized);
                     } catch {
-                      /* keep local photo; user can retry Save profile */
+                      /* keep local photo */
                     }
                   })
-                  .catch(() => {
-                    /* ignore local decode errors */
-                  })
+                  .catch(() => { /* ignore */ })
                   .finally(() => setPhotoBusy(false));
               }}
             />
@@ -2712,9 +2755,7 @@ function ProfileView({
                     setProfile(normalized);
                     saveProfile(normalized);
                   })
-                  .catch(() => {
-                    /* ignore */
-                  });
+                  .catch(() => { /* ignore */ });
               }}
             >
               Remove photo
@@ -2722,6 +2763,7 @@ function ProfileView({
           ) : null}
         </div>
       </div>
+
       {(missing.length > 0 || !hasResume) && (
         <div className="onboarding-banner profile-setup">
           <div>
@@ -2734,37 +2776,358 @@ function ProfileView({
           {!hasResume && <button className="apply" onClick={goResume}>Upload résumé</button>}
         </div>
       )}
-      <div className="settings-card profile-grid">
-        {fields.map((k) => {
-          const isRequired = required.has(k);
-          const options = selectOptions[k];
-          return (
-            <label key={k} className={isRequired && !String(profile[k] || "").trim() ? "required-missing" : undefined}>
-              {fieldLabel(k)}{isRequired ? " *" : ""}
-              {options ? (
-                <select
-                  required={isRequired}
-                  value={profile[k]}
-                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-                >
-                  <option value="">Select…</option>
-                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
-                  {profile[k] && !options.includes(profile[k]) ? <option value={profile[k]}>{profile[k]}</option> : null}
-                </select>
-              ) : (
-                <input
-                  required={isRequired}
-                  value={profile[k]}
-                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-                />
-              )}
+
+      <section className="profile-section">
+        <h3>Basics</h3>
+        <div className="profile-section-grid">
+          <label className={fieldClass("firstName")}>
+            First name *
+            <input required value={profile.firstName} onChange={(e) => patch({ firstName: e.target.value })} />
+          </label>
+          <label className={fieldClass("lastName")}>
+            Last name *
+            <input required value={profile.lastName} onChange={(e) => patch({ lastName: e.target.value })} />
+          </label>
+          <label className={fieldClass("email")}>
+            Email *
+            <input required type="email" value={profile.email} readOnly={Boolean(profile.email)} onChange={(e) => patch({ email: e.target.value })} />
+            {profile.email ? <small className="field-hint">Email comes from your sign-in account.</small> : null}
+          </label>
+          <label className={fieldClass("phone")}>
+            Phone *
+            <input required type="tel" value={profile.phone} onChange={(e) => patch({ phone: e.target.value })} />
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Current residence</h3>
+        <p className="profile-section-copy">Used for Greenhouse location and phone country fields.</p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("country")}>
+            Country of residence *
+            <select required value={profile.country} onChange={(e) => patch({ country: e.target.value })}>
+              <option value="">Select…</option>
+              {PROFILE_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
+              {profile.country && !(PROFILE_COUNTRIES as readonly string[]).includes(profile.country) ? (
+                <option value={profile.country}>{profile.country}</option>
+              ) : null}
+            </select>
+            <small className="field-hint">Select the country where you currently live.</small>
+          </label>
+          <label className={fieldClass("state")}>
+            State *
+            {isUnitedStates(profile.country) ? (
+              <select required value={profile.state} onChange={(e) => patch({ state: e.target.value })}>
+                <option value="">Select…</option>
+                {US_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                {profile.state && !(US_STATES as readonly string[]).includes(profile.state) ? (
+                  <option value={profile.state}>{profile.state}</option>
+                ) : null}
+              </select>
+            ) : (
+              <input required value={profile.state} onChange={(e) => patch({ state: e.target.value })} />
+            )}
+          </label>
+          <label className={fieldClass("city")}>
+            City *
+            <input required value={profile.city} onChange={(e) => patch({ city: e.target.value })} />
+          </label>
+          <label className={fieldClass("postalCode")}>
+            Postal code *
+            <input required value={profile.postalCode} onChange={(e) => patch({ postalCode: e.target.value })} />
+          </label>
+          <label className={`span-2 ${fieldClass("address") || ""}`.trim()}>
+            Address *
+            <input required value={profile.address} onChange={(e) => patch({ address: e.target.value })} />
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Work locations *</h3>
+        <p className="profile-section-copy">
+          Tell us where you want to work. These preferences filter matches and answer relocation / remote questions.
+        </p>
+        <div className="work-location-list">
+          {(workLocations.length ? workLocations : [emptyWorkLocation(profile.country || "United States")]).map((card, index) => {
+            const cards = workLocations.length ? workLocations : [card];
+            const open = expandedLocation === index;
+            return (
+              <div className={`work-location-card ${open ? "open" : ""}`} key={`wl-${index}`}>
+                <div className="work-location-card-head">
+                  <button type="button" className="work-location-toggle" onClick={() => setExpandedLocation(open ? -1 : index)}>
+                    <span>{summarizeWorkLocation(card)}</span>
+                    <ChevronDown24Regular />
+                  </button>
+                  {cards.length > 1 ? (
+                    <button
+                      type="button"
+                      className="work-location-remove"
+                      aria-label="Remove work location"
+                      onClick={() => {
+                        const next = cards.filter((_, i) => i !== index);
+                        setWorkLocations(next);
+                        setExpandedLocation(Math.max(0, index - 1));
+                      }}
+                    >
+                      <Delete24Regular />
+                    </button>
+                  ) : null}
+                </div>
+                {open ? (
+                  <div className="work-location-card-body">
+                    <fieldset>
+                      <legend>Workplace type *</legend>
+                      <div className="chip-row">
+                        {WORKPLACE_TYPES.map((type) => (
+                          <label key={type} className={`chip ${card.workplaceTypes.includes(type) ? "on" : ""}`}>
+                            <input
+                              type="checkbox"
+                              checked={card.workplaceTypes.includes(type)}
+                              onChange={(event) => {
+                                const workplaceTypes = event.target.checked
+                                  ? [...new Set([...card.workplaceTypes, type])]
+                                  : card.workplaceTypes.filter((item) => item !== type);
+                                updateWorkLocation(index, { workplaceTypes: workplaceTypes.length ? workplaceTypes : ["Remote"] });
+                              }}
+                            />
+                            {type}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <div className="profile-section-grid">
+                      <label>
+                        Country *
+                        <select
+                          required
+                          value={card.country}
+                          onChange={(e) => updateWorkLocation(index, { country: e.target.value })}
+                        >
+                          <option value="">Select…</option>
+                          {PROFILE_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        State
+                        {isUnitedStates(card.country) ? (
+                          <select value={card.state || ""} onChange={(e) => updateWorkLocation(index, { state: e.target.value })}>
+                            <option value="">Select…</option>
+                            {US_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                          </select>
+                        ) : (
+                          <input value={card.state || ""} onChange={(e) => updateWorkLocation(index, { state: e.target.value })} />
+                        )}
+                      </label>
+                      <label>
+                        City
+                        <input value={card.city || ""} onChange={(e) => updateWorkLocation(index, { city: e.target.value })} />
+                      </label>
+                      <label>
+                        Max search distance (miles)
+                        <input
+                          type="number"
+                          min={0}
+                          max={500}
+                          value={card.radiusMiles ?? ""}
+                          onChange={(e) => updateWorkLocation(index, {
+                            radiusMiles: e.target.value ? Number(e.target.value) : undefined,
+                          })}
+                        />
+                      </label>
+                    </div>
+                    <small className="field-hint">
+                      {card.workplaceTypes.includes("Remote")
+                        ? `Will look for Remote jobs anywhere in ${card.country || "selected country"}.`
+                        : null}
+                      {" "}
+                      {(card.workplaceTypes.includes("Hybrid") || card.workplaceTypes.includes("On-site")) && card.city
+                        ? `Will look for Hybrid/On-site near ${[card.city, card.state, card.country].filter(Boolean).join(", ")}.`
+                        : null}
+                    </small>
+                  </div>
+                ) : (
+                  <p className="work-location-summary">{flattenWorkLocationsForWorker([card])}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {(workLocations.length || 1) < 5 ? (
+          <button
+            type="button"
+            className="work-location-add"
+            onClick={() => {
+              const base = workLocations.length ? workLocations : [emptyWorkLocation(profile.country || "United States")];
+              const next = [...base, emptyWorkLocation(profile.country || "United States")];
+              setWorkLocations(next);
+              setExpandedLocation(next.length - 1);
+            }}
+          >
+            <Add24Regular /> Add work location ({Math.max(workLocations.length, 1)}/5)
+          </button>
+        ) : null}
+      </section>
+
+      <section className="profile-section">
+        <h3>Work authorization</h3>
+        <p className="profile-section-copy">
+          Used to answer “Are you legally authorized to work…” and sponsorship questions automatically.
+        </p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("workAuthorization")}>
+            Legal to work *
+            <select required value={profile.workAuthorization} onChange={(e) => patch({ workAuthorization: e.target.value })}>
+              <option value="">Select…</option>
+              {["Yes", "No", "US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"].map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+          <label className={fieldClass("sponsorship")}>
+            Require sponsorship *
+            <select required value={profile.sponsorship} onChange={(e) => patch({ sponsorship: e.target.value })}>
+              <option value="">Select…</option>
+              {["No", "Yes", "Not sure"].map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Job preferences</h3>
+        <div className="profile-section-stack">
+          <label className={fieldClass("targetRoles")}>
+            Desired job title *
+            <div className="tag-input">
+              <div className="tag-list">
+                {titles.map((title) => (
+                  <button
+                    type="button"
+                    className="tag-chip"
+                    key={title}
+                    onClick={() => patch({ targetRoles: serializeListField(titles.filter((item) => item !== title)) })}
+                  >
+                    {title} ×
+                  </button>
+                ))}
+              </div>
+              <input
+                value={titleDraft}
+                placeholder="Enter job title(s)"
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTitle();
+                  }
+                }}
+              />
+              <button type="button" className="tag-add" onClick={addTitle}>Add</button>
+            </div>
+          </label>
+
+          <fieldset className={required.has("employmentTypes") && !profile.employmentTypes.trim() ? "required-missing" : undefined}>
+            <legend>Employment type preferences *</legend>
+            <div className="chip-row vertical">
+              {EMPLOYMENT_TYPE_OPTIONS.map((type) => (
+                <label key={type} className={`chip ${listFieldHas(profile.employmentTypes, type) ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={listFieldHas(profile.employmentTypes, type)}
+                    onChange={(e) => patch({ employmentTypes: toggleListItem(profile.employmentTypes, type, e.target.checked) })}
+                  />
+                  {type}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <div className="profile-section-grid">
+            <label className={fieldClass("experienceLevel")}>
+              Years of experience *
+              <select required value={profile.experienceLevel} onChange={(e) => patch({ experienceLevel: e.target.value })}>
+                <option value="">Select…</option>
+                {EXPERIENCE_YEARS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                {profile.experienceLevel && !(EXPERIENCE_YEARS_OPTIONS as readonly string[]).includes(profile.experienceLevel) ? (
+                  <option value={profile.experienceLevel}>{profile.experienceLevel}</option>
+                ) : null}
+              </select>
             </label>
-          );
-        })}
-        <button className="apply" onClick={() => void save()}>
-          Save profile
-        </button>
-      </div>
+            <label className={fieldClass("minSalary")}>
+              Minimum salary *
+              <input required value={profile.minSalary} placeholder="e.g. 150000" onChange={(e) => patch({ minSalary: e.target.value })} />
+            </label>
+            <label className={fieldClass("educationLevel")}>
+              Education level *
+              <select required value={profile.educationLevel} onChange={(e) => patch({ educationLevel: e.target.value })}>
+                <option value="">Select…</option>
+                {["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"].map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              School
+              <input value={profile.school} onChange={(e) => patch({ school: e.target.value })} />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section className="profile-section">
+        <h3>Additional information</h3>
+        <p className="profile-section-copy">This helps match opportunities and answer employer questions.</p>
+        <div className="profile-section-grid">
+          <label className={fieldClass("linkedin")}>
+            LinkedIn URL *
+            <input required value={profile.linkedin} placeholder="https://www.linkedin.com/in/…" onChange={(e) => patch({ linkedin: e.target.value })} />
+            <small className="field-hint">Required for auto-apply.</small>
+          </label>
+          <label>
+            Companies to exclude
+            <input value={profile.companiesToExclude} placeholder="Enter company names, separated by commas" onChange={(e) => patch({ companiesToExclude: e.target.value })} />
+          </label>
+          <label>
+            Preferred languages
+            <input value={profile.preferredLanguages} placeholder="e.g. English, Spanish" onChange={(e) => patch({ preferredLanguages: e.target.value })} />
+          </label>
+          <label>
+            Skills
+            <input value={profile.skills} placeholder="e.g. TypeScript, React, Azure" onChange={(e) => patch({ skills: e.target.value })} />
+          </label>
+          <label>
+            GitHub URL
+            <input value={profile.github} placeholder="https://github.com/username" onChange={(e) => patch({ github: e.target.value })} />
+          </label>
+          <label>
+            Portfolio URL
+            <input value={profile.portfolio} placeholder="https://yourportfolio.com" onChange={(e) => patch({ portfolio: e.target.value })} />
+          </label>
+          <label>
+            Current employer
+            <input value={profile.currentEmployer} onChange={(e) => patch({ currentEmployer: e.target.value })} />
+          </label>
+          <label>
+            Current job title
+            <input value={profile.currentJobTitle} onChange={(e) => patch({ currentJobTitle: e.target.value })} />
+          </label>
+          <label className="span-2">
+            Additional information
+            <textarea
+              value={profile.additionalInfo}
+              placeholder="Share any additional information that might help with job matches"
+              onChange={(e) => patch({ additionalInfo: e.target.value })}
+            />
+            <small className="field-hint">Suggested cover-letter style notes for matching and application answers.</small>
+          </label>
+        </div>
+      </section>
+
+      <button className="apply profile-save-bottom" disabled={saving || !canSave} onClick={() => void persist()}>
+        {saving ? "Saving…" : "Save profile"}
+      </button>
     </div>
   );
 }

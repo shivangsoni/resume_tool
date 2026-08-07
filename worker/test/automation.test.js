@@ -12,12 +12,16 @@ import {
   resolveApplicationUrl,
   parseMultiselectAnswer,
   optionMatchesTokens,
+  preferredLocationTokens,
+  multiselectTokensFromProfile,
   resolveMultiselectSelections,
   matchOptionLabel,
   choiceOptionLabels,
   isBooleanChoiceLabel,
   isCheckboxGroupName,
   formatLocationQuery,
+  looksLikePlaceString,
+  dedupeMissingQuestions,
   isLocationAutocompleteLabel,
   isPhoneFieldLabel,
   pageHasBlockingCaptcha,
@@ -113,6 +117,20 @@ test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
     formatLocationQuery("", { location: "Seattle, Washington, United States", city: "Seattle" }),
     "Seattle, Washington, United States",
   );
+  assert.equal(
+    formatLocationQuery("", {
+      location: "DEEPLEARNING.AI, ANDREW NG Advancements in AI",
+      city: "Redmond",
+      state: "Washington",
+      country: "United States",
+    }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
+    looksLikePlaceString("DEEPLEARNING.AI, ANDREW NG Advancements in AI"),
+    false,
+  );
+  assert.equal(looksLikePlaceString("Redmond, Washington, United States"), true);
 });
 
 test("detects Greenhouse location autocomplete and phone field labels", () => {
@@ -121,6 +139,23 @@ test("detects Greenhouse location autocomplete and phone field labels", () => {
   assert.equal(isLocationAutocompleteLabel("Are you authorized to work in the location(s) you selected?", ""), false);
   assert.equal(isPhoneFieldLabel("Phone", "job_application[phone]"), true);
   assert.equal(isPhoneFieldLabel("Location (City)", "job_application[location]"), false);
+  assert.equal(isPhoneFieldLabel("WhatsApp number", "custom_question"), false);
+  assert.equal(isPhoneFieldLabel("Phone screen availability", ""), false);
+});
+
+test("dedupeMissingQuestions keeps a single Phone row", () => {
+  assert.deepEqual(
+    dedupeMissingQuestions([
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "phone__2", label: "Phone", type: "phone" },
+      { key: "loc__1", label: "Location (City)", type: "autocomplete" },
+      { key: "loc__2", label: "Location (City)", type: "autocomplete" },
+    ]),
+    [
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "loc__1", label: "Location (City)", type: "autocomplete" },
+    ],
+  );
 });
 
 test("matchOptionLabel coerces Yes/No onto clear options", () => {
@@ -213,6 +248,36 @@ test("multiselect helpers pick country options from profile and answers", () => 
   assert.deepEqual(
     resolveMultiselectSelections(options, "Germany", { country: "United States" }),
     ["Germany"],
+  );
+});
+
+test("preferredLocations JSON expands into location and remote tokens", () => {
+  const preferredLocations = JSON.stringify([
+    { workplaceTypes: ["Remote", "Hybrid"], country: "Canada", city: "Toronto" },
+    { workplaceTypes: ["On-site"], country: "Germany", city: "Berlin" },
+  ]);
+  assert.deepEqual(
+    preferredLocationTokens(preferredLocations).sort(),
+    ["Berlin", "Canada", "Germany", "Hybrid", "On-site", "Remote", "Toronto"].sort(),
+  );
+  const tokens = multiselectTokensFromProfile({
+    country: "United States",
+    preferredLocations,
+  });
+  assert.ok(tokens.includes("Canada"));
+  assert.ok(tokens.includes("Remote"));
+  assert.ok(!tokens.some((token) => token.includes("workplaceTypes")));
+  assert.equal(
+    knownAnswer("Do you plan to work remotely for this role?", { preferredLocations }, {}),
+    "Yes",
+  );
+  assert.deepEqual(
+    resolveMultiselectSelections(
+      ["Australia", "Canada", "Germany", "United States"],
+      "",
+      { preferredLocations },
+    ),
+    ["Canada", "Germany"],
   );
 });
 

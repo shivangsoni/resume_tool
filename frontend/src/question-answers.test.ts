@@ -3,10 +3,12 @@ import {
   answerKeyBase,
   answersCoverQuestionKey,
   coerceQuestionAnswer,
+  dedupeEmployerQuestions,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel,
   lookupStoredAnswer,
+  looksLikePlaceString,
   matchPhoneDialCountry,
   matchSelectOption,
   priorAnswerKeys,
@@ -70,8 +72,26 @@ describe("question-answers helpers", () => {
       state: "WA",
       country: "United States",
     })).toBe("Redmond, Washington, United States");
+    expect(formatLocationAnswer("", {
+      location: "DEEPLEARNING.AI, ANDREW NG Advancements in AI",
+      city: "Redmond",
+      state: "Washington",
+      country: "United States",
+    })).toBe("Redmond, Washington, United States");
+    expect(looksLikePlaceString("DEEPLEARNING.AI, ANDREW NG Advancements in AI")).toBe(false);
     expect(matchPhoneDialCountry("USA")).toBe("United States");
     expect(coerceQuestionAnswer({ type: "phone", label: "Phone" }, "(530) 204-8592")).toBe("5302048592");
+  });
+
+  it("dedupes duplicate Phone employer questions", () => {
+    expect(dedupeEmployerQuestions([
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "phone__2", label: "Phone", type: "phone" },
+      { key: "loc", label: "Location (City)", type: "autocomplete" },
+    ])).toEqual([
+      { key: "phone__1", label: "Phone", type: "phone" },
+      { key: "loc", label: "Location (City)", type: "autocomplete" },
+    ]);
   });
 
   it("answersCoverQuestionKey matches by base key", () => {
