@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv } from "vitest/config";
+import { loadEnv } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 /** Non-production Static Web App (API + Easy Auth linked backend). */
