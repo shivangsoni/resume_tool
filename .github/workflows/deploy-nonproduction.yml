@@ -13,7 +13,9 @@ permissions:
 
 concurrency:
   group: non-production
-  cancel-in-progress: true
+  # Do not cancel in-progress deploys. Main still has workflow_run which can
+  # start a second run after CI; cancelling mid-flight left nonprod half-updated.
+  cancel-in-progress: false
 
 env:
   AZURE_CORE_OUTPUT: none
@@ -31,8 +33,7 @@ jobs:
   infrastructure:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'workflow_call' ||
-      (github.event_name == 'push' && github.ref_name != 'main')
+      github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
     environment: non-production
     outputs:

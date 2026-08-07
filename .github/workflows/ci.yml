@@ -61,8 +61,17 @@ jobs:
         with:
           inlineScript: az bicep build --file infra/main.bicep
 
+  # Non-prod deploys on feature pushes and same-repo PRs (not main).
+  # Until this workflow change is on main, default-branch workflow_run may also
+  # start Deploy non-production — keep cancel-in-progress false there so runs finish.
   deploy-nonproduction:
-    if: github.event_name == 'push' && github.ref_name != 'main'
+    if: >-
+      github.ref_name != 'main' &&
+      (
+        github.event_name == 'push' ||
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository)
+      )
     needs: [frontend, backend, browser-worker, infrastructure]
     permissions:
       contents: read
