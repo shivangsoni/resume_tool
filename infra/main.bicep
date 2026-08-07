@@ -49,6 +49,9 @@ param facebookAppId string = ''
 @secure()
 param facebookAppSecret string = ''
 
+@description('When true, SWA keeps Google/GitHub/Facebook settings as Key Vault references so infrastructure deploys do not wipe social auth.')
+param persistSocialAuthInKeyVault bool = false
+
 @description('Ops alert destination for Application Insights action-group emails and runtime failure notices.')
 param opsAlertEmail string = 'shivangsoni22@gmail.com'
 
@@ -87,27 +90,36 @@ var keyVaultName = take('${safeBase}vault${suffix}', 24)
 var frontendResourceName = '${appName}-web-${suffix}'
 var enabledAuthProviders = join(concat(
   ['aad'],
-  empty(googleClientId) || empty(googleClientSecret) ? [] : ['google'],
-  empty(githubClientId) || empty(githubClientSecret) ? [] : ['github'],
-  empty(facebookAppId) || empty(facebookAppSecret) ? [] : ['facebook']
+  persistSocialAuthInKeyVault || !(empty(googleClientId) || empty(googleClientSecret)) ? ['google'] : [],
+  persistSocialAuthInKeyVault || !(empty(githubClientId) || empty(githubClientSecret)) ? ['github'] : [],
+  persistSocialAuthInKeyVault || !(empty(facebookAppId) || empty(facebookAppSecret)) ? ['facebook'] : []
 ), ',')
 var swaAuthSettings = union(
   {
     AZURE_CLIENT_ID: azureClientId
     AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/${azureClientSecretName})'
   },
-  empty(googleClientId) || empty(googleClientSecret) ? {} : {
-    GOOGLE_CLIENT_ID: googleClientId
-    GOOGLE_CLIENT_SECRET: googleClientSecret
-  },
-  empty(githubClientId) || empty(githubClientSecret) ? {} : {
-    GITHUB_CLIENT_ID: githubClientId
-    GITHUB_CLIENT_SECRET: githubClientSecret
-  },
-  empty(facebookAppId) || empty(facebookAppSecret) ? {} : {
-    FACEBOOK_APP_ID: facebookAppId
-    FACEBOOK_APP_SECRET: facebookAppSecret
-  }
+  persistSocialAuthInKeyVault ? {
+    GOOGLE_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/google-client-id)'
+    GOOGLE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/google-client-secret)'
+    GITHUB_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/github-client-id)'
+    GITHUB_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/github-client-secret)'
+    FACEBOOK_APP_ID: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/facebook-app-id)'
+    FACEBOOK_APP_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/facebook-app-secret)'
+  } : union(
+    empty(googleClientId) || empty(googleClientSecret) ? {} : {
+      GOOGLE_CLIENT_ID: googleClientId
+      GOOGLE_CLIENT_SECRET: googleClientSecret
+    },
+    empty(githubClientId) || empty(githubClientSecret) ? {} : {
+      GITHUB_CLIENT_ID: githubClientId
+      GITHUB_CLIENT_SECRET: githubClientSecret
+    },
+    empty(facebookAppId) || empty(facebookAppSecret) ? {} : {
+      FACEBOOK_APP_ID: facebookAppId
+      FACEBOOK_APP_SECRET: facebookAppSecret
+    }
+  )
 )
 
 module serviceBus 'modules/service-bus.bicep' = {

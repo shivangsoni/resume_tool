@@ -4,7 +4,9 @@
   color: var(--colorNeutralForeground1, #242424);
   background: var(--colorNeutralBackground2, #f5f5f5);
   font-synthesis: none;
-  --sa-nav-width: 280px;
+  --sa-nav-width: 20vw;
+  --sa-nav-min: 220px;
+  --sa-nav-max: 320px;
   --sa-header-height: 56px;
 }
 * {
@@ -23,21 +25,44 @@ select {
 .sa-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: var(--sa-nav-width) 1fr;
-  background: var(--colorNeutralBackground2, #f5f5f5);
+  grid-template-columns: clamp(var(--sa-nav-min), var(--sa-nav-width), var(--sa-nav-max)) 1fr;
+  background: #f6f7f9;
+  overflow-x: hidden;
 }
 .sa-shell.nav-collapsed {
   grid-template-columns: 0 1fr;
 }
+.sa-shell.nav-collapsed .sa-nav {
+  pointer-events: none;
+  visibility: hidden;
+}
 .sa-nav {
   height: 100vh;
+  width: 100%;
+  max-width: 100%;
   position: sticky;
   top: 0;
+  align-self: start;
+  overflow: hidden;
   border-right: 1px solid var(--colorNeutralStroke2, #e0e0e0) !important;
   background: var(--colorNeutralBackground1, #fff) !important;
 }
+.sa-nav.fui-NavDrawer,
+.sa-nav .fui-NavDrawer {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
 .sa-nav .fui-NavDrawerBody {
   padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow-y: auto;
+}
+.sa-nav .fui-NavItem,
+.sa-nav .fui-NavSectionHeader {
+  width: 100%;
 }
 .sa-logo {
   height: var(--sa-header-height);
@@ -1350,11 +1375,7 @@ select {
   }
 }
 
-/* Screenshot-aligned product shell */
-.sa-shell {
-  display: block;
-  background: #f6f7f9;
-}
+/* Product shell refinements (keep sa-shell as a sidebar grid — do not override display) */
 .sa-side {
   display: none;
 }
