@@ -308,7 +308,11 @@ select {
 }
 /* Guard against Fluent slot double-render of tab labels */
 .page-tabs .fui-Tab__content + .fui-Tab__content,
-.page-tabs .fui-Tab > .fui-Tab__content ~ span:not([class]) {
+.page-tabs .fui-Tab > .fui-Tab__content ~ span:not([class]),
+.page-tabs .fui-Tab > .fui-Tab__content ~ .fui-Tab__content {
+  display: none !important;
+}
+.page-tabs .fui-Tab > *:nth-child(n+2) {
   display: none !important;
 }
 .page-command-bar {
@@ -1260,7 +1264,7 @@ select {
   color: #168a54;
 }
 .application-row {
-  grid-template-columns: 1fr 110px minmax(220px, auto);
+  grid-template-columns: minmax(0, 1fr) 110px minmax(0, auto);
 }
 .application-row.focused {
   background: #fff7ed;
@@ -1309,6 +1313,9 @@ select {
   justify-content: flex-end;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .application-actions a,
 .application-actions button {
@@ -1339,6 +1346,9 @@ select {
   background: #fff6f5;
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .job-detail .action-required {
   margin: 0 0 16px;
@@ -1360,7 +1370,7 @@ select {
   display: grid;
   gap: 12px;
 }
-.action-required p { margin: 0; color: #8a332b; font-size: 11px; }
+.action-required p { margin: 0; color: #8a332b; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
 .action-required label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 600; }
 .action-required label > span { white-space: pre-wrap; line-height: 1.45; }
 .action-required input,.action-required select,.action-required textarea { width: 100%; border: 1px solid #d0d5dd; border-radius: 7px; padding: 9px 10px; background: white; }
@@ -1902,10 +1912,21 @@ button.secondary-action, button.orange-action { cursor: pointer; font: inherit; 
   border: 1px solid #ffd99a;
   border-radius: 7px;
   padding: 8px 10px;
-  max-width: 420px;
+  max-width: min(420px, 100%);
+  width: 100%;
   font-size: 11px;
   display: grid;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.queued-message > span {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .queued-message button {
   justify-self: start;

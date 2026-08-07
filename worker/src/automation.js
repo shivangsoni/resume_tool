@@ -268,6 +268,41 @@ const selectOptionTexts = async (field) => {
   return texts.map((item) => item.trim()).filter(Boolean);
 };
 
+/** Live control type — nth() locators can rematerialize after DOM updates. */
+const liveFieldType = async (field, fallback = "text") => {
+  const value = await field.evaluate((el) => {
+    if (el.tagName === "SELECT") return "select";
+    if (el.tagName === "TEXTAREA") return "textarea";
+    if (el instanceof HTMLInputElement) return String(el.type || "text").toLowerCase();
+    return String(el.getAttribute("type") || el.tagName || "text").toLowerCase();
+  }).catch(() => "");
+  return value || fallback;
+};
+
+/** Prefer id / name+value so actions survive checkbox-driven re-renders. */
+const stabilizeField = (scope, item) => {
+  const { info, field } = item;
+  if (info.id) {
+    return scope.locator(`[id=${JSON.stringify(info.id)}]`).first();
+  }
+  if (info.name && info.value !== undefined && info.value !== "" && (info.type === "checkbox" || info.type === "radio")) {
+    return scope.locator(`input[type=${JSON.stringify(info.type)}][name=${JSON.stringify(info.name)}][value=${JSON.stringify(info.value)}]`).first();
+  }
+  return field;
+};
+
+/** Option labels for a checkbox/radio group — never treat the shared prompt as an option. */
+const choiceOptionLabels = (group, groupLabel) => {
+  const prompt = normalize(groupLabel);
+  return group.map((item) => {
+    const option = String(item.info.optionLabel || "").trim();
+    if (option && normalize(option) !== prompt) return option;
+    const label = String(item.info.label || "").trim();
+    if (label && normalize(label) !== prompt) return label;
+    return option;
+  }).filter(Boolean);
+};
+
 async function fillSelect(field, answer) {
   const wanted = String(answer || "").trim();
   if (!wanted) return false;
@@ -469,9 +504,36 @@ export async function runApplication({ application, profile, resumePath }) {
           clone.querySelectorAll("input, select, textarea, button, script, style, option").forEach((child) => child.remove());
           return (clone.textContent || "").replace(/\s+/g, " ").trim();
         };
-        const optionLabel = readLabelText(wrapLabel) || readLabelText(explicitLabel);
+        const shortText = (value, max = 120) => {
+          const text = String(value || "").replace(/\s+/g, " ").trim();
+          return text && text.length <= max ? text : "";
+        };
+        // Prefer the option's own short label; ignore long prompt text on the control.
+        const optionLabel = (() => {
+          const fromLabel = shortText(readLabelText(wrapLabel), 100) || shortText(readLabelText(explicitLabel), 100);
+          if (fromLabel) return fromLabel;
+          const next = element.nextElementSibling;
+          if (next && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/i.test(next.tagName)) {
+            const text = shortText(next.textContent, 100);
+            if (text) return text;
+          }
+          const parent = element.parentElement;
+          if (parent && !wrapLabel) {
+            const clone = parent.cloneNode(true);
+            clone.querySelectorAll("input, select, textarea, button, script, style, .helper, .description, [id$='-description'], [id$='-error']").forEach((child) => child.remove());
+            const text = shortText(clone.textContent, 100);
+            if (text) return text;
+          }
+          return "";
+        })();
         const fieldset = element.closest("fieldset");
         const legendText = (fieldset?.querySelector("legend")?.textContent || "").replace(/\s+/g, " ").trim();
+        const describedByText = (element.getAttribute("aria-describedby") || "")
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((ref) => document.getElementById(ref)?.textContent || "")
+          .join(" ")
+          .trim();
         const siblingText = () => {
           const prev = element.previousElementSibling;
           if (prev && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/i.test(prev.tagName)) {
@@ -498,6 +560,10 @@ export async function runApplication({ application, profile, resumePath }) {
         };
         const groupHeading = () => {
           if (legendText && legendText.length < 200) return legendText;
+          const fromDescribed = shortText(describedByText, 200);
+          if (fromDescribed) return fromDescribed;
+          const fromDescriptionAttr = shortText(element.getAttribute("description"), 200);
+          if (fromDescriptionAttr) return fromDescriptionAttr;
           const fieldRoot = element.closest(".field, .form-group, .application-question, .question, [class*='question' i], [class*='field' i], [data-qa], [data-field]");
           if (!fieldRoot) return "";
           const heading = fieldRoot.querySelector(":scope > label, :scope > legend, :scope > .label, :scope > .question-label, :scope > p, :scope > div > label, label");
@@ -550,14 +616,20 @@ export async function runApplication({ application, profile, resumePath }) {
           if (isUseless(spaced)) return "";
           return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
         };
-        const type = element.getAttribute("type") || "text";
+        // Prefer IDL type (normalized) over raw attribute — avoids treating checkboxes as text.
+        const type = (() => {
+          if (element.tagName === "SELECT") return "select";
+          if (element.tagName === "TEXTAREA") return "textarea";
+          if (element instanceof HTMLInputElement && element.type) return String(element.type).toLowerCase();
+          return String(element.getAttribute("type") || "text").toLowerCase();
+        })();
         const isChoice = type === "checkbox" || type === "radio";
         const groupLabel = isChoice
           ? pickText(groupHeading(), labelledBy, siblingText(), humanize(name), humanize(dataHint))
           : "";
         // Prefer fieldset/group heading and nearby labels over placeholder/"Select..."/generic names
         const label = isChoice
-          ? pickText(groupLabel, labelledBy, readLabelText(labelNode), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"))
+          ? pickText(groupLabel, labelledBy, shortText(optionLabel, 100), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"))
           : pickText(groupHeading(), labelledBy, readLabelText(labelNode), siblingText(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), element.getAttribute("placeholder"), element.getAttribute("title"));
         const selfRequired = element.required || element.getAttribute("aria-required") === "true";
         const groupRequired = !!element.closest("fieldset[required], [aria-required='true'], .required");
@@ -566,6 +638,8 @@ export async function runApplication({ application, profile, resumePath }) {
         return {
           tag: element.tagName.toLowerCase(),
           type,
+          id,
+          value: element.getAttribute("value") || "",
           name: name || id || dataHint,
           label: label.trim(),
           optionLabel: (optionLabel || "").trim(),
@@ -611,16 +685,17 @@ export async function runApplication({ application, profile, resumePath }) {
       const key = groupQuestionKey(first.info.name, groupLabel, first.index);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const options = choiceOptionLabels(group, groupLabel);
       const answer = lookupAnswer(application.answers, { key, name: first.info.name, label: groupLabel }, profile);
       const selections = resolveMultiselectSelections(options, answer, profile);
       for (const item of group) {
+        const target = stabilizeField(scope, item);
         const optionText = item.info.optionLabel || item.info.label;
         if (selections.some((selected) => optionMatchesTokens(optionText, [selected]))) {
-          await item.field.check().catch(() => {});
+          await target.check().catch(() => {});
         }
       }
-      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      const anyChecked = await Promise.all(group.map((item) => stabilizeField(scope, item).isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
       if (first.info.groupRequired && !anyChecked) {
         missing.push({ key, label: groupLabel, type: "multiselect", options, required: true });
       }
@@ -634,38 +709,44 @@ export async function runApplication({ application, profile, resumePath }) {
       const key = groupQuestionKey(first.info.name, groupLabel, first.index);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const options = choiceOptionLabels(group, groupLabel);
       const answer = lookupAnswer(application.answers, { key, name: first.info.name, label: groupLabel }, profile);
       const matched = matchOptionLabel(options, answer);
       if (matched) {
-        const target = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(matched));
-        if (target) await target.field.check().catch(() => {});
+        const targetItem = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(matched));
+        if (targetItem) await stabilizeField(scope, targetItem).check().catch(() => {});
       } else if (/^(true|yes|1|on)$/i.test(answer) && options.length) {
         const yesOpt = matchOptionLabel(options, "Yes") || options[0];
-        const target = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(yesOpt));
-        if (target) await target.field.check().catch(() => {});
+        const targetItem = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(yesOpt));
+        if (targetItem) await stabilizeField(scope, targetItem).check().catch(() => {});
       }
-      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      const anyChecked = await Promise.all(group.map((item) => stabilizeField(scope, item).isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
       if ((first.info.groupRequired || first.info.required) && !anyChecked) {
         missing.push({ key, label: isUselessLabel(groupLabel) ? `Question ${first.index + 1}` : groupLabel, type: "select", options, required: true });
       }
     }
 
-    for (const { index, field, info } of singles) {
+    for (const item of singles) {
+      const { index, info } = item;
+      const field = stabilizeField(scope, item);
       const key = questionKey(info.name, info.label, index);
       let displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
         || humanizeFieldName(info.name)
         || humanizeFieldName(info.label)
         || "";
       if (!displayLabel || isUselessLabel(displayLabel)) displayLabel = `Question ${index + 1}`;
-      if (info.type === "file") { if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath); continue; }
-      if (info.type === "checkbox" || info.type === "radio") {
+      const liveType = await liveFieldType(field, info.type);
+      if (liveType === "file" || info.type === "file") {
+        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
+        continue;
+      }
+      if (liveType === "checkbox" || liveType === "radio" || info.type === "checkbox" || info.type === "radio") {
         const optionText = info.optionLabel || displayLabel;
         const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
         const matched = matchOptionLabel([optionText], answer);
         if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
           await field.check().catch(() => {});
-        } else if (info.required && !await field.isChecked()) {
+        } else if (info.required && !await field.isChecked().catch(() => false)) {
           if (!seenKeys.has(key)) {
             seenKeys.add(key);
             missing.push({ key, label: displayLabel, type: "checkbox", required: true });
@@ -675,23 +756,31 @@ export async function runApplication({ application, profile, resumePath }) {
       }
       const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
       if (answer) {
-        if (info.tag === "select") {
+        if (info.tag === "select" || liveType === "select") {
           const options = await selectOptionTexts(field);
           const coerced = matchOptionLabel(options, answer) || answer;
           await fillSelect(field, coerced);
         } else {
-          await field.fill(answer);
+          // Never fill() choice controls — Playwright throws on checkbox/radio.
+          await field.fill(answer).catch(async (error) => {
+            const message = String(error?.message || error || "");
+            if (/checkbox|radio|cannot be filled/i.test(message)) {
+              await field.check().catch(() => {});
+              return;
+            }
+            throw error;
+          });
         }
       }
       const value = await field.inputValue().catch(() => "");
       if (info.required && !value) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
-        const options = info.tag === "select" ? await selectOptionTexts(field) : undefined;
+        const options = (info.tag === "select" || liveType === "select") ? await selectOptionTexts(field) : undefined;
         missing.push({
           key,
           label: displayLabel,
-          type: info.tag === "select" ? "select" : info.tag === "textarea" ? "textarea" : "text",
+          type: (info.tag === "select" || liveType === "select") ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
           options: options?.filter((item) => item.length > 0 && !/^(select|please select|choose)/i.test(item)),
           required: true,
         });
@@ -773,4 +862,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

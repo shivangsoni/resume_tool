@@ -806,11 +806,11 @@ function Dashboard(p: {
         selectedValue={p.status}
         onTabSelect={(_e, data) => p.setStatus(String(data.value) as typeof p.status)}
       >
-        <Tab value="all" content="All matches" />
-        <Tab value="ready" content="Not applied" />
-        <Tab value="queued" content="Queued" />
-        <Tab value="applied" content="Applied" />
-        <Tab value="failed" content="Failed" />
+        <Tab value="all">All matches</Tab>
+        <Tab value="ready">Not applied</Tab>
+        <Tab value="queued">Queued</Tab>
+        <Tab value="applied">Applied</Tab>
+        <Tab value="failed">Failed</Tab>
       </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton
@@ -1358,8 +1358,8 @@ function Applications({
         selectedValue={appTab}
         onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "action")}
       >
-        <Tab value="all" content="All applications" />
-        <Tab value="action" content="Needs action" />
+        <Tab value="all">All applications</Tab>
+        <Tab value="action">Needs action</Tab>
       </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton appearance="primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>

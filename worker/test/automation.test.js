@@ -14,6 +14,7 @@ import {
   optionMatchesTokens,
   resolveMultiselectSelections,
   matchOptionLabel,
+  choiceOptionLabels,
 } from "../src/automation.js";
 
 test("maps standard employer fields from the saved profile", () => {
@@ -158,6 +159,16 @@ test("multiselect helpers pick country options from profile and answers", () => 
     resolveMultiselectSelections(options, "Germany", { country: "United States" }),
     ["Germany"],
   );
+});
+
+test("choiceOptionLabels ignores shared country prompt text", () => {
+  const prompt = "Please select the country or countries you anticipate working in for the role in which you are applying.";
+  const group = [
+    { info: { optionLabel: "United States", label: prompt, groupLabel: prompt } },
+    { info: { optionLabel: "Canada", label: prompt, groupLabel: prompt } },
+    { info: { optionLabel: "", label: prompt, groupLabel: prompt } },
+  ];
+  assert.deepEqual(choiceOptionLabels(group, prompt), ["United States", "Canada"]);
 });
 
 test("matchOptionLabel fuzzy-matches radio answers", () => {
