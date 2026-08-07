@@ -74,6 +74,7 @@ import {
   deleteResume,
   renameResume,
   getAuthProviders,
+  beginSignOut,
   setDevSignedIn,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
@@ -201,13 +202,17 @@ export default function App() {
   useEffect(() => {
     getCurrentUser()
       .then(async (user) => {
-        setCurrentUser(user);
-        if (user) {
+        if (!user) {
+          setCurrentUser(null);
+          return;
+        }
+        try {
           const [remoteProfile, remoteApplications, remoteResumes] = await Promise.all([
             getRemoteProfile(),
             getApplications(),
             getResumes(),
           ]);
+          setCurrentUser(user);
           if (remoteProfile.profile) {
             const normalized = { ...emptyProfile, ...remoteProfile.profile };
             setProfile(normalized);
@@ -215,9 +220,20 @@ export default function App() {
           }
           setApplications(remoteApplications.applications);
           setResumeDocuments(remoteResumes.documents);
+        } catch (error) {
+          if (error instanceof Error && error.message === "AUTH_REQUIRED") {
+            setCurrentUser(null);
+            beginSignOut();
+            return;
+          }
+          setCurrentUser(user);
+          notify("Account data could not be loaded");
         }
       })
-      .catch(() => notify("Account data could not be loaded"))
+      .catch(() => {
+        setCurrentUser(null);
+        notify("Account data could not be loaded");
+      })
       .finally(() => setAuthReady(true));
   }, []);
   useEffect(() => {
@@ -308,7 +324,7 @@ export default function App() {
   if (!authReady) return <AuthLoading />;
   if (routePath === "/") return <LandingPage signedIn={Boolean(currentUser)} />;
   if (routePath === "/logged-out") return <LoggedOutPage signedIn={Boolean(currentUser)} />;
-  if (!currentUser && routePath === "/login") return <AuthPage />;
+  if (routePath === "/login") return <AuthPage signedIn={Boolean(currentUser)} />;
   if (!currentUser) return <LandingPage signedIn={false} />;
 
   const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in";
@@ -408,15 +424,7 @@ export default function App() {
                 <MenuItem icon={<Sparkle24Filled />} onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Product tour</MenuItem>
                 <MenuItem
                   icon={<SignOut24Regular />}
-                  onClick={(event) => {
-                    if (import.meta.env.DEV) {
-                      event.preventDefault();
-                      setDevSignedIn(false);
-                      window.location.assign("/logged-out");
-                      return;
-                    }
-                    window.location.assign("/.auth/logout?post_logout_redirect_uri=/logged-out");
-                  }}
+                  onClick={() => beginSignOut()}
                 >
                   Sign out
                 </MenuItem>
@@ -644,7 +652,7 @@ export default function App() {
         }} />}
         {page === "credits" && <CreditsPage queued={applications.filter((item) => ["review", "queued", "processing"].includes(item.status)).length} />}
         {page === "settings" && <SettingsPage />}
-        {page === "auth" && <AuthPage />}
+        {page === "auth" && <AuthPage signedIn />}
         </main>
         {toast && (
           <div className="toast">
@@ -1579,7 +1587,7 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
   );
 }
 
-function AuthPage() {
+function AuthPage({ signedIn }: { signedIn: boolean }) {
   const [providers, setProviders] = useState<Array<{ id: string; label: string; href: string; enabled: boolean }>>([
     { id: "aad", label: "Microsoft", href: "/.auth/login/aad?post_login_redirect_uri=/dashboard", enabled: true },
   ]);
@@ -1606,8 +1614,18 @@ function AuthPage() {
     <div className="auth-page">
       <section className="auth-card">
         <div className="auth-brand"><Sparkle24Filled /></div>
-        <h1>Create your ApplyPilot account</h1>
-        <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
+        <h1>{signedIn ? "You’re signed in" : "Create your ApplyPilot account"}</h1>
+        <p>
+          {signedIn
+            ? "Continue to your dashboard, sign out, or switch accounts with another provider."
+            : "Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity."}
+        </p>
+        {signedIn && (
+          <div className="landing-actions auth-session-actions">
+            <a className="orange-action" href="/dashboard">Continue to dashboard</a>
+            <button type="button" className="secondary-action" onClick={() => beginSignOut()}>Sign out</button>
+          </div>
+        )}
         {providers.map((provider) =>
           provider.enabled ? (
             <button
@@ -1691,7 +1709,10 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
         <nav>
           <a href="#features">Features</a>
           {signedIn ? (
-            <a href="/dashboard" className="orange-action">Dashboard</a>
+            <>
+              <a href="/dashboard" className="orange-action">Dashboard</a>
+              <button type="button" className="public-link" onClick={() => beginSignOut()}>Sign out</button>
+            </>
           ) : (
             <>
               <a href="/login" className="public-link">Log in</a>
@@ -1708,7 +1729,10 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
           <p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p>
           <div className="landing-actions">
             {signedIn ? (
-              <a className="orange-action" href="/dashboard">Open dashboard</a>
+              <>
+                <a className="orange-action" href="/dashboard">Open dashboard</a>
+                <button type="button" className="secondary-action" onClick={() => beginSignOut()}>Sign out</button>
+              </>
             ) : (
               <>
                 <a className="orange-action" href="/login">Create account</a>
@@ -1740,15 +1764,8 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
 }
 
 function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
-  const logoutHref = "/.auth/logout?post_logout_redirect_uri=/logged-out";
-  const onDevLogout = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!import.meta.env.DEV) return;
-    event.preventDefault();
-    setDevSignedIn(false);
-    window.location.assign("/logged-out");
-  };
   return (
-    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Checkmark24Regular /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href={logoutHref} onClick={onDevLogout}>Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
+    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Checkmark24Regular /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><button type="button" className="orange-action" onClick={() => beginSignOut()}>Sign out again</button><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
   );
 }
 

@@ -18,6 +18,14 @@ const DEV_AUTH_KEY = "applypilot.devAuth";
 const DEV_USER = {
   userId: "local-development-user",
   userDetails: "local@example.test",
+  userRoles: ["authenticated"],
+};
+
+export type AuthUser = {
+  userId: string;
+  userDetails?: string;
+  userRoles?: string[];
+  identityProvider?: string;
 };
 
 /** Local-only sign-in so the landing page stays public until you click Sign in. */
@@ -27,14 +35,42 @@ export function setDevSignedIn(signedIn: boolean) {
   else localStorage.removeItem(DEV_AUTH_KEY);
 }
 
-export async function getCurrentUser() {
+function isValidPrincipal(principal: unknown): AuthUser | null {
+  if (!principal || typeof principal !== "object") return null;
+  const record = principal as Record<string, unknown>;
+  const userId = String(record.userId || "").trim();
+  if (!userId) return null;
+  const roles = Array.isArray(record.userRoles)
+    ? record.userRoles.map((role) => String(role))
+    : [];
+  // When SWA returns roles, require the authenticated role so stale/anonymous principals are ignored.
+  if (roles.length > 0 && !roles.includes("authenticated")) return null;
+  return {
+    userId,
+    userDetails: record.userDetails != null ? String(record.userDetails) : undefined,
+    userRoles: roles,
+    identityProvider: record.identityProvider != null ? String(record.identityProvider) : undefined,
+  };
+}
+
+export async function getCurrentUser(): Promise<AuthUser | null> {
   if (import.meta.env.DEV) {
     return localStorage.getItem(DEV_AUTH_KEY) === "1" ? DEV_USER : null;
   }
   const response = await fetch("/.auth/me");
   if (!response.ok) return null;
-  const body = await response.json();
-  return body.clientPrincipal || null;
+  const body = await response.json().catch(() => ({}));
+  return isValidPrincipal(body.clientPrincipal);
+}
+
+/** Clear Easy Auth (or local DEV) session so login stays reachable. */
+export function beginSignOut() {
+  if (import.meta.env.DEV) {
+    setDevSignedIn(false);
+    window.location.assign("/logged-out");
+    return;
+  }
+  window.location.assign("/.auth/logout?post_logout_redirect_uri=/logged-out");
 }
 
 export async function getAllJobs(signal?: AbortSignal) {
