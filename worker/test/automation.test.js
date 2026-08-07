@@ -7,6 +7,8 @@ import {
   compactLabel,
   humanizeFieldName,
   isUselessLabel,
+  lookupAnswer,
+  answerKeyBase,
   resolveApplicationUrl,
   parseMultiselectAnswer,
   optionMatchesTokens,
@@ -21,13 +23,58 @@ test("maps standard employer fields from the saved profile", () => {
   assert.equal(knownAnswer("LinkedIn Profile", profile, {}), "https://linkedin.example/me");
 });
 
-test("isUselessLabel rejects select placeholders and keeps real questions", () => {
+test("isUselessLabel rejects select placeholders and greenhouse generic leaves", () => {
   assert.equal(isUselessLabel("Select..."), true);
   assert.equal(isUselessLabel("Select"), true);
   assert.equal(isUselessLabel("Please select"), true);
   assert.equal(isUselessLabel("Choose one"), true);
+  assert.equal(isUselessLabel("Questionnaire Field"), true);
+  assert.equal(isUselessLabel("Boolean Value"), true);
+  assert.equal(isUselessLabel("Text"), true);
+  assert.equal(isUselessLabel("Answers"), true);
   assert.equal(isUselessLabel("Country"), false);
   assert.equal(isUselessLabel("Do you plan to work remotely?"), false);
+});
+
+test("humanizeFieldName does not surface questionnaire_field as a label", () => {
+  assert.equal(humanizeFieldName("job_application[answers][questionnaire_field]"), "");
+  assert.equal(humanizeFieldName("job_application[answers][123][boolean_value]"), "");
+  assert.equal(humanizeFieldName("job_application[first_name]"), "First Name");
+});
+
+test("lookupAnswer recovers answers when DOM index suffix shifts", () => {
+  const answers = {
+    "job_application[answers][99][text]__10": "Master's",
+    "job_application[first_name]__3": "Shivang",
+  };
+  assert.equal(
+    lookupAnswer(answers, {
+      key: "job_application[answers][99][text]__12",
+      name: "job_application[answers][99][text]",
+      label: "Degree",
+    }, {}),
+    "Master's",
+  );
+  assert.equal(
+    lookupAnswer(answers, {
+      key: "job_application[first_name]__9",
+      name: "job_application[first_name]",
+      label: "First name",
+    }, {}),
+    "Shivang",
+  );
+  assert.equal(answerKeyBase("foo__g3"), "foo");
+  assert.equal(answerKeyBase("foo__10_2"), "foo");
+});
+
+test("matchOptionLabel coerces Yes/No onto clear options", () => {
+  assert.equal(matchOptionLabel(["Yes", "No"], "yes"), "Yes");
+  assert.equal(matchOptionLabel(["No", "Yes"], "true"), "Yes");
+  assert.equal(matchOptionLabel(["Yes", "No"], "0"), "No");
+  assert.equal(
+    matchOptionLabel(["I prefer remote", "I prefer onsite"], "Yes"),
+    "",
+  );
 });
 
 test("questionKey stays unique when HTML names collide", () => {

@@ -89,6 +89,14 @@ import {
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
 import { resolveEmployerApplicationUrl } from "./employer-application-url";
+import {
+  coerceQuestionAnswer,
+  isQuestionAnswered,
+  isUselessQuestionLabel as isUselessQuestionLabelHelper,
+  lookupStoredAnswer,
+  matchSelectOption,
+  priorAnswerKeys,
+} from "./question-answers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
@@ -1510,17 +1518,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
 }
 
 function isUselessQuestionLabel(label: string) {
-  const text = String(label || "").replace(/\s+/g, " ").trim();
-  if (!text) return true;
-  if (/^[\d\W_]+$/.test(text)) return true;
-  if (/^(required|\*|optional)$/i.test(text)) return true;
-  if (/^(question\s*)?\d+$/i.test(text)) return true;
-  if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
-  if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
-  if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
-  if (/^select(\s+\w+)?\.?$|^select\.{0,3}$|^please select\.?$|^choose(\s+one)?\.?$/i.test(text)) return true;
-  if (/^select\s*\.{1,3}$/i.test(text)) return true;
-  return false;
+  return isUselessQuestionLabelHelper(label);
 }
 
 function displayQuestionLabel(question: { key: string; label: string }, index: number) {
@@ -1536,7 +1534,7 @@ function displayQuestionLabel(question: { key: string; label: string }, index: n
   const key = String(question.key || "");
   const leaf = key.includes("[")
     ? (key.match(/\[([^\]]+)\]/g) || []).map((part) => part.slice(1, -1)).filter(Boolean).pop() || key
-    : key.replace(/__\d+$/, "").split(/[./#]/).pop() || key;
+    : key.replace(/__(?:g)?\d+(?:_\d+)?$/i, "").split(/[./#]/).pop() || key;
   const humanized = leaf
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
@@ -1569,7 +1567,7 @@ function ApplicationQuestions({
       return {
         ...question,
         key,
-        priorKeys: prior && prior !== key ? [prior, prior.replace(/__\d+$/, "")] : [prior].filter(Boolean),
+        priorKeys: priorAnswerKeys(prior, key),
         label: displayQuestionLabel(question, index),
       };
     });
@@ -1605,14 +1603,10 @@ function ApplicationQuestions({
     const next: Record<string, string> = {};
     const stored = application.answers || {};
     for (const question of questions) {
-      const fromStored = [stored[question.key], ...question.priorKeys.map((key) => stored[key])]
-        .find((value) => String(value || "").trim());
-      if (fromStored) {
-        next[question.key] = String(fromStored);
-        continue;
-      }
-      const guessed = profileAnswerForLabel(question.label, profile, question.options);
-      if (guessed) next[question.key] = guessed;
+      const fromStored = lookupStoredAnswer(stored, question.priorKeys);
+      const raw = fromStored || profileAnswerForLabel(question.label, profile, question.options) || "";
+      if (!raw) continue;
+      next[question.key] = coerceQuestionAnswer(question, raw);
     }
     return next;
     // Signatures keep seed stable across poll-driven object identity churn.
@@ -1647,7 +1641,7 @@ function ApplicationQuestions({
   }
 
   const blocking = questions.some((question) => question.type === "blocking");
-  const answeredCount = questions.filter((question) => String(answers[question.key] || "").trim()).length;
+  const answeredCount = questions.filter((question) => isQuestionAnswered(question, answers)).length;
   const setAnswer = (key: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
   };
@@ -1667,7 +1661,17 @@ function ApplicationQuestions({
         if (blocking) return;
         setSaving(true);
         try {
-          await resolve(application.id, answers);
+          const coerced: Record<string, string> = {};
+          for (const question of questions) {
+            const value = coerceQuestionAnswer(question, answers[question.key] || "");
+            if (value) coerced[question.key] = value;
+            // Also persist under the original worker key base so index shifts still resolve.
+            const original = String(question.priorKeys[0] || question.key);
+            if (original && original !== question.key && value) coerced[original] = value;
+            const base = original.replace(/__(?:g)?\d+(?:_\d+)?$/i, "");
+            if (base && value) coerced[base] = value;
+          }
+          await resolve(application.id, coerced);
         } finally {
           setSaving(false);
         }
@@ -1689,6 +1693,9 @@ function ApplicationQuestions({
         {questions.map((question, index) => {
           const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
           const selectedOptions = parseStoredMultiselect(answers[question.key] || "");
+          const selectValue = question.type === "select"
+            ? (matchSelectOption(selectOptions, answers[question.key] || "") || "")
+            : (answers[question.key] || "");
           return (
           <label key={question.key} className={question.type === "multiselect" ? "multiselect-field" : undefined}>
             <span>{question.label || `Question ${index + 1}`}</span>
@@ -1715,7 +1722,7 @@ function ApplicationQuestions({
             ) : question.type === "select" ? (
               <select
                 required={question.required !== false}
-                value={answers[question.key] || ""}
+                value={selectValue}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
@@ -1726,7 +1733,7 @@ function ApplicationQuestions({
             ) : question.type === "checkbox" ? (
               <select
                 required={question.required !== false}
-                value={answers[question.key] || ""}
+                value={matchSelectOption(["yes", "no"], answers[question.key] || "") || answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
