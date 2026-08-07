@@ -1043,6 +1043,47 @@ select {
 .source-link:hover {
   text-decoration: underline;
 }
+.employer-app-chrome {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  position: relative;
+}
+.employer-app-chrome .source-link {
+  position: static;
+  font-size: 12px;
+  font-weight: 600;
+}
+.employer-app-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #667085;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.multiselect-field {
+  align-content: start;
+}
+.multiselect-options {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 7px;
+  background: #fff;
+}
+.multiselect-option {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500 !important;
+}
+.multiselect-option input {
+  width: auto !important;
+}
 .no-results {
   padding: 70px 20px;
   display: flex;

@@ -82,6 +82,7 @@ import {
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
+import { resolveEmployerApplicationUrl } from "./employer-application-url";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
@@ -126,6 +127,7 @@ type Job = {
   source?: string;
   postedAt?: string;
   applicationId?: string;
+  jobExternalId?: string;
   applicationStatus?: Application["status"];
   applicationError?: string;
   applicationUpdatedAt?: string;
@@ -294,12 +296,14 @@ export default function App() {
         return {
           ...item,
           applicationId: application?.id,
+          jobExternalId: application?.jobExternalId || String(item.id),
           applicationStatus: application?.status,
           applicationError: application?.lastSubmissionError,
           applicationUpdatedAt: application?.updatedAt,
           submissionQueuedAt: application?.submissionQueuedAt,
           requiredQuestions: application?.requiredQuestions,
           applicationAnswers: application?.answers,
+          sourceUrl: application?.sourceUrl || item.sourceUrl,
           status:
             application && ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
@@ -949,6 +953,7 @@ function JobDetail({
     ? {
         id: job.applicationId,
         jobId: job.id,
+        jobExternalId: job.jobExternalId,
         company: job.company,
         title: job.title,
         location: job.location,
@@ -998,16 +1003,25 @@ function JobDetail({
                 : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
             </p>
             {job.applicationId && job.applicationStatus !== "processing" && (
-              <button
-                className="apply"
-                disabled={requeuing}
-                onClick={async () => {
-                  setRequeuing(true);
-                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
-                }}
-              >
-                {requeuing ? "Re-queuing…" : "Retry queue"}
-              </button>
+              <>
+                <button
+                  className="apply"
+                  disabled={requeuing}
+                  onClick={async () => {
+                    setRequeuing(true);
+                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                  }}
+                >
+                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                </button>
+                <EmployerApplicationChrome
+                  sourceUrl={job.sourceUrl}
+                  company={job.company}
+                  source={job.source}
+                  jobExternalId={job.jobExternalId}
+                  applicationId={job.applicationId}
+                />
+              </>
             )}
           </div>
         </div>
@@ -1019,16 +1033,25 @@ function JobDetail({
             <b>Application failed</b>
             <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
             {job.applicationId && (
-              <button
-                className="apply"
-                disabled={requeuing}
-                onClick={async () => {
-                  setRequeuing(true);
-                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
-                }}
-              >
-                {requeuing ? "Re-queuing…" : "Retry queue"}
-              </button>
+              <>
+                <button
+                  className="apply"
+                  disabled={requeuing}
+                  onClick={async () => {
+                    setRequeuing(true);
+                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                  }}
+                >
+                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                </button>
+                <EmployerApplicationChrome
+                  sourceUrl={job.sourceUrl}
+                  company={job.company}
+                  source={job.source}
+                  jobExternalId={job.jobExternalId}
+                  applicationId={job.applicationId}
+                />
+              </>
             )}
           </div>
         </div>
@@ -1041,16 +1064,25 @@ function JobDetail({
               <b>Action needed</b>
               <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
               {job.applicationId && (
-                <button
-                  className="apply"
-                  disabled={requeuing}
-                  onClick={async () => {
-                    setRequeuing(true);
-                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
-                  }}
-                >
-                  {requeuing ? "Re-queuing…" : "Retry queue"}
-                </button>
+                <>
+                  <button
+                    className="apply"
+                    disabled={requeuing}
+                    onClick={async () => {
+                      setRequeuing(true);
+                      try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                    }}
+                  >
+                    {requeuing ? "Re-queuing…" : "Retry queue"}
+                  </button>
+                  <EmployerApplicationChrome
+                    sourceUrl={job.sourceUrl}
+                    company={job.company}
+                    source={job.source}
+                    jobExternalId={job.jobExternalId}
+                    applicationId={job.applicationId}
+                  />
+                </>
               )}
             </div>
           </div>
@@ -1108,6 +1140,13 @@ function JobDetail({
                   : "Queued"}
         </button>
       </div>
+      <EmployerApplicationChrome
+        sourceUrl={job.sourceUrl}
+        company={job.company}
+        source={job.source}
+        jobExternalId={job.jobExternalId}
+        applicationId={job.applicationId}
+      />
       {job.sourceUrl && (
         <a
           className="source-link"
@@ -1123,6 +1162,52 @@ function JobDetail({
       </div>
     </section>
   );
+}
+
+function EmployerApplicationChrome({
+  sourceUrl,
+  company,
+  source,
+  jobExternalId,
+  applicationId,
+}: {
+  sourceUrl?: string;
+  company?: string;
+  source?: string;
+  jobExternalId?: string;
+  applicationId?: string;
+}) {
+  const employerUrl = resolveEmployerApplicationUrl({ sourceUrl, company, source, jobExternalId });
+  if (!employerUrl && !jobExternalId && !applicationId) return null;
+  return (
+    <div className="employer-app-chrome">
+      {employerUrl && (
+        <a className="source-link" href={employerUrl} target="_blank" rel="noreferrer">
+          View employer application
+        </a>
+      )}
+      <div className="employer-app-ids">
+        {jobExternalId && <span>Employer job ID: {jobExternalId}</span>}
+        {applicationId && <span>Application ID: {applicationId}</span>}
+      </div>
+    </div>
+  );
+}
+
+function parseStoredMultiselect(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return [] as string[];
+  if (raw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+    } catch { /* ignore */ }
+  }
+  return raw.split(/[,;\n|]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function serializeMultiselect(values: string[]) {
+  return values.join(", ");
 }
 
 function Applications({
@@ -1190,7 +1275,16 @@ function Applications({
                         : "Waiting in the submission queue for a browser worker."}
                   </span>
                   {application.status !== "processing" && (
-                    <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                    <>
+                      <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                      <EmployerApplicationChrome
+                        sourceUrl={application.sourceUrl}
+                        company={application.company}
+                        source={application.source}
+                        jobExternalId={application.jobExternalId}
+                        applicationId={application.id}
+                      />
+                    </>
                   )}
                 </div>
               )}
@@ -1198,6 +1292,13 @@ function Applications({
                 <div className="queued-message">
                   <span>{application.lastSubmissionError || "Submission needs attention."}</span>
                   <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                  <EmployerApplicationChrome
+                    sourceUrl={application.sourceUrl}
+                    company={application.company}
+                    source={application.source}
+                    jobExternalId={application.jobExternalId}
+                    applicationId={application.id}
+                  />
                 </div>
               )}
               {application.status === "submitted" && (
@@ -1224,7 +1325,7 @@ function Applications({
   );
 }
 
-function profileAnswerForLabel(label: string, profile: Profile) {
+function profileAnswerForLabel(label: string, profile: Profile, options?: string[]) {
   const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   if (/\bfirst name\b/.test(text)) return profile.firstName;
   if (/\blast name\b/.test(text)) return profile.lastName;
@@ -1252,6 +1353,26 @@ function profileAnswerForLabel(label: string, profile: Profile) {
   if (/\blanguage\b/.test(text)) return profile.preferredLanguages;
   if (/\bcover letter\b|\bwhy (do you want|are you interested)|about yourself\b|\bsummary\b|\badditional (information|info)\b/.test(text)) {
     return profile.additionalInfo || profile.summary || profile.headline || "";
+  }
+  if (options?.length) {
+    const tokens = [profile.country, profile.location, profile.preferredLocations, profile.city]
+      .flatMap((value) => String(value || "").split(/[,;|/]+/))
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+    const selected = options.filter((option) => {
+      const optionText = option.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const compact = optionText.replace(/\s+/g, "");
+      return tokens.some((token) => {
+        const needle = token.replace(/[^a-z0-9]+/g, " ").trim();
+        const needleCompact = needle.replace(/\s+/g, "");
+        if (!needle) return false;
+        if (optionText === needle || compact === needleCompact) return true;
+        if (needle.length >= 4 && (optionText.includes(needle) || needle.includes(optionText))) return true;
+        if (needle === "us" || needle === "usa") return /\bunited states\b|\busa\b/.test(optionText);
+        return false;
+      });
+    });
+    if (selected.length) return serializeMultiselect(selected);
   }
   return "";
 }
@@ -1349,7 +1470,7 @@ function ApplicationQuestions({
         next[question.key] = String(fromStored);
         continue;
       }
-      const guessed = profileAnswerForLabel(question.label, profile);
+      const guessed = profileAnswerForLabel(question.label, profile, question.options);
       if (guessed) next[question.key] = guessed;
     }
     return next;
@@ -1372,7 +1493,13 @@ function ApplicationQuestions({
         <p>{application.lastSubmissionError || "The employer application needs manual review."}</p>
         <div className="action-required-buttons">
           <button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button>
-          <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a>
+          <EmployerApplicationChrome
+            sourceUrl={application.sourceUrl}
+            company={application.company}
+            source={application.source}
+            jobExternalId={application.jobExternalId}
+            applicationId={application.id}
+          />
         </div>
       </div>
     );
@@ -1382,6 +1509,13 @@ function ApplicationQuestions({
   const answeredCount = questions.filter((question) => String(answers[question.key] || "").trim()).length;
   const setAnswer = (key: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
+  };
+  const toggleMultiselect = (key: string, option: string, checked: boolean) => {
+    const current = parseStoredMultiselect(answers[key] || "");
+    const next = checked
+      ? [...new Set([...current, option])]
+      : current.filter((item) => item !== option);
+    setAnswer(key, serializeMultiselect(next));
   };
 
   return (
@@ -1402,15 +1536,41 @@ function ApplicationQuestions({
         <b>Employer questions ({questions.length})</b>
         <small>{answeredCount} of {questions.length} filled · Profile values prefilled where possible</small>
       </div>
+      <EmployerApplicationChrome
+        sourceUrl={application.sourceUrl}
+        company={application.company}
+        source={application.source}
+        jobExternalId={application.jobExternalId}
+        applicationId={application.id}
+      />
       <p>{application.lastSubmissionError}</p>
       <div className="action-required-fields">
         {questions.map((question, index) => {
           const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
+          const selectedOptions = parseStoredMultiselect(answers[question.key] || "");
           return (
-          <label key={question.key}>
+          <label key={question.key} className={question.type === "multiselect" ? "multiselect-field" : undefined}>
             <span>{question.label || `Question ${index + 1}`}</span>
             {question.type === "blocking" ? (
-              <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
+              <a href={resolveEmployerApplicationUrl({
+                sourceUrl: application.sourceUrl,
+                company: application.company,
+                source: application.source,
+                jobExternalId: application.jobExternalId,
+              }) || application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
+            ) : question.type === "multiselect" ? (
+              <div className="multiselect-options">
+                {selectOptions.map((option, optionIndex) => (
+                  <label key={`${question.key}::${optionIndex}::${option}`} className="multiselect-option">
+                    <input
+                      type="checkbox"
+                      checked={selectedOptions.includes(option)}
+                      onChange={(event) => toggleMultiselect(question.key, option, event.target.checked)}
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
             ) : question.type === "select" ? (
               <select
                 required={question.required !== false}
