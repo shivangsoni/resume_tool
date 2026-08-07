@@ -1,10 +1,10 @@
 name: Deploy non-production
 
 on:
+  # Called from CI after checks pass on non-main pushes.
+  # Do not also use workflow_run on CI — that double-starts deploy and
+  # concurrency cancel-in-progress cancels the in-flight run.
   workflow_call:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -32,10 +32,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'workflow_call' ||
-      (github.event_name == 'push' && github.ref_name != 'main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch != 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      (github.event_name == 'push' && github.ref_name != 'main')
     runs-on: ubuntu-latest
     environment: non-production
     outputs:
@@ -53,7 +50,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
@@ -104,7 +101,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
@@ -206,7 +203,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
