@@ -42,9 +42,22 @@ select {
   background: var(--colorNeutralBackground1, #fff) !important;
 }
 .sa-shell.nav-collapsed .sa-nav {
-  /* Hide entirely so the main column is the only flex child and keeps full width.
-     A 0-width grid track + Fluent unmounting the drawer crushed the page into the corner. */
+  /* Keep a slim rail with the toggle so the control stays above the nav column. */
+  display: flex !important;
+  flex-direction: column;
+  flex: 0 0 56px;
+  width: 56px;
+  max-width: 56px;
+  min-width: 56px;
+}
+.sa-shell.nav-collapsed .sa-nav .fui-NavDrawerBody,
+.sa-shell.nav-collapsed .sa-nav .fui-NavDrawerFooter,
+.sa-shell.nav-collapsed .sa-logo {
   display: none !important;
+}
+.sa-shell.nav-collapsed .sa-nav-top {
+  justify-content: center;
+  padding-inline: 0;
 }
 .sa-nav.fui-NavDrawer,
 .sa-nav .fui-NavDrawer {
@@ -63,12 +76,77 @@ select {
 .sa-nav .fui-NavSectionHeader {
   width: 100%;
 }
+.sa-nav .fui-NavSectionHeader {
+  text-align: left;
+  justify-content: flex-start;
+}
+.sa-nav .fui-NavItem {
+  display: flex !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  text-align: left !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.sa-nav .fui-NavItem .fui-NavItem__content,
+.sa-nav .fui-NavItem span {
+  text-align: left;
+  justify-content: flex-start;
+}
+.sa-nav .fui-NavItem:focus,
+.sa-nav .fui-NavItem:focus-visible,
+.sa-nav .fui-NavItem:active,
+.sa-nav .fui-NavItem:hover:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+.sa-nav .fui-NavItem[aria-current="page"],
+.sa-nav .fui-NavItem[aria-selected="true"] {
+  background: #e8f3fc !important;
+  color: #0f6cbd !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.sa-nav .fui-NavItem[aria-current="page"]:focus,
+.sa-nav .fui-NavItem[aria-current="page"]:focus-visible,
+.sa-nav .fui-NavItem[aria-current="page"]:active,
+.sa-nav .fui-NavItem[aria-selected="true"]:focus,
+.sa-nav .fui-NavItem[aria-selected="true"]:focus-visible,
+.sa-nav .fui-NavItem[aria-selected="true"]:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  background: #e8f3fc !important;
+  color: #0f6cbd !important;
+}
+.sa-nav .fui-NavItem[aria-current="page"] .fui-Icon,
+.sa-nav .fui-NavItem[aria-selected="true"] .fui-Icon,
+.sa-nav .fui-NavItem[aria-current="page"] svg,
+.sa-nav .fui-NavItem[aria-selected="true"] svg {
+  color: #0f6cbd !important;
+}
+.sa-nav-top {
+  height: var(--sa-header-height);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--colorNeutralStroke2, #e0e0e0);
+}
+.sa-nav-toggle {
+  flex: none;
+  min-width: 40px !important;
+}
 .sa-logo {
   height: var(--sa-header-height);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 8px;
+  padding: 0 4px;
+  min-width: 0;
   color: var(--colorNeutralForeground1, #242424);
   font-size: 16px;
 }
@@ -81,6 +159,11 @@ select {
   display: grid;
   place-items: center;
   flex: none;
+}
+.sa-logo b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sa-logo svg {
   width: 18px;
@@ -96,11 +179,15 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
+  z-index: 1;
 }
 .sa-main {
   flex: 1;
   min-width: 0;
   overflow: auto;
+  position: relative;
+  z-index: 1;
 }
 .sa-header {
   height: var(--sa-header-height);
@@ -110,10 +197,24 @@ select {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 16px 0 8px;
+  padding: 0 16px;
   position: sticky;
   top: 0;
   z-index: 20;
+}
+.sa-account-menu,
+.fui-MenuPopover.sa-account-menu,
+.fui-MenuPopover {
+  z-index: 1000 !important;
+}
+.onboarding-banner {
+  position: relative;
+  z-index: 0;
+}
+.onboarding-banner-actions,
+.onboarding-banner .apply {
+  position: relative;
+  z-index: 0;
 }
 .header-title {
   display: flex;
@@ -1274,7 +1375,9 @@ select {
     top: 0;
   }
   .sa-shell.nav-collapsed .sa-nav {
-    display: none !important;
+    display: flex !important;
+    width: 56px;
+    max-width: 56px;
   }
   .header-title b {
     font-size: 15px;
@@ -1303,7 +1406,9 @@ select {
     height: 100vh;
   }
   .sa-shell.nav-collapsed .sa-nav {
-    display: none !important;
+    display: flex !important;
+    width: 56px;
+    max-width: 56px;
   }
   .sa-logo,
   .side-lower {
@@ -1622,6 +1727,8 @@ a.orange-action, button.orange-action { background: #ff8500; color: #fff; }
   border: 1px solid #ffd099;
   background: linear-gradient(135deg, #fff8f0, #fff1e6);
   color: #7a3e00;
+  position: relative;
+  z-index: 0;
 }
 .onboarding-banner b {
   display: block;

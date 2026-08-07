@@ -312,9 +312,18 @@ export default function App() {
         className="sa-nav"
       >
         <NavDrawerHeader>
-          <div className="sa-logo">
-            <span><Sparkle24Filled /></span>
-            <b>ApplyPilot</b>
+          <div className="sa-nav-top">
+            <Button
+              appearance="subtle"
+              className="sa-nav-toggle"
+              icon={<Navigation24Regular />}
+              aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
+              onClick={() => setNavOpen((value) => !value)}
+            />
+            <div className="sa-logo">
+              <span><Sparkle24Filled /></span>
+              <b>ApplyPilot</b>
+            </div>
           </div>
         </NavDrawerHeader>
         <NavDrawerBody>
@@ -353,12 +362,6 @@ export default function App() {
 
       <div className="sa-main-column">
         <header className="sa-header">
-          <Button
-            appearance="subtle"
-            icon={<Navigation24Regular />}
-            aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
-            onClick={() => setNavOpen((value) => !value)}
-          />
           <div className="header-title">
             <b>{pageTitles[page]}</b>
           </div>
@@ -377,13 +380,13 @@ export default function App() {
               onClick={() => setPage("inbox")}
             />
           </Tooltip>
-          <Menu>
+          <Menu positioning={{ position: "below", align: "end" }}>
             <MenuTrigger disableButtonEnhancement>
               <Button appearance="subtle" className="header-profile-btn" aria-label="Account menu">
                 <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
               </Button>
             </MenuTrigger>
-            <MenuPopover>
+            <MenuPopover className="sa-account-menu">
               <MenuList>
                 <MenuItem icon={<Person24Regular />} onClick={() => setPage("profile")}>Profile</MenuItem>
                 <MenuItem icon={<Settings24Regular />} onClick={() => setPage("settings")}>Settings</MenuItem>
