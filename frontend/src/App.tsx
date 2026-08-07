@@ -58,6 +58,7 @@ import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFIL
 import {
   answerApplicationQuestions,
   createApplication,
+  deleteApplication,
   submitApplication,
   getApplications,
   getAllJobs,
@@ -178,10 +179,24 @@ export default function App() {
     try {
       const queued = await submitApplication(id);
       setApplications((items) => items.map((item) => (item.id === id ? queued.application : item)));
-      notify("Application re-queued for the browser worker.");
+      notify("Moved to queued. Waiting for a browser worker.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not re-queue application");
     }
+  };
+  const dismissJob = async (job: Job) => {
+    const removableStatuses = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    if (job.applicationId && removableStatuses.includes(String(job.applicationStatus || ""))) {
+      try {
+        await deleteApplication(job.applicationId);
+        setApplications((items) => items.filter((item) => item.id !== job.applicationId));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Could not remove application");
+        return;
+      }
+    }
+    setDismissed((items) => (items.includes(job.id) ? items : [...items, job.id]));
+    notify(job.applicationId ? "Application removed" : "Removed from your matches");
   };
   useEffect(() => {
     getCurrentUser()
@@ -255,7 +270,7 @@ export default function App() {
     () =>
       liveJobs.map((item) => {
         const application = applications.find(
-          (entry) => entry.jobId === item.id,
+          (entry) => Number(entry.jobId) === Number(item.id),
         );
         return {
           ...item,
@@ -460,9 +475,8 @@ export default function App() {
               setFeedError("");
               setReloadKey((value) => value + 1);
             }}
-            dismiss={(id) => {
-              setDismissed([...dismissed, id]);
-              notify("Removed from your matches");
+            dismiss={(job) => {
+              void dismissJob(job);
             }}
             apply={async (j) => {
               if (!currentUser) {
@@ -666,7 +680,7 @@ function Dashboard(p: {
   feedState: "loading" | "live" | "error";
   feedError: string;
   retry: () => void;
-  dismiss: (n: number) => void;
+  dismiss: (job: Job) => void;
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
@@ -912,7 +926,7 @@ function JobDetail({
   profile,
 }: {
   job: Job;
-  dismiss: (n: number) => void;
+  dismiss: (job: Job) => void;
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
@@ -993,11 +1007,44 @@ function JobDetail({
           <div>
             <b>Application failed</b>
             <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
+            {job.applicationId && (
+              <button
+                className="apply"
+                disabled={requeuing}
+                onClick={async () => {
+                  setRequeuing(true);
+                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                }}
+              >
+                {requeuing ? "Re-queuing…" : "Retry queue"}
+              </button>
+            )}
           </div>
         </div>
       )}
       {failedApplication && (
-        <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
+        <>
+          <div className="submission-banner failed">
+            <ErrorCircle24Regular />
+            <div>
+              <b>Action needed</b>
+              <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
+              {job.applicationId && (
+                <button
+                  className="apply"
+                  disabled={requeuing}
+                  onClick={async () => {
+                    setRequeuing(true);
+                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                  }}
+                >
+                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                </button>
+              )}
+            </div>
+          </div>
+          <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
+        </>
       )}
       {job.status === "applied" && (
         <div className="submission-banner applied">
@@ -1031,7 +1078,7 @@ function JobDetail({
         </div>
       </div>
       <div className="detail-actions">
-        <button className="not" onClick={() => dismiss(job.id)}>
+        <button className="not" onClick={() => dismiss(job)}>
           Not interested
         </button>
         <button className="apply" disabled={applying || job.status !== "ready"} onClick={async () => {
@@ -1136,6 +1183,12 @@ function Applications({
                   )}
                 </div>
               )}
+              {(application.status === "needs_action" || application.status === "failed") && (
+                <div className="queued-message">
+                  <span>{application.lastSubmissionError || "Submission needs attention."}</span>
+                  <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                </div>
+              )}
               {application.status === "submitted" && (
                 <button onClick={() => update(application.id, "interview")}>
                   Mark interview
@@ -1190,9 +1243,28 @@ function profileAnswerForLabel(label: string, profile: Profile) {
   return "";
 }
 
+function isUselessQuestionLabel(label: string) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  if (/^[\d\W_]+$/.test(text)) return true;
+  if (/^(required|\*|optional)$/i.test(text)) return true;
+  if (/^(question\s*)?\d+$/i.test(text)) return true;
+  if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
+  if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
+  if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
+  return false;
+}
+
 function displayQuestionLabel(question: { key: string; label: string }, index: number) {
-  const label = String(question.label || "").replace(/\s+/g, " ").trim();
-  if (label && !/^required question$/i.test(label)) return label;
+  const raw = String(question.label || "").replace(/\s+/g, " ").trim();
+  const cleaned = raw
+    .replace(/^\*+\s*/, "")
+    .replace(/\s*\*+$/, "")
+    .replace(/\(\s*required\s*\)/gi, "")
+    .replace(/\brequired\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned && !isUselessQuestionLabel(cleaned)) return cleaned;
   const key = String(question.key || "");
   const leaf = key.includes("[")
     ? (key.match(/\[([^\]]+)\]/g) || []).map((part) => part.slice(1, -1)).filter(Boolean).pop() || key
@@ -1202,7 +1274,7 @@ function displayQuestionLabel(question: { key: string; label: string }, index: n
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (humanized && !/^(input|field|select|textarea|question|required question)\d*$/i.test(humanized)) {
+  if (humanized && !isUselessQuestionLabel(humanized)) {
     return humanized.replace(/\b\w/g, (char) => char.toUpperCase());
   }
   return `Question ${index + 1}`;
@@ -1217,10 +1289,26 @@ function ApplicationQuestions({
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   profile: Profile;
 }) {
-  const questions = application.requiredQuestions;
+  const questions = useMemo(() => {
+    const list = application.requiredQuestions || [];
+    const used = new Set<string>();
+    return list.map((question, index) => {
+      let key = String(question.key || `question_${index + 1}`);
+      if (!key.includes("__")) key = `${key}__${index}`;
+      if (used.has(key)) key = `${key.replace(/__\d+$/, "")}__${index}_${used.size}`;
+      used.add(key);
+      const prior = String(question.key || "");
+      return {
+        ...question,
+        key,
+        priorKeys: prior && prior !== key ? [prior, prior.replace(/__\d+$/, "")] : [prior].filter(Boolean),
+        label: displayQuestionLabel(question, index),
+      };
+    });
+  }, [application.requiredQuestions]);
   const answersSignature = JSON.stringify(application.answers || {});
   const questionsSignature = JSON.stringify(
-    (questions || []).map((question) => [question.key, question.label, question.type, question.options || []]),
+    questions.map((question) => [question.key, question.label, question.type, question.options || []]),
   );
   const profileSignature = JSON.stringify({
     firstName: profile.firstName,
@@ -1239,11 +1327,16 @@ function ApplicationQuestions({
     sponsorship: profile.sponsorship,
   });
   const seedAnswers = useMemo(() => {
-    const list = questions || [];
-    const next: Record<string, string> = { ...(application.answers || {}) };
-    for (const [index, question] of list.entries()) {
-      if (String(next[question.key] || "").trim()) continue;
-      const guessed = profileAnswerForLabel(displayQuestionLabel(question, index), profile);
+    const next: Record<string, string> = {};
+    const stored = application.answers || {};
+    for (const question of questions) {
+      const fromStored = [stored[question.key], ...question.priorKeys.map((key) => stored[key])]
+        .find((value) => String(value || "").trim());
+      if (fromStored) {
+        next[question.key] = String(fromStored);
+        continue;
+      }
+      const guessed = profileAnswerForLabel(question.label, profile);
       if (guessed) next[question.key] = guessed;
     }
     return next;
@@ -1259,7 +1352,7 @@ function ApplicationQuestions({
     setAnswers(seedAnswers);
   }
 
-  if (!questions?.length) {
+  if (!questions.length) {
     return (
       <div className="action-required">
         <b>Action required</b>
@@ -1300,10 +1393,9 @@ function ApplicationQuestions({
       <div className="action-required-fields">
         {questions.map((question, index) => {
           const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
-          const label = displayQuestionLabel(question, index);
           return (
-          <label key={`${question.key}__${index}`}>
-            <span>{label}</span>
+          <label key={question.key}>
+            <span>{question.label || `Question ${index + 1}`}</span>
             {question.type === "blocking" ? (
               <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
             ) : question.type === "select" ? (
@@ -1313,7 +1405,9 @@ function ApplicationQuestions({
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
-                {selectOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                {selectOptions.map((option, optionIndex) => (
+                  <option key={`${question.key}::${optionIndex}::${option}`} value={option}>{option}</option>
+                ))}
               </select>
             ) : question.type === "checkbox" ? (
               <select

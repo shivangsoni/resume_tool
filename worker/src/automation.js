@@ -21,8 +21,33 @@ const humanizeFieldName = (value) => {
     .replace(/[_\-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (!spaced || /^(input|field|select|textarea|question)\d*$/i.test(spaced)) return "";
+  if (!spaced || isUselessLabel(spaced)) return "";
   return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+/** Labels that are markers / placeholders, not real question text. */
+const isUselessLabel = (label) => {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  if (/^[\d\W_]+$/.test(text)) return true;
+  if (/^(required|\*|optional)$/i.test(text)) return true;
+  if (/^(question\s*)?\d+$/i.test(text)) return true;
+  if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
+  if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
+  if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
+  return false;
+};
+
+const sanitizeLabel = (label) => {
+  const cleaned = String(label || "")
+    .replace(/\s+/g, " ")
+    .replace(/^\*+\s*/, "")
+    .replace(/\s*\*+$/, "")
+    .replace(/\(\s*required\s*\)/gi, "")
+    .replace(/\brequired\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return isUselessLabel(cleaned) ? "" : cleaned;
 };
 
 const knownAnswer = (label, profile, answers) => {
@@ -207,6 +232,25 @@ export async function runApplication({ application, profile, resumePath }) {
           || element.getAttribute("data-testid")
           || element.getAttribute("data-name")
           || "";
+        const pickText = (...candidates) => {
+          for (const candidate of candidates) {
+            const text = String(candidate || "").replace(/\s+/g, " ").trim();
+            if (!text || text.length > 180) continue;
+            const cleaned = text
+              .replace(/^\*+\s*/, "")
+              .replace(/\s*\*+$/, "")
+              .replace(/\(\s*required\s*\)/gi, "")
+              .replace(/\brequired\b/gi, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (!cleaned) continue;
+            if (/^(required|\*|optional|question\s*\d+)$/i.test(cleaned)) continue;
+            if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(cleaned)) continue;
+            if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(cleaned)) continue;
+            return cleaned;
+          }
+          return "";
+        };
         const humanize = (value) => {
           const raw = String(value || "").trim();
           if (!raw) return "";
@@ -214,19 +258,20 @@ export async function runApplication({ application, profile, resumePath }) {
             ? (raw.match(/\[([^\]]+)\]/g) || []).map((part) => part.slice(1, -1)).filter(Boolean).pop() || raw
             : raw.split(/[./#]/).pop() || raw;
           const spaced = leaf.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
-          if (!spaced || /^(input|field|select|textarea|question)\d*$/i.test(spaced)) return "";
+          if (!spaced || /^(input|field|select|textarea|question|required)[\d\s_-]*$/i.test(spaced)) return "";
           return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
         };
-        const label = labelledBy
-          || readLabelText(labelNode)
-          || element.getAttribute("aria-label")
-          || siblingText()
-          || element.getAttribute("placeholder")
-          || element.getAttribute("title")
-          || humanize(dataHint)
-          || humanize(name)
-          || humanize(id)
-          || "";
+        const label = pickText(
+          labelledBy,
+          readLabelText(labelNode),
+          element.getAttribute("aria-label"),
+          siblingText(),
+          element.getAttribute("placeholder"),
+          element.getAttribute("title"),
+          humanize(dataHint),
+          humanize(name),
+          humanize(id),
+        );
         const required = element.required
           || element.getAttribute("aria-required") === "true"
           || /\*\s*$|required/i.test(label)
@@ -241,8 +286,9 @@ export async function runApplication({ application, profile, resumePath }) {
       });
       if (isSkippableFieldMeta(info)) continue;
       const key = questionKey(info.name, info.label, index);
-      const displayLabel = compactLabel(info.label).replace(/\s+/g, " ").trim()
+      const displayLabel = sanitizeLabel(compactLabel(info.label))
         || humanizeFieldName(info.name)
+        || humanizeFieldName(info.label)
         || `Question ${index + 1}`;
       if (info.type === "file") { if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath); continue; }
       if (info.type === "checkbox" || info.type === "radio") {
@@ -288,4 +334,4 @@ export async function runApplication({ application, profile, resumePath }) {
   } finally { await browser.close(); }
 }
 
-export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName };
+export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel };

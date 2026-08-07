@@ -1,6 +1,6 @@
 import { app } from "@azure/functions";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { createApplication, listApplications, queueApplicationSubmission, revertApplicationQueue, saveApplicationAnswers, updateApplication } from "../database.js";
+import { createApplication, deleteApplication, listApplications, queueApplicationSubmission, revertApplicationQueue, saveApplicationAnswers, updateApplication } from "../database.js";
 import { notifyApplicationStatus, resolveApplyEmail, sendApplicationQueuedEmail, sendOpsAlertEmail } from "../notifications.js";
 import { enqueueApplicationSubmission } from "../submission-queue.js";
 
@@ -55,16 +55,25 @@ app.http("submitApplication", {
 });
 
 app.http("application", {
-  methods: ["PATCH"], authLevel: "anonymous", route: "applications/{id}",
+  methods: ["PATCH", "DELETE"], authLevel: "anonymous", route: "applications/{id}",
   handler: async (request, context) => {
     const principal = getPrincipal(request); if (!principal) return unauthorized();
     try {
+      if (request.method === "DELETE") {
+        const removed = await deleteApplication(principal, request.params.id);
+        if (!removed) return { status: 404, jsonBody: { error: "Application not found." } };
+        return { status: 200, jsonBody: { deleted: true, id: removed.id } };
+      }
       const application = await updateApplication(principal, request.params.id, await request.json());
       if (application) {
         try { await notifyApplicationStatus(principal, application, application.status, application.lastSubmissionError || ""); } catch { /* ignore */ }
       }
       return application ? { jsonBody: { application } } : { status: 404, jsonBody: { error: "Application not found." } };
-    } catch (error) { context.error("Application update failed", error); return { status: 400, jsonBody: { error: error instanceof Error ? error.message : "Update failed." } }; }
+    } catch (error) {
+      context.error("Application update failed", error);
+      const status = error?.status === 409 ? 409 : 400;
+      return { status, jsonBody: { error: error instanceof Error ? error.message : "Update failed." } };
+    }
   },
 });
 

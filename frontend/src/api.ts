@@ -83,6 +83,11 @@ export const updateApplication = (
     body: JSON.stringify({ status, notes }),
   });
 
+export const deleteApplication = (id: string) =>
+  request<{ deleted: boolean; id: string }>(`/applications/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
 export async function uploadResume(file: File) {
   const form = new FormData();
   form.append("file", file);

@@ -244,6 +244,49 @@ export async function recordSubmissionOutcome(id, outcome) {
   } catch (error) { await transaction.rollback(); throw error; }
 }
 
+/** Permanently remove a non-submitted application (queued/failed/review/etc.). */
+export async function deleteApplication(principal, id) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    const existing = await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("id", sql.UniqueIdentifier, id)
+      .query(`
+        SELECT Id, Status FROM dbo.Applications
+        WHERE Id=@id AND UserId=@userId;
+      `);
+    if (!existing.recordset.length) {
+      await transaction.rollback();
+      return null;
+    }
+    const status = String(existing.recordset[0].Status || "");
+    const removable = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    if (!removable.includes(status)) {
+      const error = new Error("Only incomplete applications can be removed.");
+      error.status = 409;
+      throw error;
+    }
+    await new sql.Request(transaction)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("UPDATE dbo.InboundMessages SET ApplicationId=NULL WHERE ApplicationId=@id;");
+    await new sql.Request(transaction)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("DELETE FROM dbo.ApplicationSubmissionAttempts WHERE ApplicationId=@id;");
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("DELETE FROM dbo.Applications WHERE Id=@id AND UserId=@userId;");
+    await transaction.commit();
+    return { id, status };
+  } catch (error) {
+    try { await transaction.rollback(); } catch { /* ignore */ }
+    throw error;
+  }
+}
+
 export async function saveDocument(principal, document) {
   const userId = await ensureUser(principal);
   const db = await pool();

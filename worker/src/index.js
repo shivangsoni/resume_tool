@@ -183,17 +183,34 @@ console.log("ApplyPilot browser worker listening", {
   environment: process.env.DEPLOYMENT_ENVIRONMENT || "production",
 });
 
-receiver.subscribe({ processMessage: async (message) => {
-  const id = String(message.body?.applicationId || "");
+let workerBusy = false;
+
+async function claimNextQueuedApplication() {
+  const result = await pool.request().query(`
+    ;WITH nextApp AS (
+      SELECT TOP (1) Id
+      FROM dbo.Applications WITH (UPDLOCK, READPAST, ROWLOCK)
+      WHERE Status = 'queued'
+         OR (Status = 'processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+      ORDER BY COALESCE(SubmissionQueuedAt, UpdatedAt) ASC
+    )
+    UPDATE dbo.Applications
+    SET Status = 'queued', UpdatedAt = SYSUTCDATETIME()
+    OUTPUT inserted.Id, inserted.Status
+    WHERE Id IN (SELECT Id FROM nextApp);
+  `);
+  return result.recordset[0]?.Id ? String(result.recordset[0].Id) : null;
+}
+
+async function processApplicationId(id, { completeMessage, abandonMessage } = {}) {
   const data = await load(id);
   if (!data) {
     const status = await applicationStatus(id);
-    // Terminal or unknown: drop the message. Still-active rows: abandon so another delivery can reclaim.
     if (!status || ["submitted", "needs_action", "failed", "interview", "offer", "rejected", "review"].includes(status)) {
-      await receiver.completeMessage(message);
+      if (completeMessage) await completeMessage();
     } else {
       console.warn("Deferring application message; claim unavailable", { id, status });
-      await receiver.abandonMessage(message);
+      if (abandonMessage) await abandonMessage();
     }
     return;
   }
@@ -204,15 +221,54 @@ receiver.subscribe({ processMessage: async (message) => {
       await blobs.getBlobClient(data.document.blobName).downloadToFile(resumePath);
     }
     await record(id, await runApplication({ ...data, resumePath }), data.notify);
-    await receiver.completeMessage(message);
+    if (completeMessage) await completeMessage();
   } catch (error) {
     await record(id, { outcome: "needs_action", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify);
-    await receiver.completeMessage(message).catch(() => {});
+    if (completeMessage) await completeMessage().catch(() => {});
   } finally {
     if (resumePath) await fs.unlink(resumePath).catch(() => {});
+  }
+}
+
+async function drainQueuedApplicationsFromSql() {
+  if (workerBusy) return;
+  workerBusy = true;
+  try {
+    // When Service Bus is empty or a message was lost, still process rows already in SQL queue.
+    for (let i = 0; i < 5; i += 1) {
+      const id = await claimNextQueuedApplication();
+      if (!id) break;
+      console.log("Processing queued application from SQL (queue sweeper)", { id });
+      await processApplicationId(id);
+    }
+  } catch (error) {
+    console.error("SQL queue sweeper failed", error);
+  } finally {
+    workerBusy = false;
+  }
+}
+
+receiver.subscribe({ processMessage: async (message) => {
+  const id = String(message.body?.applicationId || "");
+  if (workerBusy) {
+    await receiver.abandonMessage(message).catch(() => {});
+    return;
+  }
+  workerBusy = true;
+  try {
+    await processApplicationId(id, {
+      completeMessage: () => receiver.completeMessage(message),
+      abandonMessage: () => receiver.abandonMessage(message),
+    });
+  } finally {
+    workerBusy = false;
   }
 }, processError: async (args) => console.error("Service Bus worker error", args.error) }, {
   autoCompleteMessages: false,
   maxConcurrentCalls: 1,
   maxAutoLockRenewalDurationInMs: 10 * 60 * 1000,
 });
+
+// Sweep SQL every 20s so queued apps still run when the bus has no pending messages.
+setInterval(() => { void drainQueuedApplicationsFromSql(); }, 20_000);
+void drainQueuedApplicationsFromSql();
