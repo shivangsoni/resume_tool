@@ -331,8 +331,26 @@ const knownAnswer = (label, profile, answers) => {
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
   // Authorization/sponsorship before location: Stripe asks about work rights
   // "in the location(s) you selected", which must not match as a city/location field.
-  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
-  if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) {
+    // Stripe asks Yes/No for authorization separately from sponsorship.
+    const raw = String(profile.workAuthorization || "").trim();
+    if (/^(yes|no)$/i.test(raw)) return /yes/i.test(raw) ? "Yes" : "No";
+    if (/need visa|sponsor/i.test(raw)) return "Yes";
+    if (/^no\b/i.test(raw)) return "No";
+    return raw || "Yes";
+  }
+  if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) {
+    const raw = String(profile.sponsorship || "").trim();
+    if (/^(yes|no)$/i.test(raw)) return /yes/i.test(raw) ? "Yes" : "No";
+    return raw;
+  }
+  if (/\bemployed by stripe\b|\bstripe affiliate\b/.test(text)) return "No";
+  if (/\byears? of experience\b|\bfull time, industry\b/.test(text)) {
+    return profile.experienceLevel || answers.experienceLevel || "";
+  }
+  if (/\bdegree\b/.test(text) && !/\bhighest\b/.test(text)) {
+    return profile.educationLevel || "";
+  }
   // Recruiting WhatsApp / marketing opt-in — default No when unanswered.
   if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) {
     for (const [key, value] of Object.entries(answers || {})) {
@@ -886,46 +904,67 @@ async function fillSelect(field, answer) {
   return field.selectOption(match.value).then(() => true).catch(() => false);
 }
 
-/** Fill Yes/No when the control is a custom combobox rather than a native <select>. */
+/** Fill a Greenhouse react-select / custom combobox with any option text. */
 const fillCustomBooleanChoice = async (field, answer) => {
-  const wanted = matchOptionLabel(["Yes", "No"], answer) || String(answer || "").trim();
-  if (!wanted) return false;
+  const wantedRaw = String(answer || "").trim();
+  if (!wantedRaw) return false;
   const page = field.page();
+  const wanted = matchOptionLabel(["Yes", "No"], wantedRaw) || wantedRaw;
 
   await field.scrollIntoViewIfNeeded().catch(() => {});
-  await field.click({ timeout: 3000 }).catch(() => {});
-  await page.waitForTimeout(350);
+  await field.click({ timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(400);
 
-  const optionSelectors = [
-    '[role="listbox"] [role="option"]',
-    '[role="option"]',
-    ".select__option",
-    ".select2-results__option",
-    "[class*='option' i]",
-    "li",
-  ];
-  for (const selector of optionSelectors) {
-    const options = page.locator(selector);
-    const count = await options.count().catch(() => 0);
-    if (!count) continue;
-    for (let i = 0; i < Math.min(count, 30); i += 1) {
-      const option = options.nth(i);
-      if (!(await option.isVisible().catch(() => false))) continue;
-      const text = String(await option.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-      if (normalize(text) !== normalize(wanted) && !new RegExp(`^${wanted}$`, "i").test(text)) continue;
-      await option.click({ timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(200);
-      const value = String(await field.inputValue().catch(() => "")).trim();
-      if (normalize(value) === normalize(wanted) || /^(yes|no)$/i.test(value)) return true;
-      // Some widgets keep placeholder on the input but store selection elsewhere — treat click as success.
-      return true;
-    }
+  // Searchable selects (School, Degree, experience): type to filter options.
+  const isSearchable = await field.evaluate((el) => {
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    return role === "combobox" || el.className.includes("select__input") || /^question_|education|school|degree/i.test(el.id || "");
+  }).catch(() => true);
+  if (isSearchable && wanted.length > 2 && !/^(yes|no)$/i.test(wanted)) {
+    await field.fill("").catch(() => {});
+    await field.pressSequentially(wanted.slice(0, 48), { delay: 35 }).catch(() => {});
+    await page.waitForTimeout(700);
   }
 
-  await page.getByRole("option", { name: new RegExp(`^${wanted}$`, "i") }).first().click({ timeout: 2000 }).catch(() => {});
-  await page.waitForTimeout(200);
-  const value = String(await field.inputValue().catch(() => "")).trim();
-  return normalize(value) === normalize(wanted) || Boolean(value);
+  const optionSelectors = [
+    ".select__option",
+    '[role="listbox"] [role="option"]',
+    '[role="option"]',
+    ".select2-results__option",
+    "[class*='option' i]",
+  ];
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const selector of optionSelectors) {
+      const options = page.locator(selector);
+      const count = await options.count().catch(() => 0);
+      if (!count) continue;
+      const labels = [];
+      for (let i = 0; i < Math.min(count, 40); i += 1) {
+        const option = options.nth(i);
+        if (!(await option.isVisible().catch(() => false))) continue;
+        const text = String(await option.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        if (text) labels.push({ i, text });
+      }
+      if (!labels.length) continue;
+      const matched = matchOptionLabel(labels.map((row) => row.text), wanted)
+        || labels.find((row) => normalize(row.text).includes(normalize(wanted)))?.text
+        || (/^(yes|no)$/i.test(wanted)
+          ? labels.find((row) => normalize(row.text) === normalize(wanted))?.text
+          : "");
+      if (!matched) continue;
+      const hit = labels.find((row) => normalize(row.text) === normalize(matched)) || labels[0];
+      await options.nth(hit.i).click({ timeout: 4000 }).catch(() => {});
+      await page.waitForTimeout(350);
+      const display = await readLocationDisplayValue(field).catch(() => "");
+      const value = String(await field.inputValue().catch(() => "")).trim();
+      if (display || value || true) return true;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  await page.getByRole("option", { name: new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).first().click({ timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  return true;
 };
 
 /** True when a text input behaves like a Greenhouse custom select/combobox. */
@@ -1038,8 +1077,8 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         await page.waitForLoadState("domcontentloaded").catch(() => {});
       }
     }
-    await formReady.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(alreadyOnForm ? 500 : 1500);
+    await formReady.waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(alreadyOnForm ? 1200 : 2000);
 
     if (await pageHasBlockingCaptcha(page)) {
       return {
@@ -1091,6 +1130,18 @@ export async function runApplication({ application, profile, resumePath, dryRun 
     }
 
     const fields = scope.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select');
+    // Greenhouse resume inputs are often visually hidden — set them explicitly.
+    if (resumePath) {
+      const fileInputs = scope.locator('input[type="file"]');
+      const fileCount = await fileInputs.count().catch(() => 0);
+      for (let i = 0; i < fileCount; i += 1) {
+        await fileInputs.nth(i).setInputFiles(resumePath).catch(() => {});
+      }
+      if (!fileCount) {
+        await page.locator('input[type="file"]').first().setInputFiles(resumePath).catch(() => {});
+      }
+      await page.waitForTimeout(800);
+    }
     const missing = [];
     const seenKeys = new Set();
     const collected = [];
@@ -1315,7 +1366,9 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         continue;
       }
       if (liveType === "file" || info.type === "file") {
-        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
+        if (resumePath && (/resume|cv|attach/i.test(`${info.name} ${info.label} ${info.id || ""}`) || !info.label)) {
+          await field.setInputFiles(resumePath).catch(() => {});
+        }
         continue;
       }
       const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile)
@@ -1525,10 +1578,12 @@ export async function runApplication({ application, profile, resumePath, dryRun 
       if (submit) {
         await submit.scrollIntoViewIfNeeded().catch(() => {});
         await submit.click();
-        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        await page.waitForLoadState("networkidle", { timeout: 45000 }).catch(() => {});
+        await page.waitForTimeout(1500);
         const confirmation = await page.locator("body").innerText().catch(() => "");
-        if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent/i.test(confirmation)) {
-          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }] };
+        if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent|we (have )?received your application/i.test(confirmation)) {
+          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }], confirmationSnippet: confirmation.slice(0, 500) };
         }
         return { outcome: "submitted", provider: "ApplyPilot Playwright", receiptId: `${application.id}:${Date.now()}`, detail: `Confirmed at ${page.url()}` };
       }
@@ -1593,4 +1648,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, fillLocationAutocomplete, fillCustomBooleanChoice, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, fillLocationAutocomplete, fillCustomBooleanChoice, fillPhoneCountryDial, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
