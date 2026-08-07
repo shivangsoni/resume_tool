@@ -75,6 +75,7 @@ import {
   renameResume,
   getAuthProviders,
   beginSignOut,
+  ensureSignedOut,
   loginWithPassword,
   registerWithPassword,
   setDevSignedIn,
@@ -426,7 +427,7 @@ export default function App() {
                 <MenuItem icon={<Sparkle24Filled />} onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Product tour</MenuItem>
                 <MenuItem
                   icon={<SignOut24Regular />}
-                  onClick={() => beginSignOut()}
+                  onClick={() => { void beginSignOut(); }}
                 >
                   Sign out
                 </MenuItem>
@@ -1648,7 +1649,7 @@ function AuthPage({ signedIn }: { signedIn: boolean }) {
         {signedIn && (
           <div className="landing-actions auth-session-actions">
             <a className="orange-action" href="/dashboard">Continue to dashboard</a>
-            <button type="button" className="secondary-action" onClick={() => beginSignOut()}>Sign out</button>
+            <button type="button" className="secondary-action" onClick={() => { void beginSignOut(); }}>Sign out</button>
           </div>
         )}
         {!signedIn && (
@@ -1797,8 +1798,47 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
 }
 
 function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
+  const [stillSignedIn, setStillSignedIn] = useState(signedIn);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    ensureSignedOut()
+      .then((cleared) => {
+        if (!active) return;
+        setStillSignedIn(!cleared);
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => { active = false; };
+  }, []);
+
   return (
-    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Checkmark24Regular /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><button type="button" className="orange-action" onClick={() => beginSignOut()}>Sign out again</button><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
+    <main className="public-shell">
+      <header className="public-header">
+        <a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a>
+      </header>
+      <section className="public-centered">
+        <div className="logout-check"><Checkmark24Regular /></div>
+        <h1>{checking ? "Signing you out…" : stillSignedIn ? "You’re still signed in" : "You’re signed out"}</h1>
+        <p>
+          {checking
+            ? "Clearing your ApplyPilot session."
+            : stillSignedIn
+              ? "Your browser still has an active identity-provider session. Sign out again to finish clearing it."
+              : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}
+        </p>
+        <div className="landing-actions">
+          {stillSignedIn && !checking ? (
+            <button type="button" className="orange-action" onClick={() => { void beginSignOut(); }}>Sign out again</button>
+          ) : (
+            <a className="orange-action" href="/login">Sign in again</a>
+          )}
+          <a className="secondary-action" href="/">Go to home page</a>
+        </div>
+      </section>
+    </main>
   );
 }
 

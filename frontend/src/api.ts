@@ -127,16 +127,61 @@ export async function loginWithPassword(input: { username: string; password: str
   return result.user;
 }
 
-/** Clear Easy Auth, password session, and local DEV stub. */
-export function beginSignOut() {
+/** Clear password session, DEV stub, and Azure Static Web Apps Easy Auth cookies. */
+export async function beginSignOut() {
   setSessionToken(null);
   setDevSignedIn(false);
-  void fetch(`${API}/auth/logout`, { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+
+  try {
+    await fetch(`${API}/auth/logout`, {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch {
+    /* ignore */
+  }
+
   if (import.meta.env.DEV) {
-    window.location.assign("/logged-out");
+    window.location.replace("/logged-out");
     return;
   }
-  window.location.assign("/.auth/logout?post_logout_redirect_uri=/logged-out");
+
+  // A plain navigation to /.auth/logout often leaves AppServiceAuthSession /
+  // StaticWebAppsAuthCookie set, so /.auth/me still returns a principal.
+  // Hitting logout then logout/complete clears those cookies (same-origin).
+  try {
+    await fetch("/.auth/logout", { mode: "no-cors", cache: "no-store", credentials: "include" });
+    await fetch("/.auth/logout/complete", { mode: "no-cors", cache: "no-store", credentials: "include" });
+  } catch {
+    /* ignore */
+  }
+
+  window.location.replace("/logged-out");
+}
+
+/** Re-check Easy Auth after logout UI loads; clear any leftover SWA session. */
+export async function ensureSignedOut(): Promise<boolean> {
+  setSessionToken(null);
+  setDevSignedIn(false);
+  if (import.meta.env.DEV) return true;
+
+  try {
+    const response = await fetch("/.auth/me", { cache: "no-store", credentials: "include" });
+    if (!response.ok) return true;
+    const body = await response.json().catch(() => ({}));
+    if (!body?.clientPrincipal?.userId) return true;
+
+    await fetch("/.auth/logout", { mode: "no-cors", cache: "no-store", credentials: "include" });
+    await fetch("/.auth/logout/complete", { mode: "no-cors", cache: "no-store", credentials: "include" });
+
+    const again = await fetch("/.auth/me", { cache: "no-store", credentials: "include" });
+    if (!again.ok) return true;
+    const againBody = await again.json().catch(() => ({}));
+    return !againBody?.clientPrincipal?.userId;
+  } catch {
+    return true;
+  }
 }
 
 
