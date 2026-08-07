@@ -31,6 +31,7 @@ export type Profile = {
 export type Application = {
   id: string;
   jobId: number;
+  jobExternalId?: string;
   company: string;
   title: string;
   location: string;
@@ -51,7 +52,7 @@ export type Application = {
   submissionQueuedAt?: string;
   lastSubmissionError?: string;
   answers?: Record<string, string>;
-  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "blocking"; options?: string[]; required: boolean }>;
+  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "blocking"; options?: string[]; required: boolean }>;
 };
 
 export type MailMessage = {

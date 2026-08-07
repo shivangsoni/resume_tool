@@ -90,6 +90,100 @@ const questionKey = (name, label, index) => {
   return `${base}__${index}`.slice(0, 180);
 };
 
+/** Stable key for a shared-name checkbox/radio group (omit per-option index churn). */
+const groupQuestionKey = (name, groupLabel, index) => {
+  const base = String(name || `group_${normalize(compactLabel(groupLabel)).replace(/ /g, "_") || "field"}`).trim() || "field";
+  return `${base}__g${index}`.slice(0, 180);
+};
+
+/** Parse saved multiselect answers: JSON array or comma/semicolon/newline separated. */
+const parseMultiselectAnswer = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  if (raw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+    } catch { /* fall through */ }
+  }
+  return raw.split(/[,;\n|]+/).map((item) => item.trim()).filter(Boolean);
+};
+
+const COUNTRY_ALIASES = {
+  us: ["united states", "usa", "u s", "u s a", "america"],
+  "united states": ["us", "usa", "u s", "u s a", "america"],
+  uk: ["united kingdom", "great britain", "britain", "england"],
+  "united kingdom": ["uk", "great britain", "britain", "england"],
+};
+
+/** True when option text matches any wanted token (with common country aliases). */
+const optionMatchesTokens = (optionLabel, tokens) => {
+  const option = normalize(optionLabel);
+  const optionCompact = option.replace(/\s+/g, "");
+  if (!option) return false;
+  for (const token of tokens) {
+    const needle = normalize(token);
+    const needleCompact = needle.replace(/\s+/g, "");
+    if (!needle) continue;
+    if (option === needle || optionCompact === needleCompact) return true;
+    // Avoid short-token false positives (e.g. "us" inside "australia").
+    if (needle.length >= 4 && (option.includes(needle) || needle.includes(option))) return true;
+    if (needleCompact.length >= 4 && optionCompact && (optionCompact.includes(needleCompact) || needleCompact.includes(optionCompact))) return true;
+    if (needle.length <= 3) {
+      const bounded = new RegExp(`(?:^|\\s)${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`);
+      if (bounded.test(option)) return true;
+    }
+    const aliases = COUNTRY_ALIASES[needle] || COUNTRY_ALIASES[needleCompact] || [];
+    if (aliases.some((alias) => {
+      const a = normalize(alias);
+      const ac = a.replace(/\s+/g, "");
+      if (option === a || optionCompact === ac) return true;
+      if (a.length >= 4 && (option.includes(a) || a.includes(option))) return true;
+      return false;
+    })) return true;
+  }
+  return false;
+};
+
+/** Profile-derived tokens used to auto-check country/location multiselects. */
+const multiselectTokensFromProfile = (profile = {}) => {
+  const parts = [
+    profile.country,
+    profile.location,
+    profile.preferredLocations,
+    profile.city,
+    profile.state,
+  ]
+    .flatMap((value) => String(value || "").split(/[,;|/]+/))
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(parts)];
+};
+
+/** Which option labels should be selected given answers + profile. */
+const resolveMultiselectSelections = (options, answer, profile) => {
+  const fromAnswer = parseMultiselectAnswer(answer);
+  if (fromAnswer.length) {
+    return options.filter((option) => optionMatchesTokens(option, fromAnswer));
+  }
+  const tokens = multiselectTokensFromProfile(profile);
+  return options.filter((option) => optionMatchesTokens(option, tokens));
+};
+
+/** Fuzzy match a single answer string to one option label (radios / selects). */
+const matchOptionLabel = (options, answer) => {
+  const wanted = String(answer || "").trim();
+  if (!wanted || !options?.length) return "";
+  const needle = normalize(wanted);
+  const exact = options.find((option) => normalize(option) === needle);
+  if (exact) return exact;
+  const includes = options.find((option) => {
+    const label = normalize(option);
+    return label.includes(needle) || needle.includes(label);
+  });
+  return includes || "";
+};
+
 const selectOptionTexts = async (field) => {
   const texts = await field.locator("option").allTextContents();
   return texts.map((item) => item.trim()).filter(Boolean);
@@ -112,10 +206,13 @@ async function fillSelect(field, answer) {
     })),
   );
   const needle = wanted.toLowerCase();
+  const needleCompact = needle.replace(/[^a-z0-9]+/g, "");
   const match = options.find((option) => {
     const label = option.label.toLowerCase();
     const value = String(option.value || "").toLowerCase();
-    return label === needle || value === needle || label.includes(needle) || needle.includes(label);
+    const labelCompact = label.replace(/[^a-z0-9]+/g, "");
+    return label === needle || value === needle || label.includes(needle) || needle.includes(label)
+      || (needleCompact && labelCompact && (labelCompact === needleCompact || labelCompact.includes(needleCompact) || needleCompact.includes(labelCompact)));
   });
   if (!match || match.value === "") return false;
   return field.selectOption(match.value).then(() => true).catch(() => false);
@@ -269,6 +366,7 @@ export async function runApplication({ application, profile, resumePath }) {
     const fields = scope.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select');
     const missing = [];
     const seenKeys = new Set();
+    const collected = [];
     for (let index = 0; index < await fields.count(); index += 1) {
       const field = fields.nth(index);
       if (!await field.isVisible().catch(() => false) || await field.isDisabled().catch(() => true)) continue;
@@ -292,6 +390,9 @@ export async function runApplication({ application, profile, resumePath }) {
           clone.querySelectorAll("input, select, textarea, button, script, style, option").forEach((child) => child.remove());
           return (clone.textContent || "").replace(/\s+/g, " ").trim();
         };
+        const optionLabel = readLabelText(wrapLabel) || readLabelText(explicitLabel);
+        const fieldset = element.closest("fieldset");
+        const legendText = (fieldset?.querySelector("legend")?.textContent || "").replace(/\s+/g, " ").trim();
         const siblingText = () => {
           const prev = element.previousElementSibling;
           if (prev && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/i.test(prev.tagName)) {
@@ -311,6 +412,19 @@ export async function runApplication({ application, profile, resumePath }) {
               const text = (heading.textContent || "").replace(/\s+/g, " ").trim();
               if (text && text.length < 160) return text;
             }
+          }
+          return "";
+        };
+        const groupHeading = () => {
+          if (legendText && legendText.length < 200) return legendText;
+          const fieldRoot = element.closest(".field, .form-group, .application-question, .question, [class*='question' i], [data-qa], [data-field]");
+          if (!fieldRoot) return "";
+          const heading = fieldRoot.querySelector(":scope > label, :scope > legend, :scope > .label, :scope > .question-label, :scope > p, :scope > div > label");
+          if (heading && !heading.contains(element)) {
+            const clone = heading.cloneNode(true);
+            clone.querySelectorAll("input, select, textarea, button").forEach((child) => child.remove());
+            const text = (clone.textContent || "").replace(/\s+/g, " ").trim();
+            if (text && text.length < 200) return text;
           }
           return "";
         };
@@ -348,40 +462,128 @@ export async function runApplication({ application, profile, resumePath }) {
           if (!spaced || /^(input|field|select|textarea|question|required)[\d\s_-]*$/i.test(spaced)) return "";
           return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
         };
-        const label = pickText(
-          labelledBy,
-          readLabelText(labelNode),
-          element.getAttribute("aria-label"),
-          siblingText(),
-          element.getAttribute("placeholder"),
-          element.getAttribute("title"),
-          humanize(dataHint),
-          humanize(name),
-          humanize(id),
-        );
-        const required = element.required
-          || element.getAttribute("aria-required") === "true"
-          || /\*\s*$|required/i.test(label)
-          || !!element.closest("[aria-required='true'], .required");
+        const type = element.getAttribute("type") || "text";
+        const isChoice = type === "checkbox" || type === "radio";
+        const groupLabel = isChoice
+          ? pickText(groupHeading(), labelledBy, humanize(name), humanize(dataHint))
+          : "";
+        const label = isChoice
+          ? pickText(groupLabel, labelledBy, readLabelText(labelNode), element.getAttribute("aria-label"), siblingText(), humanize(dataHint), humanize(name), humanize(id))
+          : pickText(labelledBy, readLabelText(labelNode), element.getAttribute("aria-label"), siblingText(), element.getAttribute("placeholder"), element.getAttribute("title"), humanize(dataHint), humanize(name), humanize(id));
+        const selfRequired = element.required || element.getAttribute("aria-required") === "true";
+        const groupRequired = !!element.closest("fieldset[required], [aria-required='true'], .required");
+        // For choice options, do not treat every option as required just because the group is.
+        const required = isChoice ? selfRequired : (selfRequired || /\*\s*$|required/i.test(label) || groupRequired);
         return {
           tag: element.tagName.toLowerCase(),
-          type: element.getAttribute("type") || "text",
+          type,
           name: name || id || dataHint,
           label: label.trim(),
+          optionLabel: (optionLabel || "").trim(),
+          groupLabel: (groupLabel || "").trim(),
+          groupRequired: isChoice ? (groupRequired || /\*\s*$|required/i.test(groupLabel || label)) : false,
           required,
         };
       });
       if (isSkippableFieldMeta(info)) continue;
+      collected.push({ index, field, info });
+    }
+
+    const checkboxGroups = new Map();
+    const radioGroups = new Map();
+    const singles = [];
+    for (const item of collected) {
+      const { info } = item;
+      if (info.type === "checkbox" && info.name) {
+        const list = checkboxGroups.get(info.name) || [];
+        list.push(item);
+        checkboxGroups.set(info.name, list);
+      } else if (info.type === "radio" && info.name) {
+        const list = radioGroups.get(info.name) || [];
+        list.push(item);
+        radioGroups.set(info.name, list);
+      } else {
+        singles.push(item);
+      }
+    }
+    // Lone checkboxes stay as boolean singles.
+    for (const [name, list] of [...checkboxGroups.entries()]) {
+      if (list.length < 2) {
+        checkboxGroups.delete(name);
+        singles.push(...list);
+      }
+    }
+
+    for (const [, group] of checkboxGroups) {
+      const first = group[0];
+      const groupLabel = sanitizeLabel(compactLabel(first.info.groupLabel))
+        || humanizeFieldName(first.info.name)
+        || "Select all that apply";
+      const key = groupQuestionKey(first.info.name, groupLabel, first.index);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const answer = String(
+        application.answers[key]
+        || application.answers[first.info.name]
+        || knownAnswer(groupLabel, profile, application.answers)
+        || "",
+      );
+      const selections = resolveMultiselectSelections(options, answer, profile);
+      for (const item of group) {
+        const optionText = item.info.optionLabel || item.info.label;
+        if (selections.some((selected) => optionMatchesTokens(optionText, [selected]))) {
+          await item.field.check().catch(() => {});
+        }
+      }
+      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      if (first.info.groupRequired && !anyChecked) {
+        missing.push({ key, label: groupLabel, type: "multiselect", options, required: true });
+      }
+    }
+
+    for (const [, group] of radioGroups) {
+      const first = group[0];
+      const groupLabel = sanitizeLabel(compactLabel(first.info.groupLabel || first.info.label))
+        || humanizeFieldName(first.info.name)
+        || `Question ${first.index + 1}`;
+      const key = groupQuestionKey(first.info.name, groupLabel, first.index);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const options = group.map((item) => item.info.optionLabel || item.info.label).filter(Boolean);
+      const answer = String(
+        application.answers[key]
+        || application.answers[first.info.name]
+        || knownAnswer(groupLabel, profile, application.answers)
+        || "",
+      );
+      const matched = matchOptionLabel(options, answer);
+      if (matched) {
+        const target = group.find((item) => normalize(item.info.optionLabel || item.info.label) === normalize(matched));
+        if (target) await target.field.check().catch(() => {});
+      } else if (/^(true|yes|1|on)$/i.test(answer)) {
+        await group[0].field.check().catch(() => {});
+      }
+      const anyChecked = await Promise.all(group.map((item) => item.field.isChecked().catch(() => false))).then((flags) => flags.some(Boolean));
+      if ((first.info.groupRequired || first.info.required) && !anyChecked) {
+        missing.push({ key, label: groupLabel, type: "select", options, required: true });
+      }
+    }
+
+    for (const { index, field, info } of singles) {
       const key = questionKey(info.name, info.label, index);
-      const displayLabel = sanitizeLabel(compactLabel(info.label))
+      const displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
         || humanizeFieldName(info.name)
         || humanizeFieldName(info.label)
         || `Question ${index + 1}`;
       if (info.type === "file") { if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath); continue; }
       if (info.type === "checkbox" || info.type === "radio") {
+        const optionText = info.optionLabel || displayLabel;
         const answer = String(application.answers[key] || knownAnswer(displayLabel, profile, application.answers) || "");
-        if (/^(true|yes|1|on)$/i.test(answer)) await field.check();
-        else if (info.required && !await field.isChecked()) {
+        const matched = matchOptionLabel([optionText], answer);
+        if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
+          await field.check().catch(() => {});
+        } else if (info.required && !await field.isChecked()) {
           if (!seenKeys.has(key)) {
             seenKeys.add(key);
             missing.push({ key, label: displayLabel, type: "checkbox", required: true });
@@ -484,4 +686,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, parseMultiselectAnswer, optionMatchesTokens, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
