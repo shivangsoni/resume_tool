@@ -126,14 +126,69 @@ const isSkippableFieldMeta = (info) => {
   return false;
 };
 
+/**
+ * Prefer a direct Greenhouse application embed when the listing URL is a
+ * careers search deep-link (common for Stripe absolute_url values).
+ */
+function resolveApplicationUrl(application) {
+  const sourceUrl = String(application?.sourceUrl || "").trim();
+  if (!sourceUrl) return sourceUrl;
+  try {
+    const url = new URL(sourceUrl);
+    const host = url.hostname.toLowerCase();
+    const jid = url.searchParams.get("gh_jid") || url.searchParams.get("gh_jid".toUpperCase());
+    const tokenFromPath = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
+    const jobId = jid || tokenFromPath;
+    const board = guessGreenhouseBoard(application);
+    if (jobId && board && (host.includes("stripe.com") || host.includes("greenhouse.io") || host.includes(board))) {
+      return `https://boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(jobId)}`;
+    }
+  } catch {
+    // Fall through to the original listing URL.
+  }
+  return sourceUrl;
+}
+
+function guessGreenhouseBoard(application) {
+  const company = normalize(application?.company);
+  if (company.includes("stripe")) return "stripe";
+  if (company.includes("cloudflare")) return "cloudflare";
+  if (company.includes("figma")) return "figma";
+  if (company.includes("airbnb")) return "airbnb";
+  const source = normalize(application?.source);
+  if (source.includes("greenhouse")) {
+    try {
+      const url = new URL(String(application?.sourceUrl || ""));
+      const fromPath = url.pathname.match(/\/(?:embed\/job_app|boards?\/|job-boards\/)?(?:for=)?/i);
+      const token = url.searchParams.get("for") || url.pathname.split("/").filter(Boolean)[0];
+      if (token && /^[a-z0-9_-]+$/i.test(token) && !["embed", "jobs", "job", "boards", "job-boards"].includes(token)) return token;
+      void fromPath;
+    } catch { /* ignore */ }
+  }
+  return "";
+}
+
 export async function runApplication({ application, profile, resumePath }) {
   const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] });
   const page = await browser.newPage();
   try {
-    await page.goto(application.sourceUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-    const apply = page.getByRole("link", { name: /apply/i }).or(page.getByRole("button", { name: /apply/i })).first();
-    if (await apply.isVisible().catch(() => false)) { await apply.click(); await page.waitForLoadState("domcontentloaded").catch(() => {}); }
-    await page.waitForTimeout(1500);
+    await page.goto(resolveApplicationUrl(application), { waitUntil: "domcontentloaded", timeout: 45000 });
+    // If the embed/application form is already present, do not click listing CTAs
+    // like "Quick Apply with MyGreenhouse" (those match /apply/ and derail the flow).
+    const formReady = page.locator("#application-form, form#application-form, form[action*='job_app'], button[type='submit'], input[type='submit']").first();
+    const alreadyOnForm = await formReady.isVisible().catch(() => false);
+    if (!alreadyOnForm) {
+      const apply = page
+        .getByRole("link", { name: /^(apply( now)?|apply for this job)$/i })
+        .or(page.getByRole("button", { name: /^(apply( now)?|apply for this job)$/i }))
+        .first();
+      if (await apply.isVisible().catch(() => false)) {
+        await apply.click();
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
+    }
+    await formReady.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(alreadyOnForm ? 500 : 1500);
 
     const captcha = page.locator('iframe[src*="captcha" i], [class*="captcha" i], [id*="captcha" i]').first();
     if (await captcha.isVisible().catch(() => false)) return { outcome: "needs_action", detail: "Employer CAPTCHA requires completion on the original application page.", questions: [{ key: "captcha", label: "Complete the employer CAPTCHA on the original listing, then retry.", type: "blocking", required: true }] };
@@ -323,15 +378,78 @@ export async function runApplication({ application, profile, resumePath }) {
     }
     if (missing.length) return { outcome: "needs_action", detail: `${missing.length} required employer question(s) need your answer.`, questions: missing };
 
-    const submit = scope.getByRole("button", { name: /submit|apply/i }).last()
-      .or(root.getByRole("button", { name: /submit|apply/i }).last());
-    if (!await submit.isVisible().catch(() => false)) return { outcome: "needs_action", detail: "The employer submission control could not be identified.", questions: [{ key: "submission_control", label: "Open the original listing to review its unsupported submission step.", type: "blocking", required: true }] };
-    await submit.click();
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-    const confirmation = await page.locator("body").innerText().catch(() => "");
-    if (!/thank you|application (has been )?(submitted|received)|thanks for applying/i.test(confirmation)) return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }] };
-    return { outcome: "submitted", provider: "ApplyPilot Playwright", receiptId: `${application.id}:${Date.now()}`, detail: `Confirmed at ${page.url()}` };
+    // Advance multi-step employer flows (Continue/Next) until a final submit appears.
+    for (let step = 0; step < 4; step += 1) {
+      const submit = await findSubmitControl([scope, root, page]);
+      if (submit) {
+        await submit.scrollIntoViewIfNeeded().catch(() => {});
+        await submit.click();
+        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+        const confirmation = await page.locator("body").innerText().catch(() => "");
+        if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent/i.test(confirmation)) {
+          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }] };
+        }
+        return { outcome: "submitted", provider: "ApplyPilot Playwright", receiptId: `${application.id}:${Date.now()}`, detail: `Confirmed at ${page.url()}` };
+      }
+      const advanced = await clickContinueControl([scope, root, page]);
+      if (!advanced) break;
+      await page.waitForTimeout(1000);
+    }
+
+    return { outcome: "needs_action", detail: "The employer submission control could not be identified.", questions: [{ key: "submission_control", label: "Open the original listing to review its unsupported submission step.", type: "blocking", required: true }] };
   } finally { await browser.close(); }
 }
 
-export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel };
+const SUBMIT_NAME = /submit(\s+(my\s+)?application)?|send(\s+my)?\s+application|finish(\s+application)?|complete(\s+application)?/i;
+const CONTINUE_NAME = /^(continue|next|save and continue|review)\b/i;
+
+/** Prefer an actionable, visible submit control across form / page / frames. */
+async function findSubmitControl(contexts) {
+  for (const context of contexts) {
+    if (!context) continue;
+    const candidates = [
+      context.locator('#submit_app, [data-qa="btn-submit"], [data-testid*="submit" i], [name="commit"]'),
+      context.locator('button[type="submit"], input[type="submit"]'),
+      context.getByRole("button", { name: SUBMIT_NAME }),
+      context.getByRole("link", { name: SUBMIT_NAME }),
+    ];
+    for (const locator of candidates) {
+      const count = await locator.count().catch(() => 0);
+      for (let i = count - 1; i >= 0; i -= 1) {
+        const item = locator.nth(i);
+        if (!(await item.isVisible().catch(() => false))) continue;
+        if (await item.isDisabled().catch(() => false)) continue;
+        const labelText = await item.innerText().catch(() => "");
+        const valueText = await item.getAttribute("value").catch(() => "");
+        const text = normalize(labelText || valueText || "");
+        // Skip MyGreenhouse / listing CTAs that are not the final form submit.
+        if (/quick apply|mygreenhouse|^apply( now)?$/.test(text)) continue;
+        return item;
+      }
+    }
+  }
+  return null;
+}
+
+async function clickContinueControl(contexts) {
+  for (const context of contexts) {
+    if (!context) continue;
+    const candidates = [
+      context.getByRole("button", { name: CONTINUE_NAME }),
+      context.locator('button[type="button"], input[type="button"], a[role="button"]').filter({ hasText: CONTINUE_NAME }),
+    ];
+    for (const locator of candidates) {
+      const count = await locator.count().catch(() => 0);
+      for (let i = 0; i < count; i += 1) {
+        const item = locator.nth(i);
+        if (!(await item.isVisible().catch(() => false))) continue;
+        if (await item.isDisabled().catch(() => false)) continue;
+        await item.click();
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export { knownAnswer, questionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl };

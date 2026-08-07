@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { knownAnswer, questionKey, compactLabel, humanizeFieldName } from "../src/automation.js";
+import { knownAnswer, questionKey, compactLabel, humanizeFieldName, resolveApplicationUrl } from "../src/automation.js";
 
 test("maps standard employer fields from the saved profile", () => {
   const profile = { firstName: "Shivang", lastName: "Soni", email: "candidate@example.com", linkedin: "https://linkedin.example/me" };
@@ -33,4 +33,18 @@ test("humanizeFieldName turns Greenhouse-style names into labels", () => {
   assert.equal(humanizeFieldName("job_application[first_name]"), "First Name");
   assert.equal(humanizeFieldName("candidate.email"), "Email");
   assert.equal(humanizeFieldName(""), "");
+});
+
+test("resolveApplicationUrl rewrites Stripe search deep-links to Greenhouse embeds", () => {
+  const url = resolveApplicationUrl({
+    company: "Stripe",
+    source: "Greenhouse",
+    sourceUrl: "https://stripe.com/jobs/search?gh_jid=7277110",
+  });
+  assert.equal(url, "https://boards.greenhouse.io/embed/job_app?for=stripe&token=7277110");
+});
+
+test("resolveApplicationUrl leaves unrelated listings unchanged", () => {
+  const sourceUrl = "https://example.com/jobs/123";
+  assert.equal(resolveApplicationUrl({ company: "Acme", sourceUrl }), sourceUrl);
 });
