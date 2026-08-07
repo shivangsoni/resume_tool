@@ -1239,9 +1239,11 @@ function profileAnswerForLabel(label: string, profile: Profile) {
   if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
   if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
-  if (/\blocation\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  // Authorization/sponsorship before location: Stripe asks about work rights
+  // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
-  if (/\bsponsor|\bvisa\b/.test(text)) return profile.sponsorship;
+  if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  if (/\blocation\b|\bwork from\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
   if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
   if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
   if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
