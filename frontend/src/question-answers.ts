@@ -103,7 +103,7 @@ export function isBooleanQuestionLabel(label: string) {
   if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
   if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
   if (/\b(yes or no|y n)\b/.test(text)) return true;
-  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote|hybrid)\b/.test(text)) return true;
+  if (/\b(opt-?in|whatsapp|agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote|hybrid)\b/.test(text)) return true;
   return false;
 }
 
@@ -113,7 +113,12 @@ export function resolveQuestionInputType(question: { type?: string; label?: stri
   const type = String(question.type || "text").toLowerCase();
   if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file") return type;
   if (type === "autocomplete" || type === "phone") return type;
-  if (type === "select") return options.length ? "select" : "text";
+  if (type === "select") {
+    if (options.length) return "select";
+    // Stripe WhatsApp etc. sometimes arrive as select without scraped options.
+    if (isBooleanQuestionLabel(question.label || "")) return "checkbox";
+    return "text";
+  }
   if (type === "checkbox") {
     if (options.length > 1) return "multiselect";
     if (options.length === 1 || isBooleanQuestionLabel(question.label || "")) return "checkbox";
@@ -123,6 +128,8 @@ export function resolveQuestionInputType(question: { type?: string; label?: stri
   const label = String(question.label || "").toLowerCase();
   if (/\blocation\b/.test(label) && /\bcity\b/.test(label)) return "autocomplete";
   if (/^(phone|mobile|tel)\b/.test(label) || /\bphone\b/.test(label)) return "phone";
+  // Free-text "Do you opt-in…?" should still be Yes/No, not a raw text box.
+  if (isBooleanQuestionLabel(question.label || "")) return "checkbox";
   return type || "text";
 }
 
@@ -132,6 +139,32 @@ const PLACE_COUNTRY_TOKENS = [
   "brazil", "mexico", "japan", "south korea", "spain", "italy", "sweden", "switzerland",
   "new zealand",
 ];
+
+const US_STATE_BY_ABBREV: Record<string, string> = {
+  al: "Alabama", ak: "Alaska", az: "Arizona", ar: "Arkansas", ca: "California",
+  co: "Colorado", ct: "Connecticut", de: "Delaware", dc: "District of Columbia",
+  fl: "Florida", ga: "Georgia", hi: "Hawaii", id: "Idaho", il: "Illinois",
+  in: "Indiana", ia: "Iowa", ks: "Kansas", ky: "Kentucky", la: "Louisiana",
+  me: "Maine", md: "Maryland", ma: "Massachusetts", mi: "Michigan", mn: "Minnesota",
+  ms: "Mississippi", mo: "Missouri", mt: "Montana", ne: "Nebraska", nv: "Nevada",
+  nh: "New Hampshire", nj: "New Jersey", nm: "New Mexico", ny: "New York",
+  nc: "North Carolina", nd: "North Dakota", oh: "Ohio", ok: "Oklahoma", or: "Oregon",
+  pa: "Pennsylvania", ri: "Rhode Island", sc: "South Carolina", sd: "South Dakota",
+  tn: "Tennessee", tx: "Texas", ut: "Utah", vt: "Vermont", va: "Virginia",
+  wa: "Washington", wv: "West Virginia", wi: "Wisconsin", wy: "Wyoming",
+};
+
+/** Expand "Redmond, WA, United States" → "Redmond, Washington, United States". */
+export function expandLocationStates(value: string) {
+  const parts = String(value || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  return parts.map((part) => {
+    if (/^[A-Za-z]{2}$/.test(part)) {
+      return US_STATE_BY_ABBREV[part.toLowerCase()] || part;
+    }
+    return part;
+  }).join(", ");
+}
 
 /** Reject course titles / brand strings that pollute Location (City). */
 export function looksLikePlaceString(
@@ -168,13 +201,13 @@ export function formatLocationAnswer(
 ) {
   const raw = String(value || "").trim();
   const city = String(profile?.city || "").trim();
-  const state = String(profile?.state || "").trim();
+  const state = expandLocationStates(String(profile?.state || "").trim()) || String(profile?.state || "").trim();
   const country = String(profile?.country || "").trim();
-  const residence = [city, state, country].filter(Boolean).join(", ");
+  const residence = expandLocationStates([city, state, country].filter(Boolean).join(", "));
   const fullResidence = Boolean(city && (state || country));
   const location = String(profile?.location || "").trim();
-  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
-  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+  const safeLocation = looksLikePlaceString(location, profile) ? expandLocationStates(location) : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? expandLocationStates(raw) : "";
   const norm = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
   if (fullResidence) {
@@ -185,7 +218,7 @@ export function formatLocationAnswer(
     if (!safeRaw || norm(residence).includes(norm(safeRaw)) || (city && norm(safeRaw) === norm(city))) {
       return residence;
     }
-    return [safeRaw, state, country].filter(Boolean).join(", ");
+    return expandLocationStates([safeRaw, state, country].filter(Boolean).join(", "));
   }
 
   if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
@@ -200,7 +233,7 @@ export function formatLocationAnswer(
   if (city && cityPart.toLowerCase() === city.toLowerCase()) {
     return residence || cityPart;
   }
-  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  if (state || country) return expandLocationStates([cityPart, state, country].filter(Boolean).join(", "));
   return cityPart;
 }
 
@@ -257,7 +290,7 @@ export function coerceQuestionAnswer(
   const inputType = resolveQuestionInputType(question);
   if (inputType === "select" || inputType === "checkbox") {
     const options = inputType === "checkbox" && !(question.options || []).length
-      ? ["yes", "no"]
+      ? ["Yes", "No"]
       : (question.options || []);
     return matchSelectOption(options, raw) || raw;
   }
@@ -279,7 +312,7 @@ export function isQuestionAnswered(
     return Boolean(matchSelectOption(options, raw));
   }
   if (inputType === "checkbox") {
-    return Boolean(matchSelectOption(["yes", "no", ...(question.options || [])], raw) || /^(yes|no)$/i.test(raw));
+    return Boolean(matchSelectOption(["Yes", "No", ...(question.options || [])], raw) || /^(yes|no)$/i.test(raw));
   }
   if (inputType === "multiselect") {
     try {

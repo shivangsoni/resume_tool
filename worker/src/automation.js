@@ -53,6 +53,66 @@ const PLACE_COUNTRY_TOKENS = [
   "new zealand",
 ];
 
+/** USPS abbreviations → Greenhouse geocode region names. */
+const US_STATE_BY_ABBREV = {
+  al: "Alabama", ak: "Alaska", az: "Arizona", ar: "Arkansas", ca: "California",
+  co: "Colorado", ct: "Connecticut", de: "Delaware", dc: "District of Columbia",
+  fl: "Florida", ga: "Georgia", hi: "Hawaii", id: "Idaho", il: "Illinois",
+  in: "Indiana", ia: "Iowa", ks: "Kansas", ky: "Kentucky", la: "Louisiana",
+  me: "Maine", md: "Maryland", ma: "Massachusetts", mi: "Michigan", mn: "Minnesota",
+  ms: "Mississippi", mo: "Missouri", mt: "Montana", ne: "Nebraska", nv: "Nevada",
+  nh: "New Hampshire", nj: "New Jersey", nm: "New Mexico", ny: "New York",
+  nc: "North Carolina", nd: "North Dakota", oh: "Ohio", ok: "Oklahoma", or: "Oregon",
+  pa: "Pennsylvania", ri: "Rhode Island", sc: "South Carolina", sd: "South Dakota",
+  tn: "Tennessee", tx: "Texas", ut: "Utah", vt: "Vermont", va: "Virginia",
+  wa: "Washington", wv: "West Virginia", wi: "Wisconsin", wy: "Wyoming",
+};
+
+/** Expand "Redmond, WA, United States" → "Redmond, Washington, United States". */
+const expandLocationStates = (value) => {
+  const parts = String(value || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  return parts.map((part) => {
+    if (/^[A-Za-z]{2}$/.test(part)) {
+      return US_STATE_BY_ABBREV[part.toLowerCase()] || part;
+    }
+    return part;
+  }).join(", ");
+};
+
+/**
+ * Prefer the Greenhouse suggestion that matches city + expanded state (not Redmond, OR).
+ */
+const findBestLocationOption = (options, query) => {
+  const usable = (options || []).map((option) => String(option || "").trim()).filter(Boolean);
+  if (!usable.length) return "";
+  const expanded = expandLocationStates(query);
+  const needle = normalize(expanded);
+  const exact = usable.find((option) => normalize(option) === needle);
+  if (exact) return exact;
+
+  const parts = expanded.split(",").map((part) => part.trim()).filter(Boolean);
+  const city = normalize(parts[0] || "");
+  const region = normalize(parts[1] || "");
+  const country = normalize(parts[2] || parts[parts.length - 1] || "");
+
+  let best = "";
+  let bestScore = -1;
+  for (const option of usable) {
+    const label = normalize(option);
+    if (!label) continue;
+    let score = 0;
+    if (city && (label.startsWith(`${city} `) || label.includes(` ${city} `) || label.startsWith(city))) score += 10;
+    if (region && label.includes(region)) score += 20;
+    if (country && label.includes(country)) score += 5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = option;
+    }
+  }
+  return bestScore >= 10 ? best : "";
+};
+
 /**
  * Reject course titles / brand strings that pollute Location (City).
  * Accept City, Region, Country shapes and short bare city names.
@@ -91,13 +151,13 @@ const looksLikePlaceString = (value, profile = {}) => {
 const formatLocationQuery = (answer, profile = {}) => {
   const raw = String(answer || "").trim();
   const city = String(profile.city || "").trim();
-  const state = String(profile.state || "").trim();
+  const state = expandLocationStates(String(profile.state || "").trim()) || String(profile.state || "").trim();
   const country = String(profile.country || "").trim();
-  const residence = [city, state, country].filter(Boolean).join(", ");
+  const residence = expandLocationStates([city, state, country].filter(Boolean).join(", "));
   const fullResidence = Boolean(city && (state || country));
   const location = String(profile.location || "").trim();
-  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
-  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+  const safeLocation = looksLikePlaceString(location, profile) ? expandLocationStates(location) : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? expandLocationStates(raw) : "";
 
   if (fullResidence) {
     // Keep an already-shaped place answer; don't append state/country again.
@@ -107,7 +167,7 @@ const formatLocationQuery = (answer, profile = {}) => {
     if (!safeRaw || normalize(residence).includes(normalize(safeRaw)) || (city && normalize(safeRaw) === normalize(city))) {
       return residence;
     }
-    return [safeRaw, state, country].filter(Boolean).join(", ");
+    return expandLocationStates([safeRaw, state, country].filter(Boolean).join(", "));
   }
 
   if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
@@ -122,7 +182,7 @@ const formatLocationQuery = (answer, profile = {}) => {
   if (city && normalize(cityPart) === normalize(city)) {
     return residence || cityPart;
   }
-  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  if (state || country) return expandLocationStates([cityPart, state, country].filter(Boolean).join(", "));
   return cityPart;
 };
 
@@ -541,11 +601,13 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
     query = formatLocationQuery("", { ...profile, location: "" });
   }
   if (!query || !looksLikePlaceString(query, profile)) return false;
+  query = expandLocationStates(query);
 
-  const attemptFill = async (typedQuery) => {
-    const parts = typedQuery.split(",").map((part) => part.trim()).filter(Boolean);
-    // Type "City, Region" when available — bare city alone is flaky on Greenhouse.
-    const searchToken = (parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : parts[0] || typedQuery).slice(0, 64);
+  const attemptFill = async (matchQuery) => {
+    const expanded = expandLocationStates(matchQuery);
+    const parts = expanded.split(",").map((part) => part.trim()).filter(Boolean);
+    // Greenhouse geocode is city-first ("Redmond" → list). Typing "Redmond, WA" is flaky.
+    const searchToken = (parts[0] || expanded).slice(0, 48);
     const page = field.page();
 
     await field.scrollIntoViewIfNeeded().catch(() => {});
@@ -591,10 +653,10 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
     }
 
     if (optionTexts.length && optionLocator) {
-      const cityToken = parts[0] || typedQuery;
-      const matched = matchOptionLabel(optionTexts, typedQuery)
+      const matched = findBestLocationOption(optionTexts, expanded)
+        || matchOptionLabel(optionTexts, expanded)
         || matchOptionLabel(optionTexts, searchToken)
-        || optionTexts.find((option) => normalize(option).includes(normalize(cityToken)))
+        || optionTexts.find((option) => normalize(option).includes(normalize(searchToken)))
         || optionTexts[0];
       const index = optionTexts.findIndex((option) => normalize(option) === normalize(matched));
       const target = optionLocator.nth(index >= 0 ? index : 0);
@@ -616,15 +678,9 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
   };
 
   if (await attemptFill(query)) return true;
-  // Retry once with city-only typing when the fuller query failed to commit lat/lon.
-  const cityOnly = query.split(",")[0].trim();
-  if (cityOnly && normalize(cityOnly) !== normalize(query)) {
-    const rebuilt = formatLocationQuery(cityOnly, { ...profile, location: "" });
-    if (rebuilt && normalize(rebuilt) !== normalize(query)) {
-      return attemptFill(rebuilt);
-    }
-  }
-  return false;
+  // One more pass after a short pause — Greenhouse suggestions can lag on first focus.
+  await field.page().waitForTimeout(400).catch(() => {});
+  return attemptFill(query);
 };
 
 /**
@@ -694,7 +750,7 @@ const isBooleanChoiceLabel = (label) => {
   if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
   if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
   if (/\b(yes or no|y\/n)\b/.test(text)) return true;
-  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
+  if (/\b(opt-?in|whatsapp|agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
   return false;
 };
 
@@ -1201,11 +1257,17 @@ export async function runApplication({ application, profile, resumePath }) {
         let missingType = isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
         if (isLocationField && !isSelect) missingType = "autocomplete";
         if (isPhoneField) missingType = "phone";
+        let missingOptions = options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt));
+        // Stripe WhatsApp / other Yes-No selects sometimes arrive without scraped options.
+        if ((missingType === "select" || missingType === "text") && isBooleanChoiceLabel(displayLabel)) {
+          missingType = "select";
+          if (!missingOptions?.length) missingOptions = ["Yes", "No"];
+        }
         missing.push({
           key,
           label: displayLabel,
           type: missingType,
-          options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
+          options: missingOptions,
           required: true,
           hadAnswer: Boolean(answer),
           placeholder: missingType === "autocomplete" ? "e.g. Redmond, Washington, United States" : undefined,
@@ -1367,4 +1429,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };

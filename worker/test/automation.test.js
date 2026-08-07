@@ -20,6 +20,8 @@ import {
   isBooleanChoiceLabel,
   isCheckboxGroupName,
   formatLocationQuery,
+  expandLocationStates,
+  findBestLocationOption,
   looksLikePlaceString,
   dedupeMissingQuestions,
   isLocationAutocompleteLabel,
@@ -114,6 +116,10 @@ test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
     "Redmond, Washington, United States",
   );
   assert.equal(
+    formatLocationQuery("Redmond, WA, United States", { city: "Redmond", state: "WA", country: "United States" }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
     formatLocationQuery("", { location: "Seattle, Washington, United States", city: "Seattle" }),
     "Seattle, Washington, United States",
   );
@@ -131,6 +137,15 @@ test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
     false,
   );
   assert.equal(looksLikePlaceString("Redmond, Washington, United States"), true);
+  assert.equal(
+    findBestLocationOption([
+      "Redmond, Oregon, United States",
+      "Redmond, Washington, United States",
+      "Redmond, Utah, United States",
+    ], "Redmond, WA, United States"),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(expandLocationStates("Redmond, WA, United States"), "Redmond, Washington, United States");
 });
 
 test("detects Greenhouse location autocomplete and phone field labels", () => {
@@ -210,7 +225,7 @@ test("knownAnswer prefers authorization over incidental location wording", () =>
     knownAnswer("Will you require Stripe to sponsor you for a work permit now or in the future for the location(s) you selected?", profile, {}),
     "No",
   );
-  assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, WA, United States");
+  assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, Washington, United States");
 });
 
 test("knownAnswer does not map remote-intent questions to city/location", () => {

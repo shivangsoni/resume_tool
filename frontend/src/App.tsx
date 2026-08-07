@@ -149,7 +149,7 @@ const pageSubtitles: Record<Page, string> = {
   applications: "Track every submission, answer follow-ups, and retry failed applies.",
   resume: "Upload a PDF or DOCX. Extracted details help fill employer forms.",
   preferences: "Set target titles, locations, and workplace types to improve match quality.",
-  profile: "Keep contact details and work history current for Simple Apply.",
+  profile: "",
   inbox: "Status emails and recruiter replies for your applications.",
   search: "Search current opportunities using the same live feed as Job Matches.",
   credits: "Review queued volume and Azure-backed usage for your account.",
@@ -577,7 +577,7 @@ export default function App() {
             <div className="page-chrome">
               <div className="page-chrome-heading">
                 <h1>{pageTitles[page]}</h1>
-                <p>{pageSubtitles[page]}</p>
+                {pageSubtitles[page] ? <p>{pageSubtitles[page]}</p> : null}
               </div>
             </div>
         {currentUser && (() => {
@@ -2012,12 +2012,12 @@ function ApplicationQuestions({
             ) : inputType === "checkbox" ? (
               <select
                 required={question.required !== false}
-                value={matchSelectOption(["yes", "no"], answers[question.key] || "") || answers[question.key] || ""}
+                value={matchSelectOption(["Yes", "No"], answers[question.key] || "") || answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
               </select>
             ) : inputType === "textarea" ? (
               <textarea
@@ -2691,10 +2691,6 @@ function ProfileView({
   return (
     <div className="basic-page screenshot-profile profile-form-page">
       <div className="profile-form-intro">
-        <div>
-          <h2>Profile information</h2>
-          <p>Update your details once — Simple Apply reuses them on every employer form.</p>
-        </div>
         <button className="apply" disabled={saving || !canSave} onClick={() => void persist()}>
           {saving ? "Saving…" : "Save profile"}
         </button>
