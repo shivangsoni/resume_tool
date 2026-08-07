@@ -3,23 +3,27 @@ import {
   Avatar,
   Button,
   CounterBadge,
-  Menu,
-  MenuItem,
-  MenuList,
-  MenuPopover,
-  MenuTrigger,
+  DrawerBody,
+  DrawerHeader,
+  DrawerHeaderTitle,
   NavDrawer,
   NavDrawerBody,
   NavDrawerFooter,
-  NavDrawerHeader,
   NavItem,
   NavSectionHeader,
+  OverlayDrawer,
+  SearchBox,
+  Tab,
+  TabList,
+  Toolbar,
+  ToolbarButton,
   Tooltip,
   type OnNavItemSelectData,
 } from "@fluentui/react-components";
 import {
   Add24Regular,
   Alert24Regular,
+  ArrowClockwise24Regular,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
   Board24Regular,
@@ -36,6 +40,7 @@ import {
   Document24Regular,
   Edit24Regular,
   ErrorCircle24Regular,
+  Filter24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
   Location24Regular,
@@ -44,6 +49,7 @@ import {
   Options24Regular,
   Payment24Regular,
   Person24Regular,
+  QuestionCircle24Regular,
   Search24Regular,
   Settings24Regular,
   SignOut24Regular,
@@ -99,6 +105,18 @@ const pageTitles: Record<Page, string> = {
   credits: "Usage",
   settings: "Settings",
   auth: "Account",
+};
+const pageSubtitles: Record<Page, string> = {
+  dashboard: "AI-matched opportunities based on your résumé and preferences.",
+  applications: "Track every submission, answer follow-ups, and retry failed applies.",
+  resume: "Upload a PDF or DOCX. Extracted details help fill employer forms.",
+  preferences: "Set target titles, locations, and workplace types to improve match quality.",
+  profile: "Keep contact details and work history current for Simple Apply.",
+  inbox: "Status emails and recruiter replies for your applications.",
+  search: "Search current opportunities using the same live feed as Job Matches.",
+  credits: "Review queued volume and Azure-backed usage for your account.",
+  settings: "Manage notification preferences for this workspace.",
+  auth: "Sign in to your ApplyPilot account.",
 };
 const productTourSteps = [
   { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
@@ -167,6 +185,8 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
   const [navOpen, setNavOpen] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [headerQuery, setHeaderQuery] = useState("");
   const [unreadMailCount, setUnreadMailCount] = useState(0);
   const notify = (message: string) => {
     setToast(message);
@@ -342,68 +362,31 @@ export default function App() {
 
   return (
     <div className={`sa-shell ${navOpen ? "nav-expanded" : "nav-collapsed"}`}>
-      <NavDrawer
-        open
-        type="inline"
-        selectedValue={page}
-        onNavItemSelect={onNavSelect}
-        className="sa-nav"
-      >
-        <NavDrawerHeader>
-          <div className="sa-nav-top">
-            <Button
-              appearance="transparent"
-              className="sa-nav-toggle"
-              icon={<Navigation24Regular />}
-              aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
-              onClick={() => setNavOpen((value) => !value)}
-            />
-          </div>
-        </NavDrawerHeader>
-        <NavDrawerBody>
-          <NavSectionHeader>Workspace</NavSectionHeader>
-          <NavItem value="dashboard" icon={<Board24Regular />}>Job Matches</NavItem>
-          <NavItem value="applications" icon={<Briefcase24Regular />}>
-            Applications
-            {applications.length > 0 ? <CounterBadge className="nav-count" count={applications.length} size="small" appearance="filled" color="informative" /> : null}
-          </NavItem>
-          <NavItem value="inbox" icon={<Mail24Regular />}>
-            Email Inbox
-            {unreadMailCount > 0 ? <CounterBadge className="nav-count" count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
-          </NavItem>
-          <NavItem value="search" icon={<Search24Regular />}>Job Search</NavItem>
-          <NavSectionHeader>Candidate</NavSectionHeader>
-          <NavItem value="resume" icon={<Document24Regular />}>Résumé</NavItem>
-          <NavItem value="profile" icon={<Person24Regular />}>Profile</NavItem>
-          <NavItem value="preferences" icon={<Options24Regular />}>Preferences</NavItem>
-          <NavSectionHeader>Account</NavSectionHeader>
-          <NavItem value="settings" icon={<Settings24Regular />}>Settings</NavItem>
-          <NavItem value="credits" icon={<Payment24Regular />}>Usage</NavItem>
-        </NavDrawerBody>
-        <NavDrawerFooter>
-          <div className="usage">
-            <div>
-              <span>Submitted applications</span>
-              <b>{applications.filter((item) => item.status === "submitted").length} / 100</b>
-            </div>
-            <i>
-              <em style={{ width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%` }} />
-            </i>
-            <small>Persisted in your account</small>
-          </div>
-        </NavDrawerFooter>
-      </NavDrawer>
-
-      <div className="sa-main-column">
-        <header className="sa-header">
-          <div className="sa-logo" aria-label="ApplyPilot">
-            <span><Sparkle24Filled /></span>
-            <b>ApplyPilot</b>
-          </div>
-          <div className="header-title">
-            <b>{pageTitles[page]}</b>
-          </div>
-          <div className="header-spacer" />
+      <header className="sa-header">
+        <Button
+          appearance="transparent"
+          className="sa-nav-toggle"
+          icon={<Navigation24Regular />}
+          aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
+          onClick={() => setNavOpen((value) => !value)}
+        />
+        <div className="sa-logo" aria-label="ApplyPilot">
+          <span><Sparkle24Filled /></span>
+          <b>ApplyPilot</b>
+        </div>
+        <SearchBox
+          className="sa-header-search"
+          placeholder="Search jobs, companies, applications"
+          value={headerQuery}
+          onChange={(_e, data) => setHeaderQuery(data.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            setQuery(headerQuery);
+            setJobPage(1);
+            setPage("dashboard");
+          }}
+        />
+        <div className="sa-header-actions">
           <Tooltip content="Email notifications" relationship="label" positioning={{ position: "below", align: "end" }}>
             <Button
               appearance="transparent"
@@ -418,29 +401,77 @@ export default function App() {
               onClick={() => setPage("inbox")}
             />
           </Tooltip>
-          <Menu positioning={{ position: "below", align: "end" }}>
-            <MenuTrigger disableButtonEnhancement>
-              <Button appearance="transparent" className="header-profile-btn" aria-label="Account menu">
-                <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
-              </Button>
-            </MenuTrigger>
-            <MenuPopover className="sa-account-menu">
-              <MenuList>
-                <MenuItem icon={<Person24Regular />} onClick={() => setPage("profile")}>Profile</MenuItem>
-                <MenuItem icon={<Settings24Regular />} onClick={() => setPage("settings")}>Settings</MenuItem>
-                <MenuItem icon={<Sparkle24Filled />} onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Product tour</MenuItem>
-                <MenuItem
-                  icon={<SignOut24Regular />}
-                  onClick={() => { void beginSignOut(); }}
-                >
-                  Sign out
-                </MenuItem>
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-        </header>
-        <ProductTour page={page} setPage={setPage} />
-        <main className="sa-main">
+          <Tooltip content="Product tour" relationship="label" positioning={{ position: "below", align: "end" }}>
+            <Button
+              appearance="transparent"
+              className="header-icon-btn"
+              icon={<QuestionCircle24Regular />}
+              aria-label="Product tour"
+              onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}
+            />
+          </Tooltip>
+          <Button
+            appearance="transparent"
+            className="header-profile-btn"
+            aria-label="Open profile"
+            onClick={() => setProfileOpen(true)}
+          >
+            <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
+          </Button>
+        </div>
+      </header>
+
+      <div className="sa-body">
+        <NavDrawer
+          open
+          type="inline"
+          selectedValue={page}
+          onNavItemSelect={onNavSelect}
+          className="sa-nav"
+        >
+          <NavDrawerBody>
+            <NavSectionHeader>Operations</NavSectionHeader>
+            <NavItem value="dashboard" icon={<Board24Regular />}>Job Matches</NavItem>
+            <NavItem value="applications" icon={<Briefcase24Regular />}>
+              Applications
+              {applications.length > 0 ? <CounterBadge className="nav-count" count={applications.length} size="small" appearance="filled" color="informative" /> : null}
+            </NavItem>
+            <NavItem value="inbox" icon={<Mail24Regular />}>
+              Email Inbox
+              {unreadMailCount > 0 ? <CounterBadge className="nav-count" count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+            </NavItem>
+            <NavItem value="search" icon={<Search24Regular />}>Job Search</NavItem>
+            <NavSectionHeader>Candidate</NavSectionHeader>
+            <NavItem value="resume" icon={<Document24Regular />}>Résumé</NavItem>
+            <NavItem value="profile" icon={<Person24Regular />}>Profile</NavItem>
+            <NavItem value="preferences" icon={<Options24Regular />}>Preferences</NavItem>
+            <NavSectionHeader>Account</NavSectionHeader>
+            <NavItem value="settings" icon={<Settings24Regular />}>Settings</NavItem>
+            <NavItem value="credits" icon={<Payment24Regular />}>Usage</NavItem>
+          </NavDrawerBody>
+          <NavDrawerFooter>
+            <div className="usage">
+              <div>
+                <span>Submitted applications</span>
+                <b>{applications.filter((item) => item.status === "submitted").length} / 100</b>
+              </div>
+              <i>
+                <em style={{ width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%` }} />
+              </i>
+              <small>Persisted in your account</small>
+            </div>
+          </NavDrawerFooter>
+        </NavDrawer>
+
+        <div className="sa-main-column">
+          <ProductTour page={page} setPage={setPage} />
+          <main className="sa-main">
+            <div className="page-chrome">
+              <div className="page-chrome-heading">
+                <h1>{pageTitles[page]}</h1>
+                <p>{pageSubtitles[page]}</p>
+              </div>
+            </div>
         {currentUser && (() => {
           const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
           if (readiness.ready) return null;
@@ -667,7 +698,53 @@ export default function App() {
             {toast}
           </div>
         )}
+        </div>
       </div>
+
+      <OverlayDrawer
+        position="end"
+        size="medium"
+        open={profileOpen}
+        onOpenChange={(_e, data) => setProfileOpen(data.open)}
+        className="sa-profile-drawer"
+      >
+        <DrawerHeader>
+          <DrawerHeaderTitle
+            action={
+              <Button
+                appearance="subtle"
+                aria-label="Close"
+                icon={<Dismiss24Regular />}
+                onClick={() => setProfileOpen(false)}
+              />
+            }
+          >
+            Profile
+          </DrawerHeaderTitle>
+        </DrawerHeader>
+        <DrawerBody>
+          <div className="sa-profile-drawer-body">
+            <div className="sa-profile-drawer-user">
+              <Avatar name={displayName} initials={avatarInitials} color="colorful" size={64} />
+              <div>
+                <b>{displayName}</b>
+                <span>{currentUser.userDetails || currentUser.userId}</span>
+              </div>
+            </div>
+            <div className="sa-profile-drawer-actions">
+              <Button appearance="subtle" icon={<Person24Regular />} onClick={() => { setProfileOpen(false); setPage("profile"); }}>
+                Edit profile
+              </Button>
+              <Button appearance="subtle" icon={<Settings24Regular />} onClick={() => { setProfileOpen(false); setPage("settings"); }}>
+                Settings
+              </Button>
+              <Button appearance="subtle" icon={<SignOut24Regular />} onClick={() => { void beginSignOut(); }}>
+                Sign out
+              </Button>
+            </div>
+          </div>
+        </DrawerBody>
+      </OverlayDrawer>
     </div>
   );
 }
@@ -703,21 +780,40 @@ function Dashboard(p: {
 }) {
   return (
     <div className="dash">
-      <section className="dash-top">
-        <div>
-          <h1>Job Matches</h1>
-          <p>
-            AI-matched opportunities based on your résumé and preferences.{" "}
-            <span className={`feed ${p.feedState}`}>
-              {p.feedState === "live"
-                ? "Live API data"
-                : p.feedState === "loading"
-                  ? "Loading current jobs…"
-                  : "API unavailable"}
-            </span>
-          </p>
-        </div>
-      </section>
+      <TabList
+        className="page-tabs"
+        selectedValue={p.status}
+        onTabSelect={(_e, data) => p.setStatus(String(data.value) as typeof p.status)}
+      >
+        <Tab value="all">All matches</Tab>
+        <Tab value="ready">Not applied</Tab>
+        <Tab value="queued">Queued</Tab>
+        <Tab value="applied">Applied</Tab>
+        <Tab value="failed">Failed</Tab>
+      </TabList>
+      <Toolbar className="page-command-bar">
+        <ToolbarButton
+          appearance="primary"
+          icon={<ArrowClockwise24Regular />}
+          onClick={p.retry}
+        >
+          Refresh
+        </ToolbarButton>
+        <ToolbarButton
+          icon={<Filter24Regular />}
+          onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
+        >
+          {p.status === "ready" ? "Clear filter" : "Not applied"}
+        </ToolbarButton>
+        <div className="page-command-spacer" />
+        <span className={`feed ${p.feedState}`}>
+          {p.feedState === "live"
+            ? "Live API data"
+            : p.feedState === "loading"
+              ? "Loading current jobs…"
+              : "API unavailable"}
+        </span>
+      </Toolbar>
       <div className="metric-row">
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "queued").length)}
@@ -1225,29 +1321,48 @@ function Applications({
   requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
+  const [appTab, setAppTab] = useState<"all" | "action">("all");
   useEffect(() => {
     if (!focusedApplicationId) return;
     document.getElementById(`application-${focusedApplicationId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [focusedApplicationId]);
 
+  const visibleApps = appTab === "action"
+    ? applications.filter((item) => ["failed", "needs_action", "review"].includes(item.status))
+    : applications;
+
   return (
     <div className="basic-page">
-      <h1>Applications</h1>
-      <p>Track every application submitted through ApplyPilot.</p>
+      <TabList
+        className="page-tabs"
+        selectedValue={appTab}
+        onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "action")}
+      >
+        <Tab value="all">All applications</Tab>
+        <Tab value="action">Needs action</Tab>
+      </TabList>
+      <Toolbar className="page-command-bar">
+        <ToolbarButton appearance="primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
+          Needs action
+        </ToolbarButton>
+        <ToolbarButton icon={<ArrowClockwise24Regular />} onClick={() => window.location.reload()}>
+          Refresh
+        </ToolbarButton>
+      </Toolbar>
       <div className="table-card">
         <div className="table-head">
           <span>ROLE</span>
           <span>STATUS</span>
           <span>DATE</span>
         </div>
-        {applications.length === 0 && (
+        {visibleApps.length === 0 && (
           <div className="no-results">
             <Briefcase24Regular />
-            <b>No applications in progress</b>
+            <b>{appTab === "action" ? "No applications need action" : "No applications in progress"}</b>
             <span>Choose Simple Apply on a job match to queue submission.</span>
           </div>
         )}
-        {applications.map((application) => (
+        {visibleApps.map((application) => (
           <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
               <span className="job-logo">
@@ -1705,7 +1820,11 @@ function Resume({
 
   return (
     <div className="basic-page resume-page">
-      <h1>Résumés</h1>
+      <Toolbar className="page-command-bar">
+        <ToolbarButton appearance="primary" icon={<ArrowUpload24Regular />} onClick={() => document.getElementById("resume-file-input")?.click()}>
+          Upload résumé
+        </ToolbarButton>
+      </Toolbar>
       <p>Upload, select, rename, download, and review résumé versions. Uploading never changes your profile automatically.</p>
       <div className="resume-library">
         <section className="resume-left">
@@ -1715,7 +1834,7 @@ function Resume({
             <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
             <label className="apply">
               {uploading ? "Uploading…" : "Choose résumé"}
-              <input type="file" accept=".pdf,.docx" hidden disabled={uploading} onChange={async (event) => {
+              <input id="resume-file-input" type="file" accept=".pdf,.docx" hidden disabled={uploading} onChange={async (event) => {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 setUploading(true);
@@ -1767,7 +1886,7 @@ function Resume({
 function JobSearchPage({ query, setQuery, location, setLocation, search }: { query: string; setQuery: (value: string) => void; location: string; setLocation: (value: string) => void; search: () => void }) {
   return (
     <div className="simple-page narrow-page">
-      <div className="page-heading"><h1>Job Search <em>BETA</em></h1><p>Search current opportunities using the same live feed as your dashboard.</p></div>
+      <div className="page-heading"><p>Search current opportunities using the same live feed as your dashboard.</p></div>
       <section className="simple-card search-panel">
         <h2><Search24Regular /> Search Jobs</h2>
         <label>Job title, company, or skill<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Software Engineer, React, Azure…" /></label>
@@ -2058,7 +2177,7 @@ function InboxPage({ openApplication }: { openApplication: (applicationId: strin
 
   return (
     <div className="simple-page">
-      <div className="page-heading left"><h1><Mail24Regular /> Email Inbox</h1><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
+      <div className="page-heading left"><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
       {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
       {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
         <section className="simple-card mailbox-layout">
@@ -2090,7 +2209,7 @@ function SettingsPage() {
     localStorage.setItem("applypilot.settings", JSON.stringify(next));
   };
   return (
-    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings24Regular /> Settings</h1><p>Manage local notification preferences.</p>{([
+    <div className="simple-page narrow-page settings-page"><section className="simple-card"><p>Manage local notification preferences.</p>{([
       ["jobAlerts", "Daily job alerts", "Show new matching roles when you return"],
       ["weeklySummary", "Weekly application summary", "Summarize queued and submitted applications"],
       ["profileReminders", "Profile improvement reminders", "Prompt when important profile fields are blank"],
@@ -2109,7 +2228,6 @@ function Preferences({
 }) {
   return (
     <div className="basic-page">
-      <h1>Job Preferences</h1>
       <p>Tell the matching agent exactly what you are looking for.</p>
       <div className="settings-card">
         <label>
@@ -2215,7 +2333,6 @@ function ProfileView({
 
   return (
     <div className="basic-page screenshot-profile">
-      <h1>Profile Information</h1>
       <p>
         Required fields are collected once and reused by the browser worker on every Simple Apply.
         Uploading a résumé auto-fills blank contact and skills fields from extraction.
