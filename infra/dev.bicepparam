@@ -13,6 +13,9 @@ param postmarkInboundAddress = 'c4e1c6ba7398a087b9d10354733b79fd@inbound.postmar
 // Enable only after Postmark inbound-domain forwarding and the MX record are verified.
 param mailboxDomain = ''
 param deploymentEnvironment = 'production'
+// Keep Google/GitHub SWA settings as Key Vault references. staticwebapp.config.json
+// declares those providers; missing settings make all /.auth/* routes return 404.
+param persistSocialAuthInKeyVault = true
 param tags = {
   application: 'ApplyPilot'
   environment: 'dev'
