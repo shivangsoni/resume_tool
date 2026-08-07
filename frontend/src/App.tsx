@@ -815,6 +815,7 @@ function Dashboard(p: {
       <Toolbar className="page-command-bar">
         <ToolbarButton
           appearance="primary"
+          className="sa-cmd-primary"
           icon={<ArrowClockwise24Regular />}
           onClick={p.retry}
         >
@@ -1362,7 +1363,7 @@ function Applications({
         <Tab value="action">Needs action</Tab>
       </TabList>
       <Toolbar className="page-command-bar">
-        <ToolbarButton appearance="primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
+        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
           Needs action
         </ToolbarButton>
         <ToolbarButton icon={<ArrowClockwise24Regular />} onClick={() => window.location.reload()}>
@@ -1840,7 +1841,7 @@ function Resume({
   return (
     <div className="basic-page resume-page">
       <Toolbar className="page-command-bar">
-        <ToolbarButton appearance="primary" icon={<ArrowUpload24Regular />} onClick={() => document.getElementById("resume-file-input")?.click()}>
+        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<ArrowUpload24Regular />} onClick={() => document.getElementById("resume-file-input")?.click()}>
           Upload résumé
         </ToolbarButton>
       </Toolbar>

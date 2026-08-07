@@ -214,6 +214,12 @@ select {
 .sa-header .sa-header-icon:hover {
   background: rgba(255, 255, 255, 0.12) !important;
 }
+.sa-header .sa-nav-toggle svg,
+.sa-header .sa-header-icon svg,
+.sa-header .header-icon-btn svg {
+  color: #fff !important;
+  fill: currentColor;
+}
 .sa-logo {
   height: var(--sa-header-height);
   display: flex;
@@ -323,9 +329,17 @@ select {
   align-items: center;
   flex-wrap: wrap;
 }
-.page-command-bar .fui-Button[appearance="primary"],
-.page-command-bar .fui-Button.fui-Button--primary {
+/* Fluent v9 does not emit [appearance] or .fui-Button--primary — use explicit class. */
+.page-command-bar .sa-cmd-primary.fui-Button,
+.page-command-bar .sa-cmd-primary {
   background-color: #0f6cbd !important;
+  color: #fff !important;
+  border: 1px solid #0f6cbd !important;
+}
+.page-command-bar .sa-cmd-primary:hover {
+  background-color: #115ea3 !important;
+  border-color: #115ea3 !important;
+  color: #fff !important;
 }
 .page-command-bar .toolbar-feed,
 .toolbar-feed {
