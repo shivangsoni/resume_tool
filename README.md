@@ -73,6 +73,8 @@ The deployment job uses a GitHub environment named `production`, which GitHub cr
 
 These values are not credentials and are safe to track. This `AZURE_CLIENT_ID` is used by GitHub Actions for Azure login via OIDC and is separate from the custom Azure AD application used by Static Web Apps auth. The SWA auth app ID is configured through `infra/dev.bicepparam` as `azureClientId` and should be the Microsoft login client ID `35bf98bd-ec76-42b8-8fd5-db32455d2b00`.
 
+Every Static Web App environment must register its exact callback URL on that authentication app as `https://<static-web-app-host>/.auth/login/aad/callback`. The current callbacks include production at `blue-water-0d76ed710.7.azurestaticapps.net` and non-production at `icy-water-0ce7d5b10.7.azurestaticapps.net`. Add a replacement environment's callback before testing sign-in; preserve the existing environment callbacks.
+
 GitHub authenticates with short-lived OpenID Connect tokens, so no GitHub secret is required for Azure login. The Azure application `applypilot-github-deploy` has a federated credential for the runner's immutable-ID subject `repo:shivangsoni@14988999/resume_tool@1323687782:environment:production`, plus Contributor and User Access Administrator roles scoped to resource groups `apply` and `apply-nonprod`. The SQL user of the same name has `db_ddladmin`, `db_datareader`, and `db_datawriter` roles so the workflow can execute forward-only migrations.
 
 The workflow creates an exact-IP SQL firewall rule only for the migration step and removes it even when deployment fails. Backend releases are uploaded to a private Blob container and loaded by the Function's managed identity; no storage key is persisted. The Static Web Apps deployment token is read at runtime, masked, and never saved in GitHub. Do not add OAuth client secrets, Postmark keys, Function keys, storage keys, or database passwords to workflow files.
@@ -129,8 +131,8 @@ Verified production checks:
 - Job search covers title, company, location, description, skills, and source. Status, source, and workplace filters can be combined.
 - Upstream HTML and encoded Greenhouse markup are normalized into readable plain-text job summaries before rendering.
 - Location text filtering is case-insensitive and combines with every other job filter.
-- Signed-out users see Microsoft sign-in actions in both the persistent header and desktop account card.
-- The account screen creates an ApplyPilot user automatically on first successful Microsoft sign-in. Google and Facebook are displayed as unavailable until their required external OAuth registrations are configured.
+- Signed-out users see sign-in actions in both the persistent header and desktop account card.
+- The account screen creates an ApplyPilot user automatically on first successful sign-in. Microsoft, Google, and GitHub are enabled when listed in `AUTH_PROVIDERS` and registered in `staticwebapp.config.json`; Facebook stays unavailable until its OAuth credentials are configured.
 - The screenshot-aligned frontend provides Dashboard, Email Inbox, Job Search, Profile, Applications/usage, and Settings surfaces. Inbox integration is shown as unconfigured until a real mailbox provider is connected; the UI does not generate sample messages or credits.
 - The persistent top navigation exposes the Résumé page at every viewport width. It lists current and past PDF/DOCX uploads, previews PDFs with React PDF, downloads DOCX files, and removes individual documents.
 - Anonymous requests to profile, applications, and resume APIs return HTTP 401.
@@ -142,9 +144,9 @@ Verified production checks:
 
 ### Application lifecycle
 
-1. Sign in with Microsoft through Static Web Apps authentication.
+1. Sign in with Microsoft, Google, or GitHub through Static Web Apps authentication.
 2. Upload one or more PDF or DOCX résumés (maximum 4 MB each on the F0 tier). ApplyPilot retains past versions in private Blob Storage. Extraction is stored as document metadata and never changes the user profile or queued answers.
-3. Choose **Simple Apply** on a live job. ApplyPilot saves a `review` record with the complete saved profile snapshot and stays inside the portal.
+3. Choose **Simple Apply** on a live job. ApplyPilot saves the profile snapshot, queues the application immediately, and a background browser worker fills and submits the employer form.
 4. When your résumé or profile changes, queued `review` applications are refreshed automatically with the latest answers.
 5. `POST /api/applications/{id}/submit` verifies ownership and sends the application ID to Azure Service Bus using managed identity.
 6. The queue-triggered Function calls only explicitly allowlisted employer providers. Unsupported integrations move to `needs_action`; transient errors retry five times and then dead-letter.
@@ -157,11 +159,13 @@ Official write APIs exist for Greenhouse, Lever, and SmartRecruiters, but requir
 
 ### Authentication providers
 
-Microsoft delegated sign-in is configured at `/.auth/login/aad`. Other provider buttons remain unavailable until both their provider registration and required Static Web Apps settings are deployed; incomplete providers must not be included in `staticwebapp.config.json` because one invalid custom provider can disable the platform auth routes. The first authenticated profile/API request maps the provider subject to a new SQL user, so sign-up and sign-in use the same secure flow.
+Microsoft, Google, and GitHub are registered in `frontend/public/staticwebapp.config.json`. The login page loads `/api/auth/providers` and enables only providers listed in the Function App setting `AUTH_PROVIDERS` (comma-separated, e.g. `aad,google,github`). Set `AUTH_PROVIDERS=aad,google,github` when those SWA app settings (`GOOGLE_CLIENT_*`, `GITHUB_CLIENT_*`) are present. Incomplete providers must not remain in `staticwebapp.config.json` without matching secrets—one invalid custom provider can disable platform auth routes.
 
-Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations. The custom Entra provider uses the tenant-specific v2 issuer so Static Web Apps can validate the callback token issuer.
+To add Facebook (or refresh social secrets), pass credentials as Bicep parameters (`googleClientId` / `googleClientSecret`, `githubClientId` / `githubClientSecret`, `facebookAppId` / `facebookAppSecret`) or run `scripts/enable-social-auth.ps1`, then redeploy the frontend so the updated `staticwebapp.config.json` is published. The first authenticated profile/API request maps the provider subject to a SQL user (with email-based identity merge), so sign-up and sign-in use the same secure flow.
 
-GitHub, Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Do not enable their UI buttons until the provider and callback URLs are configured and tested. Register these callbacks with the providers:
+Public authentication routes are handled by the React SPA: `/` is the signed-out landing page, `/login` is the provider chooser, `/dashboard` is the post-login target, and `/logged-out` is the post-logout confirmation. Logout links use `/.auth/logout?post_logout_redirect_uri=/logged-out`; authentication callback paths are owned by Azure and must never be used as landing or logout destinations.
+
+GitHub, Google and Facebook require credentials from their own developer consoles; Azure subscription ownership cannot create those registrations. Register these callbacks with the providers:
 
 ```text
 https://blue-water-0d76ed710.7.azurestaticapps.net/.auth/login/github/callback
@@ -174,14 +178,16 @@ Client IDs and secrets are stored in Static Web Apps application settings—neve
 Required external inputs:
 
 - Google OAuth web client ID and client secret, with the Google callback allowlisted.
+- GitHub OAuth app client ID and secret, with the GitHub callback allowlisted.
 - Meta/Facebook application ID and secret, with the Facebook callback allowlisted and the app published for non-admin users.
-- Microsoft Entra application client ID/secret if switching from the current preconfigured Microsoft provider to a multi-provider custom configuration.
 
 ### Email and mailbox behavior
 
 Postmark test mode permits inbound processing from any domain, but limits the account to 100 processed messages. Apply for Postmark approval before production volume requires more than that. ApplyPilot continues using Azure Communication Services rather than Postmark for outbound queue confirmations.
 
 Azure Communication Services Email provides outbound delivery only. The deployed Azure-managed domain sends queue confirmations from its fixed `donotreply@...azurecomm.net` address; Azure-managed sender usernames cannot be personalized. The Function uses managed identity with the Communication and Email Service Owner role, so no email connection string is stored in the app.
+
+Outbound status emails (queued, submitted, needs action) are also mirrored into the user's ApplyPilot inbox (`dbo.InboundMessages`) so the Email Inbox tab stays populated even when recruiters never reply. Simple Apply sets the employer contact email to the user's private inbound alias so recruiter replies route through Postmark into that same inbox. The browser worker prefers `answers.email`, then the mailbox alias, then the profile/sign-in email.
 
 Inbound mail uses a Postmark inbound stream. Until the custom MX domain is verified, each user receives a plus-addressed alias under the server address configured by `POSTMARK_INBOUND_ADDRESS`. After Postmark verifies `applypilotmail.accesscam.org`, set `mailboxDomain` in `infra/dev.bicepparam` to expose the shorter `alias@applypilotmail.accesscam.org` form. The webhook is an Azure Function with `function` authorization; never commit or publish its function key.
 
@@ -194,6 +200,14 @@ $postmarkWebhook | Set-Clipboard
 ```
 
 Postmark must receive HTTP 200 from its webhook check. Apply migration `007_inbound_mailbox.sql` before sending the check payload. Messages are deduplicated by provider message ID; only bounded plain text and attachment counts are stored, and attachment downloads remain disabled pending malware scanning.
+
+### Telemetry and alerting
+
+Application Insights on the Function App raises metric alerts for exceptions and failed requests. Action group `applypilotcentral-ops` emails `shivangsoni22@gmail.com` (override with Bicep `opsAlertEmail`). Runtime failures in applications/mailbox paths also attempt an ACS ops alert email to the same address via `OPS_ALERT_EMAIL`.
+
+### Product walkthrough and mobile layout
+
+Signed-in users see a first-run walkthrough covering Dashboard, Applications, Inbox, Résumé, Profile, and Preferences. Restart it anytime from **Tour** in the top nav. The shell is responsive below 700px: horizontal-scroll top navigation, two-column KPI cards, stacked filters, and list-first job browsing.
 
 `apply.com` is not owned by this subscription and cannot be used or verified here. Unique receiving aliases such as `username@your-domain.example` require:
 
@@ -352,11 +366,12 @@ $packageBlob = 'releases/backend.zip'
 $storageKey = az storage account keys list --resource-group $resourceGroup --account-name $storageAccountName --query '[0].value' -o tsv
 az storage blob upload --account-name $storageAccountName --account-key $storageKey --container-name function-releases --name $packageBlob --file backend.zip --overwrite true
 $packageUrl = "https://$storageAccountName.blob.core.windows.net/function-releases/$packageBlob"
-az functionapp config appsettings set --resource-group $resourceGroup --name $backendName --settings WEBSITE_RUN_FROM_PACKAGE=$packageUrl WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned --output none
+$packageMiId = az identity show --resource-group $resourceGroup --name "$backendName-id" --query id -o tsv
+az functionapp config appsettings set --resource-group $resourceGroup --name $backendName --settings WEBSITE_RUN_FROM_PACKAGE=$packageUrl WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=$packageMiId --output none
 az functionapp restart --resource-group $resourceGroup --name $backendName
 ```
 
-The Function's system identity has the Storage Blob Data Reader role for private package loading; its user-assigned runtime identity separately has Storage Blob Data Contributor for application data. Do not make the package container public.
+The Function's user-assigned identity has Storage Blob Data Reader for private package loading and Storage Blob Data Contributor for application data. Do not make the package container public.
 
 After the backend is linked to Static Web Apps, verify public endpoints through the frontend hostname:
 

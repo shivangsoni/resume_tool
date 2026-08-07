@@ -36,7 +36,6 @@ resource aadSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (secretVa
   properties: {
     value: secretValue
   }
-  dependsOn: [vault]
 }
 
 output name string = vault.name

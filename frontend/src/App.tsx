@@ -1,39 +1,64 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@fluentui/react-components";
 import {
-  BarChart3,
-  Briefcase,
-  Check,
-  ChevronLeft,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  CreditCard,
-  Download,
-  LayoutDashboard,
-  MapPin,
-  Mail,
-  Maximize2,
-  Minus,
-  Minimize2,
-  Pencil,
-  Plus,
-  Search,
-  Settings,
-  SlidersHorizontal,
-  Upload,
-  Trash2,
-  UserRound,
-  WandSparkles,
-  X,
-} from "lucide-react";
+  Avatar,
+  Button,
+  CounterBadge,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  NavDrawer,
+  NavDrawerBody,
+  NavDrawerFooter,
+  NavDrawerHeader,
+  NavItem,
+  NavSectionHeader,
+  Tooltip,
+  type OnNavItemSelectData,
+} from "@fluentui/react-components";
+import {
+  Add24Regular,
+  Alert24Regular,
+  ArrowDownload24Regular,
+  ArrowUpload24Regular,
+  Board24Regular,
+  Briefcase24Regular,
+  Checkmark24Regular,
+  CheckmarkCircle24Regular,
+  ChevronDown24Regular,
+  ChevronLeft24Regular,
+  ChevronRight24Regular,
+  Clock24Regular,
+  DataBarVertical24Regular,
+  Delete24Regular,
+  Dismiss24Regular,
+  Document24Regular,
+  Edit24Regular,
+  ErrorCircle24Regular,
+  FullScreenMaximize24Regular,
+  FullScreenMinimize24Regular,
+  Location24Regular,
+  Mail24Regular,
+  Navigation24Regular,
+  Options24Regular,
+  Payment24Regular,
+  Person24Regular,
+  Search24Regular,
+  Settings24Regular,
+  SignOut24Regular,
+  Sparkle24Filled,
+  Subtract24Regular,
+} from "@fluentui/react-icons";
 import { Document as PdfDocument, Page as PdfPage, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { emptyProfile, loadProfile, saveProfile } from "./storage";
+import { fieldLabel, missingProfileFields, profileReadyForApply, REQUIRED_PROFILE_FIELDS } from "./profileCompleteness";
 import {
   answerApplicationQuestions,
   createApplication,
+  deleteApplication,
   submitApplication,
   getApplications,
   getAllJobs,
@@ -48,6 +73,12 @@ import {
   uploadResume,
   deleteResume,
   renameResume,
+  getAuthProviders,
+  beginSignOut,
+  ensureSignedOut,
+  loginWithPassword,
+  registerWithPassword,
+  setDevSignedIn,
 } from "./api";
 import type { Application, MailMessage, Profile, ResumeDocument } from "./types";
 import { matchesJob, paginateJobs } from "./job-filter";
@@ -55,6 +86,27 @@ import { matchesJob, paginateJobs } from "./job-filter";
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 type Page = "dashboard" | "applications" | "resume" | "preferences" | "profile" | "inbox" | "search" | "credits" | "settings" | "auth";
+
+const pageTitles: Record<Page, string> = {
+  dashboard: "Job Matches",
+  applications: "Applications",
+  resume: "Résumé",
+  preferences: "Preferences",
+  profile: "Profile",
+  inbox: "Email Inbox",
+  search: "Job Search",
+  credits: "Usage",
+  settings: "Settings",
+  auth: "Account",
+};
+const productTourSteps = [
+  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
+  { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
+  { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
+  { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
+  { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
+  { page: "preferences" as const, title: "Preferences", body: "Set target titles, locations, and workplace types to improve match quality." },
+];
 type Job = {
   id: number;
   company: string;
@@ -73,11 +125,20 @@ type Job = {
   logoUrl?: string;
   source?: string;
   postedAt?: string;
+  applicationId?: string;
+  applicationStatus?: Application["status"];
+  applicationError?: string;
+  applicationUpdatedAt?: string;
+  submissionQueuedAt?: string;
+  requiredQuestions?: Application["requiredQuestions"];
+  applicationAnswers?: Record<string, string>;
 };
 
 export default function App() {
   const routePath = window.location.pathname.toLowerCase();
-  const [page, setPage] = useState<Page>("dashboard");
+  const linkedApplicationId = new URLSearchParams(window.location.search).get("application");
+  const [page, setPage] = useState<Page>(linkedApplicationId ? "applications" : "dashboard");
+  const [focusedApplicationId, setFocusedApplicationId] = useState(linkedApplicationId);
   const [selected, setSelected] = useState(0);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "ready" | "queued" | "applied" | "failed">(
@@ -103,20 +164,58 @@ export default function App() {
   } | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [resumeDocuments, setResumeDocuments] = useState<ResumeDocument[]>([]);
+  const [navOpen, setNavOpen] = useState(true);
+  const [unreadMailCount, setUnreadMailCount] = useState(0);
   const notify = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(""), 2200);
   };
+  const resolveAnswers = async (id: string, answers: Record<string, string>) => {
+    try {
+      const result = await answerApplicationQuestions(id, answers);
+      setApplications((items) => items.map((item) => (item.id === id ? result.application : item)));
+      notify("Answers saved. Application queued again.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Answers could not be saved");
+    }
+  };
+  const requeueApplication = async (id: string) => {
+    try {
+      const queued = await submitApplication(id);
+      setApplications((items) => items.map((item) => (item.id === id ? queued.application : item)));
+      notify("Moved to queued. Waiting for a browser worker.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not re-queue application");
+    }
+  };
+  const dismissJob = async (job: Job) => {
+    const removableStatuses = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    if (job.applicationId && removableStatuses.includes(String(job.applicationStatus || ""))) {
+      try {
+        await deleteApplication(job.applicationId);
+        setApplications((items) => items.filter((item) => item.id !== job.applicationId));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Could not remove application");
+        return;
+      }
+    }
+    setDismissed((items) => (items.includes(job.id) ? items : [...items, job.id]));
+    notify(job.applicationId ? "Application removed" : "Removed from your matches");
+  };
   useEffect(() => {
     getCurrentUser()
       .then(async (user) => {
-        setCurrentUser(user);
-        if (user) {
+        if (!user) {
+          setCurrentUser(null);
+          return;
+        }
+        try {
           const [remoteProfile, remoteApplications, remoteResumes] = await Promise.all([
             getRemoteProfile(),
             getApplications(),
             getResumes(),
           ]);
+          setCurrentUser(user);
           if (remoteProfile.profile) {
             const normalized = { ...emptyProfile, ...remoteProfile.profile };
             setProfile(normalized);
@@ -124,11 +223,50 @@ export default function App() {
           }
           setApplications(remoteApplications.applications);
           setResumeDocuments(remoteResumes.documents);
+        } catch (error) {
+          if (error instanceof Error && error.message === "AUTH_REQUIRED") {
+            setCurrentUser(null);
+            beginSignOut();
+            return;
+          }
+          setCurrentUser(user);
+          notify("Account data could not be loaded");
         }
       })
-      .catch(() => notify("Account data could not be loaded"))
+      .catch(() => {
+        setCurrentUser(null);
+        notify("Account data could not be loaded");
+      })
       .finally(() => setAuthReady(true));
   }, []);
+  useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+    const refreshApplications = async () => {
+      try {
+        const result = await getApplications();
+        if (active) setApplications(result.applications);
+      } catch {
+        // Keep the last known state; the next poll retries automatically.
+      }
+    };
+    const refreshUnread = async () => {
+      try {
+        const mailbox = await getMailbox(0);
+        if (!active) return;
+        setUnreadMailCount(mailbox.messages.filter((message) => !message.isRead).length);
+      } catch {
+        // Inbox may be unavailable; keep the last badge count.
+      }
+    };
+    void refreshApplications();
+    void refreshUnread();
+    const interval = window.setInterval(() => {
+      void refreshApplications();
+      void refreshUnread();
+    }, 10_000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [currentUser]);
   useEffect(() => {
     const controller = new AbortController();
     getAllJobs(controller.signal)
@@ -151,10 +289,17 @@ export default function App() {
     () =>
       liveJobs.map((item) => {
         const application = applications.find(
-          (entry) => entry.jobId === item.id,
+          (entry) => Number(entry.jobId) === Number(item.id),
         );
         return {
           ...item,
+          applicationId: application?.id,
+          applicationStatus: application?.status,
+          applicationError: application?.lastSubmissionError,
+          applicationUpdatedAt: application?.updatedAt,
+          submissionQueuedAt: application?.submissionQueuedAt,
+          requiredQuestions: application?.requiredQuestions,
+          applicationAnswers: application?.answers,
           status:
             application && ["submitted", "interview", "offer"].includes(application.status)
               ? ("applied" as const)
@@ -182,125 +327,137 @@ export default function App() {
   if (!authReady) return <AuthLoading />;
   if (routePath === "/") return <LandingPage signedIn={Boolean(currentUser)} />;
   if (routePath === "/logged-out") return <LoggedOutPage signedIn={Boolean(currentUser)} />;
-  if (!currentUser && routePath === "/login") return <AuthPage />;
+  if (routePath === "/login") return <AuthPage signedIn={Boolean(currentUser)} />;
   if (!currentUser) return <LandingPage signedIn={false} />;
+
+  const displayName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in";
+  const avatarInitials = (profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase();
+  const onNavSelect = (_event: Event | React.SyntheticEvent, data: OnNavItemSelectData) => {
+    if (data.value) setPage(String(data.value) as Page);
+  };
+
   return (
-    <div className="sa-shell">
-      <aside className="sa-side">
-        <div className="sa-logo">
-          <span>
-            <WandSparkles />
-          </span>
-          <b>ApplyPilot</b>
-        </div>
-        <nav>
-          <Side
-            icon={<LayoutDashboard />}
-            label="Job Matches"
-            active={page === "dashboard"}
-            click={() => setPage("dashboard")}
-          />
-          <Side
-            icon={<Briefcase />}
-            label="Applications"
-            active={page === "applications"}
-            click={() => setPage("applications")}
-            count={applications.length}
-          />
-          <Side
-            icon={<FileText />}
-            label="Resumes"
-            active={page === "resume"}
-            click={() => setPage("resume")}
-          />
-          <Side
-            icon={<SlidersHorizontal />}
-            label="Job Preferences"
-            active={page === "preferences"}
-            click={() => setPage("preferences")}
-          />
-          <Side
-            icon={<UserRound />}
-            label="Profile"
-            active={page === "profile"}
-            click={() => setPage("profile")}
-          />
-        </nav>
-        <div className="side-lower">
+    <div className={`sa-shell ${navOpen ? "nav-expanded" : "nav-collapsed"}`}>
+      <NavDrawer
+        open
+        type="inline"
+        selectedValue={page}
+        onNavItemSelect={onNavSelect}
+        className="sa-nav"
+      >
+        <NavDrawerHeader>
+          <div className="sa-nav-top">
+            <Button
+              appearance="transparent"
+              className="sa-nav-toggle"
+              icon={<Navigation24Regular />}
+              aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
+              onClick={() => setNavOpen((value) => !value)}
+            />
+          </div>
+        </NavDrawerHeader>
+        <NavDrawerBody>
+          <NavSectionHeader>Workspace</NavSectionHeader>
+          <NavItem value="dashboard" icon={<Board24Regular />}>Job Matches</NavItem>
+          <NavItem value="applications" icon={<Briefcase24Regular />}>
+            Applications
+            {applications.length > 0 ? <CounterBadge className="nav-count" count={applications.length} size="small" appearance="filled" color="informative" /> : null}
+          </NavItem>
+          <NavItem value="inbox" icon={<Mail24Regular />}>
+            Email Inbox
+            {unreadMailCount > 0 ? <CounterBadge className="nav-count" count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+          </NavItem>
+          <NavItem value="search" icon={<Search24Regular />}>Job Search</NavItem>
+          <NavSectionHeader>Candidate</NavSectionHeader>
+          <NavItem value="resume" icon={<Document24Regular />}>Résumé</NavItem>
+          <NavItem value="profile" icon={<Person24Regular />}>Profile</NavItem>
+          <NavItem value="preferences" icon={<Options24Regular />}>Preferences</NavItem>
+          <NavSectionHeader>Account</NavSectionHeader>
+          <NavItem value="settings" icon={<Settings24Regular />}>Settings</NavItem>
+          <NavItem value="credits" icon={<Payment24Regular />}>Usage</NavItem>
+        </NavDrawerBody>
+        <NavDrawerFooter>
           <div className="usage">
             <div>
               <span>Submitted applications</span>
-              <b>
-                {
-                  applications.filter((item) => item.status === "submitted")
-                    .length
-                }{" "}
-                / 100
-              </b>
+              <b>{applications.filter((item) => item.status === "submitted").length} / 100</b>
             </div>
             <i>
-              <em
-                style={{
-                  width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%`,
-                }}
-              />
+              <em style={{ width: `${Math.min(applications.filter((item) => item.status === "submitted").length, 100)}%` }} />
             </i>
             <small>Persisted in your account</small>
           </div>
-          {authReady && currentUser ? (
-            <button className="user" onClick={() => setPage("profile")}>
-              <span>{(profile.firstName?.[0] || currentUser.userDetails?.[0] || "U").toUpperCase()}</span>
-              <div>
-                <b>{[profile.firstName, profile.lastName].filter(Boolean).join(" ") || currentUser.userDetails || "Signed in"}</b>
-                <small>Profile and applications saved</small>
-              </div>
-              <ChevronRight />
-            </button>
-          ) : (
-            <a className="user login-card" href="/login">
-              <span><UserRound /></span>
-              <div>
-                <b>Sign in</b>
-                <small>Save profile and applications</small>
-              </div>
-              <ChevronRight />
-            </a>
-          )}
-        </div>
-      </aside>
-      <main className="sa-main">
+        </NavDrawerFooter>
+      </NavDrawer>
+
+      <div className="sa-main-column">
         <header className="sa-header">
-          <div className="mobile-logo">
-            <WandSparkles /> ApplyPilot
+          <div className="sa-logo" aria-label="ApplyPilot">
+            <span><Sparkle24Filled /></span>
+            <b>ApplyPilot</b>
+          </div>
+          <div className="header-title">
+            <b>{pageTitles[page]}</b>
           </div>
           <div className="header-spacer" />
-          <nav className="top-nav" aria-label="Primary navigation">
-            <Button appearance="subtle" className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>Dashboard</Button>
-            <Button appearance="subtle" className={page === "inbox" ? "active" : ""} onClick={() => setPage("inbox")} icon={<Mail />}>Email Inbox</Button>
-            <Button appearance="subtle" className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>Job Search</Button>
-            <Button appearance="subtle" className={page === "profile" ? "active" : ""} onClick={() => setPage("profile")}>Profile</Button>
-            <Button appearance="subtle" className={page === "resume" ? "active" : ""} onClick={() => setPage("resume")} icon={<FileText />}>Résumé</Button>
-            <Button appearance="subtle" className={page === "credits" ? "active" : ""} onClick={() => setPage("credits")}>Credits</Button>
-            <Button appearance="subtle" className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}>Settings</Button>
-          </nav>
-          {!authReady ? (
-            <span className="auth-label">Checking account…</span>
-          ) : currentUser ? (
-            <a
-              className="upgrade"
-              href="/.auth/logout?post_logout_redirect_uri=/logged-out"
-            >
-              Sign out
-            </a>
-          ) : (
-            <button
-              className="upgrade"
-              onClick={() => { location.href = "/login"; }}
-            >
-              <UserRound /> Sign in
-            </button>
-          )}
+          <Tooltip content="Email notifications" relationship="label" positioning={{ position: "below", align: "end" }}>
+            <Button
+              appearance="transparent"
+              className="header-icon-btn"
+              icon={
+                <span className="header-bell">
+                  <Alert24Regular />
+                  {unreadMailCount > 0 ? <CounterBadge count={unreadMailCount} size="small" appearance="filled" color="danger" /> : null}
+                </span>
+              }
+              aria-label="Email notifications"
+              onClick={() => setPage("inbox")}
+            />
+          </Tooltip>
+          <Menu positioning={{ position: "below", align: "end" }}>
+            <MenuTrigger disableButtonEnhancement>
+              <Button appearance="transparent" className="header-profile-btn" aria-label="Account menu">
+                <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
+              </Button>
+            </MenuTrigger>
+            <MenuPopover className="sa-account-menu">
+              <MenuList>
+                <MenuItem icon={<Person24Regular />} onClick={() => setPage("profile")}>Profile</MenuItem>
+                <MenuItem icon={<Settings24Regular />} onClick={() => setPage("settings")}>Settings</MenuItem>
+                <MenuItem icon={<Sparkle24Filled />} onClick={() => window.dispatchEvent(new Event("applypilot:start-tour"))}>Product tour</MenuItem>
+                <MenuItem
+                  icon={<SignOut24Regular />}
+                  onClick={() => { void beginSignOut(); }}
+                >
+                  Sign out
+                </MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </header>
+        <ProductTour page={page} setPage={setPage} />
+        <main className="sa-main">
+        {currentUser && (() => {
+          const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
+          if (readiness.ready) return null;
+          return (
+            <div className="onboarding-banner">
+              <div>
+                <b>Finish setup for one-click apply</b>
+                <p>
+                  {readiness.needsResume ? "Upload a résumé, then " : ""}
+                  fill required profile fields
+                  {readiness.missing.length ? `: ${readiness.missing.map(fieldLabel).join(", ")}` : ""}.
+                  Extracted résumé details fill blank fields automatically.
+                </p>
+              </div>
+              <div className="onboarding-banner-actions">
+                {readiness.needsResume && <button className="apply" onClick={() => setPage("resume")}>Upload résumé</button>}
+                <button className="apply" onClick={() => setPage("profile")}>Complete profile</button>
+              </div>
+            </div>
+          );
+        })()}
         {page === "dashboard" && (
           <Dashboard
             visible={pagedJobs}
@@ -329,13 +486,22 @@ export default function App() {
               setFeedError("");
               setReloadKey((value) => value + 1);
             }}
-            dismiss={(id) => {
-              setDismissed([...dismissed, id]);
-              notify("Removed from your matches");
+            dismiss={(job) => {
+              void dismissJob(job);
             }}
             apply={async (j) => {
               if (!currentUser) {
-                location.href = "/.auth/login/aad?post_login_redirect_uri=/dashboard";
+                window.location.assign("/login");
+                return;
+              }
+              const readiness = profileReadyForApply(profile, resumeDocuments.length > 0);
+              if (!readiness.ready) {
+                const parts = [
+                  readiness.needsResume ? "upload a résumé" : "",
+                  readiness.missing.length ? `complete required profile fields (${readiness.missing.map(fieldLabel).join(", ")})` : "",
+                ].filter(Boolean);
+                notify(`Before Simple Apply, ${parts.join(" and ")}.`);
+                setPage(readiness.needsResume ? "resume" : "profile");
                 return;
               }
               try {
@@ -358,11 +524,15 @@ export default function App() {
                 );
               }
             }}
+            resolve={resolveAnswers}
+            requeue={requeueApplication}
+            profile={profile}
           />
         )}
         {page === "applications" && (
           <Applications
             applications={applications}
+            focusedApplicationId={focusedApplicationId}
             update={async (id, nextStatus) => {
               try {
                 const result = await updateApplication(id, nextStatus);
@@ -378,13 +548,9 @@ export default function App() {
                 );
               }
             }}
-            resolve={async (id, answers) => {
-              try {
-                const result = await answerApplicationQuestions(id, answers);
-                setApplications((items) => items.map((item) => item.id === id ? result.application : item));
-                notify("Answers saved. Application queued again.");
-              } catch (error) { notify(error instanceof Error ? error.message : "Answers could not be saved"); }
-            }}
+            resolve={resolveAnswers}
+            requeue={requeueApplication}
+            profile={profile}
           />
         )}
         {page === "resume" && (
@@ -392,15 +558,23 @@ export default function App() {
             documents={resumeDocuments}
             upload={async (file) => {
               if (!currentUser) {
-                location.href = "/.auth/login/aad?post_login_redirect_uri=/dashboard";
+                window.location.assign("/login");
                 return;
               }
               try {
                 const result = await uploadResume(file);
                 setResumeDocuments((items) => [result.document, ...items.map((item) => ({ ...item, isPrimary: false }))]);
+                if (result.profile) {
+                  const normalized = { ...emptyProfile, ...result.profile };
+                  setProfile(normalized);
+                  saveProfile(normalized);
+                }
+                const filled = (result.mergedFields || []).length;
                 notify(
                   result.extractionStatus === "succeeded"
-                    ? "Résumé uploaded. Your profile was not changed."
+                    ? filled
+                      ? `Résumé uploaded. Filled ${filled} blank profile field${filled === 1 ? "" : "s"} from extraction.`
+                      : "Résumé uploaded. Profile already had extracted contact details."
                     : "Resume uploaded securely, but automatic extraction needs retrying",
                 );
               } catch (error) {
@@ -452,6 +626,8 @@ export default function App() {
           <ProfileView
             profile={profile}
             setProfile={setProfile}
+            hasResume={resumeDocuments.length > 0}
+            goResume={() => setPage("resume")}
             save={async () => {
               try {
                 const result = await putRemoteProfile(profile);
@@ -473,40 +649,22 @@ export default function App() {
         {page === "search" && (
           <JobSearchPage query={query} setQuery={setQuery} location={locationFilter} setLocation={setLocationFilter} search={() => setPage("dashboard")} />
         )}
-        {page === "inbox" && <InboxPage />}
+        {page === "inbox" && <InboxPage openApplication={(applicationId) => {
+          setFocusedApplicationId(applicationId);
+          setPage("applications");
+        }} />}
         {page === "credits" && <CreditsPage queued={applications.filter((item) => ["review", "queued", "processing"].includes(item.status)).length} />}
         {page === "settings" && <SettingsPage />}
-        {page === "auth" && <AuthPage />}
-      </main>
-      {toast && (
-        <div className="toast">
-          <Check />
-          {toast}
-        </div>
-      )}
+        {page === "auth" && <AuthPage signedIn />}
+        </main>
+        {toast && (
+          <div className="toast">
+            <CheckmarkCircle24Regular />
+            {toast}
+          </div>
+        )}
+      </div>
     </div>
-  );
-}
-
-function Side({
-  icon,
-  label,
-  active,
-  click,
-  count,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-  click: () => void;
-  count?: number;
-}) {
-  return (
-    <Button appearance="subtle" className={`side-item ${active ? "active" : ""}`} onClick={click}>
-      {icon}
-      <span>{label}</span>
-      {count && <em>{count}</em>}
-    </Button>
   );
 }
 
@@ -533,8 +691,11 @@ function Dashboard(p: {
   feedState: "loading" | "live" | "error";
   feedError: string;
   retry: () => void;
-  dismiss: (n: number) => void;
+  dismiss: (job: Job) => void;
   apply: (j: Job) => Promise<void>;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
+  profile: Profile;
 }) {
   return (
     <div className="dash">
@@ -558,39 +719,43 @@ function Dashboard(p: {
           n={String(p.allJobs.filter((job) => job.status === "queued").length)}
           label="Queued"
           color="purple"
-          onClick={() => p.setStatus("queued")}
+          active={p.status === "queued"}
+          onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
           color="purple"
-          onClick={() => p.setStatus("ready")}
+          active={p.status === "ready"}
+          onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "applied").length)}
           label="Applied"
           color="green"
-          onClick={() => p.setStatus("applied")}
+          active={p.status === "applied"}
+          onClick={() => p.setStatus(p.status === "applied" ? "all" : "applied")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "failed").length)}
           label="Failed"
           color="red"
-          onClick={() => p.setStatus("failed")}
+          active={p.status === "failed"}
+          onClick={() => p.setStatus(p.status === "failed" ? "all" : "failed")}
         />
         <div className="ready-card">
           <span>
-            <Check />
+            <Checkmark24Regular />
           </span>
           <div>
-            <b>Review-first application workflow</b>
-            <small>Every submission requires your confirmation</small>
+            <b>One-click application workflow</b>
+            <small>Simple Apply queues a background worker to submit for you</small>
           </div>
         </div>
       </div>
       <div className="toolbar">
         <div className="searchbox">
-          <Search />
+          <Search24Regular />
           <input
             placeholder="Search title or company"
             value={p.query}
@@ -598,7 +763,7 @@ function Dashboard(p: {
           />
         </div>
         <div className="searchbox location-filter">
-          <MapPin />
+          <Location24Regular />
           <input placeholder="Filter by location" value={p.locationFilter} onChange={(e) => p.setLocationFilter(e.target.value)} />
         </div>
         <select value={p.source} onChange={(e) => p.setSource(e.target.value)} aria-label="Job source">
@@ -637,7 +802,7 @@ function Dashboard(p: {
           <div className="list-head">
             <b>Showing {p.visible.length} of {p.filteredCount} matches</b>
             <span>
-              Sorted by best match <ChevronDown />
+              Sorted by best match <ChevronDown24Regular />
             </span>
           </div>
           {p.visible.map((j) => (
@@ -650,7 +815,7 @@ function Dashboard(p: {
           ))}
           {!p.visible.length && (
             <div className="no-results">
-              <Search />
+              <Search24Regular />
               <b>
                 {p.feedState === "loading"
                   ? "Loading current jobs"
@@ -669,13 +834,13 @@ function Dashboard(p: {
           )}
           {p.filteredCount > 0 && (
             <div className="pagination" aria-label="Job pages">
-              <button disabled={p.page === 1} onClick={() => p.setPage(p.page - 1)}><ChevronLeft /> Previous</button>
+              <button disabled={p.page === 1} onClick={() => p.setPage(p.page - 1)}><ChevronLeft24Regular /> Previous</button>
               <span>Page {p.page} of {p.pageCount}</span>
-              <button disabled={p.page === p.pageCount} onClick={() => p.setPage(p.page + 1)}>Next <ChevronRight /></button>
+              <button disabled={p.page === p.pageCount} onClick={() => p.setPage(p.page + 1)}>Next <ChevronRight24Regular /></button>
             </div>
           )}
         </section>
-        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} />}
+        {p.job && <JobDetail job={p.job} dismiss={p.dismiss} apply={p.apply} resolve={p.resolve} requeue={p.requeue} profile={p.profile} />}
       </div>
     </div>
   );
@@ -685,21 +850,23 @@ function Metric({
   n,
   label,
   color,
+  active,
   onClick,
 }: {
   n: string;
   label: string;
   color: string;
+  active: boolean;
   onClick: () => void;
 }) {
   return (
-    <button className="metric" onClick={onClick}>
+    <button className={`metric ${active ? `active ${color}` : ""}`} onClick={onClick} aria-pressed={active}>
       <span className={color}>{n}</span>
       <div>
         <b>{label}</b>
         <small>job matches</small>
       </div>
-      <ChevronRight />
+      <ChevronRight24Regular />
     </button>
   );
 }
@@ -721,20 +888,36 @@ function JobRow({
         <div>
           <b>{j.title}</b>
           {j.status === "applied" && (
-            <em className="applied">
-              <Check /> Applied
+            <em className="status-tag applied">
+              <Checkmark24Regular /> Applied
+            </em>
+          )}
+          {j.status === "queued" && (
+            <em className="status-tag queued">
+              <Clock24Regular /> {j.applicationStatus === "processing" ? "Submitting" : "Queued"}
+            </em>
+          )}
+          {j.status === "failed" && (
+            <em className="status-tag failed">
+              <Dismiss24Regular /> Failed
             </em>
           )}
         </div>
         <strong>{j.company}</strong>
         <small>
-          <MapPin />
+          <Location24Regular />
           {j.location} · {j.level}
         </small>
         <div className="row-tags">
           {j.remote && <i>Remote</i>}
           <i>{j.salary}</i>
         </div>
+        {j.status === "failed" && (
+          <p className="job-error">
+            <ErrorCircle24Regular />
+            {j.applicationError || "Submission failed. Open the job for details or retry from Applications."}
+          </p>
+        )}
       </div>
       <div className="job-score">
         <span className={j.match > 88 ? "great" : ""}>{j.match}%</span>
@@ -749,12 +932,35 @@ function JobDetail({
   job,
   dismiss,
   apply,
+  resolve,
+  requeue,
+  profile,
 }: {
   job: Job;
-  dismiss: (n: number) => void;
+  dismiss: (job: Job) => void;
   apply: (j: Job) => Promise<void>;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
+  profile: Profile;
 }) {
   const [applying, setApplying] = useState(false);
+  const [requeuing, setRequeuing] = useState(false);
+  const failedApplication = job.status === "failed" && job.applicationId
+    ? {
+        id: job.applicationId,
+        jobId: job.id,
+        company: job.company,
+        title: job.title,
+        location: job.location,
+        status: (job.applicationStatus || "needs_action") as Application["status"],
+        sourceUrl: job.sourceUrl || "",
+        source: job.source || "",
+        updatedAt: job.applicationUpdatedAt || new Date().toISOString(),
+        lastSubmissionError: job.applicationError,
+        requiredQuestions: job.requiredQuestions,
+        answers: job.applicationAnswers,
+      }
+    : null;
   return (
     <section className="job-detail">
       <div className="detail-top">
@@ -768,7 +974,7 @@ function JobDetail({
           </p>
         </div>
         <button className="icon-btn">
-          <X />
+          <Dismiss24Regular />
         </button>
       </div>
       <div className="match-card">
@@ -781,12 +987,91 @@ function JobDetail({
           <p>Your experience and skills align with this role.</p>
         </div>
       </div>
+      {job.status === "queued" && (
+        <div className="submission-banner queued">
+          <Clock24Regular />
+          <div>
+            <b>{job.applicationStatus === "processing" ? "Submitting now" : "Queued for submission"}</b>
+            <p>
+              {job.applicationStatus === "processing"
+                ? "A browser worker is filling out the employer application."
+                : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
+            </p>
+            {job.applicationId && job.applicationStatus !== "processing" && (
+              <button
+                className="apply"
+                disabled={requeuing}
+                onClick={async () => {
+                  setRequeuing(true);
+                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                }}
+              >
+                {requeuing ? "Re-queuing…" : "Retry queue"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {job.status === "failed" && !failedApplication && (
+        <div className="submission-banner failed">
+          <ErrorCircle24Regular />
+          <div>
+            <b>Application failed</b>
+            <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
+            {job.applicationId && (
+              <button
+                className="apply"
+                disabled={requeuing}
+                onClick={async () => {
+                  setRequeuing(true);
+                  try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                }}
+              >
+                {requeuing ? "Re-queuing…" : "Retry queue"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {failedApplication && (
+        <>
+          <div className="submission-banner failed">
+            <ErrorCircle24Regular />
+            <div>
+              <b>Action needed</b>
+              <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
+              {job.applicationId && (
+                <button
+                  className="apply"
+                  disabled={requeuing}
+                  onClick={async () => {
+                    setRequeuing(true);
+                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                  }}
+                >
+                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                </button>
+              )}
+            </div>
+          </div>
+          <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
+        </>
+      )}
+      {job.status === "applied" && (
+        <div className="submission-banner applied">
+          <Checkmark24Regular />
+          <div>
+            <b>Applied</b>
+            <p>This application was submitted successfully.</p>
+          </div>
+        </div>
+      )}
       <div className="detail-tags">
         <span>
-          <MapPin /> {job.remote ? "Remote" : "On-site"}
+          <Location24Regular /> {job.remote ? "Remote" : "On-site"}
         </span>
         <span>
-          <BarChart3 /> {job.level}
+          <DataBarVertical24Regular /> {job.level}
         </span>
         <span>{job.salary}</span>
       </div>
@@ -797,21 +1082,30 @@ function JobDetail({
         <div className="skills">
           {job.skills.map((s) => (
             <span key={s}>
-              <Check />
+              <Checkmark24Regular />
               {s}
             </span>
           ))}
         </div>
       </div>
       <div className="detail-actions">
-        <button className="not" onClick={() => dismiss(job.id)}>
+        <button className="not" onClick={() => dismiss(job)}>
           Not interested
         </button>
         <button className="apply" disabled={applying || job.status !== "ready"} onClick={async () => {
           setApplying(true);
           try { await apply(job); } finally { setApplying(false); }
         }}>
-          <WandSparkles /> {applying ? "Queuing..." : job.status === "ready" ? "Simple Apply" : "Already queued"}
+          <Sparkle24Filled />{" "}
+          {applying
+            ? "Queuing..."
+            : job.status === "ready"
+              ? "Simple Apply"
+              : job.status === "failed"
+                ? "Answer questions below"
+                : job.status === "applied"
+                  ? "Already applied"
+                  : "Queued"}
         </button>
       </div>
       {job.sourceUrl && (
@@ -825,7 +1119,7 @@ function JobDetail({
         </a>
       )}
       <div className="safe-note">
-        <Check /> You’ll review all answers before submission
+        <Checkmark24Regular /> One click queues the application; a background worker fills and submits the employer form
       </div>
     </section>
   );
@@ -833,13 +1127,24 @@ function JobDetail({
 
 function Applications({
   applications,
+  focusedApplicationId,
   update,
   resolve,
+  requeue,
+  profile,
 }: {
   applications: Application[];
+  focusedApplicationId: string | null;
   update: (id: string, status: Application["status"]) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  requeue: (id: string) => Promise<void>;
+  profile: Profile;
 }) {
+  useEffect(() => {
+    if (!focusedApplicationId) return;
+    document.getElementById(`application-${focusedApplicationId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedApplicationId]);
+
   return (
     <div className="basic-page">
       <h1>Applications</h1>
@@ -852,13 +1157,13 @@ function Applications({
         </div>
         {applications.length === 0 && (
           <div className="no-results">
-            <Briefcase />
+            <Briefcase24Regular />
             <b>No applications in progress</b>
-            <span>Choose Simple Apply on a job match to start a review.</span>
+            <span>Choose Simple Apply on a job match to queue submission.</span>
           </div>
         )}
         {applications.map((application) => (
-          <div className="table-row application-row" key={application.id}>
+          <div id={`application-${application.id}`} className={`table-row application-row ${focusedApplicationId === application.id ? "focused" : ""}`} key={application.id}>
             <div>
               <span className="job-logo">
                 {application.company?.slice(0, 1) || "?"}
@@ -871,14 +1176,29 @@ function Applications({
               </div>
             </div>
             <span className={`status-pill ${application.status}`}>
-              {application.status === "submitted" && <Check />}{" "}
+              {application.status === "submitted" && <Checkmark24Regular />}{" "}
               {application.status}
             </span>
             <div className="application-actions">
-              {application.status === "review" && (
-                <span className="queued-message">
-                  Queued with your saved profile; awaiting a supported employer submission channel.
-                </span>
+              {(application.status === "queued" || application.status === "processing" || application.status === "review") && (
+                <div className="queued-message">
+                  <span>
+                    {application.status === "processing"
+                      ? "Browser worker is submitting this application now."
+                      : application.status === "review"
+                        ? "Ready to queue. Submission was not accepted by the queue yet."
+                        : "Waiting in the submission queue for a browser worker."}
+                  </span>
+                  {application.status !== "processing" && (
+                    <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                  )}
+                </div>
+              )}
+              {(application.status === "needs_action" || application.status === "failed") && (
+                <div className="queued-message">
+                  <span>{application.lastSubmissionError || "Submission needs attention."}</span>
+                  <button onClick={() => void requeue(application.id)}>Retry queue</button>
+                </div>
               )}
               {application.status === "submitted" && (
                 <button onClick={() => update(application.id, "interview")}>
@@ -894,7 +1214,9 @@ function Applications({
                 {new Date(application.updatedAt).toLocaleDateString()}
               </time>
             </div>
-            {application.status === "needs_action" && <ApplicationQuestions application={application} resolve={resolve} />}
+            {(application.status === "needs_action" || application.status === "failed") && (
+              <ApplicationQuestions application={application} resolve={resolve} profile={profile} />
+            )}
           </div>
         ))}
       </div>
@@ -902,20 +1224,236 @@ function Applications({
   );
 }
 
-function ApplicationQuestions({ application, resolve }: { application: Application; resolve: (id: string, answers: Record<string, string>) => Promise<void> }) {
-  const questions = application.requiredQuestions || [];
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+function profileAnswerForLabel(label: string, profile: Profile) {
+  const text = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/\bfirst name\b/.test(text)) return profile.firstName;
+  if (/\blast name\b/.test(text)) return profile.lastName;
+  if (/\bfull name\b|\blegal name\b/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
+  if (/\bemail\b/.test(text)) return profile.email;
+  if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
+  if (/\blinkedin\b/.test(text)) return profile.linkedin;
+  if (/\bgithub\b/.test(text)) return profile.github;
+  if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
+  if (/\bcountry\b/.test(text)) return profile.country;
+  if (/\bcity\b/.test(text)) return profile.city;
+  if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
+  if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
+  if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
+  if (/\blocation\b/.test(text)) return profile.location || [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
+  if (/\bsponsor|\bvisa\b/.test(text)) return profile.sponsorship;
+  if (/\beducation\b|\bdegree\b|\bhighest (level|education)\b/.test(text)) return profile.educationLevel;
+  if (/\bskills?\b|\btechnologies\b|\btech stack\b/.test(text)) return profile.skills;
+  if (/\byears? of experience\b|\bexperience level\b/.test(text)) return profile.experienceLevel;
+  if (/\bsalary\b|\bcompensation\b|\bexpected pay\b/.test(text)) return profile.minSalary;
+  if (/\bemployment type\b|\bfull.?time|part.?time|contract\b/.test(text)) return profile.employmentTypes;
+  if (/\blanguage\b/.test(text)) return profile.preferredLanguages;
+  if (/\bcover letter\b|\bwhy (do you want|are you interested)|about yourself\b|\bsummary\b|\badditional (information|info)\b/.test(text)) {
+    return profile.additionalInfo || profile.summary || profile.headline || "";
+  }
+  return "";
+}
+
+function isUselessQuestionLabel(label: string) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  if (/^[\d\W_]+$/.test(text)) return true;
+  if (/^(required|\*|optional)$/i.test(text)) return true;
+  if (/^(question\s*)?\d+$/i.test(text)) return true;
+  if (/^(question\s*\d+\s*)?required(\s*question)?$/i.test(text)) return true;
+  if (/^required(\s*question)?(\s*\d+)?$/i.test(text)) return true;
+  if (/^(input|field|select|textarea|question)[\d\s_-]*$/i.test(text)) return true;
+  return false;
+}
+
+function displayQuestionLabel(question: { key: string; label: string }, index: number) {
+  const raw = String(question.label || "").replace(/\s+/g, " ").trim();
+  const cleaned = raw
+    .replace(/^\*+\s*/, "")
+    .replace(/\s*\*+$/, "")
+    .replace(/\(\s*required\s*\)/gi, "")
+    .replace(/\brequired\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned && !isUselessQuestionLabel(cleaned)) return cleaned;
+  const key = String(question.key || "");
+  const leaf = key.includes("[")
+    ? (key.match(/\[([^\]]+)\]/g) || []).map((part) => part.slice(1, -1)).filter(Boolean).pop() || key
+    : key.replace(/__\d+$/, "").split(/[./#]/).pop() || key;
+  const humanized = leaf
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (humanized && !isUselessQuestionLabel(humanized)) {
+    return humanized.replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+  return `Question ${index + 1}`;
+}
+
+function ApplicationQuestions({
+  application,
+  resolve,
+  profile,
+}: {
+  application: Application;
+  resolve: (id: string, answers: Record<string, string>) => Promise<void>;
+  profile: Profile;
+}) {
+  const questions = useMemo(() => {
+    const list = application.requiredQuestions || [];
+    const used = new Set<string>();
+    return list.map((question, index) => {
+      let key = String(question.key || `question_${index + 1}`);
+      if (!key.includes("__")) key = `${key}__${index}`;
+      if (used.has(key)) key = `${key.replace(/__\d+$/, "")}__${index}_${used.size}`;
+      used.add(key);
+      const prior = String(question.key || "");
+      return {
+        ...question,
+        key,
+        priorKeys: prior && prior !== key ? [prior, prior.replace(/__\d+$/, "")] : [prior].filter(Boolean),
+        label: displayQuestionLabel(question, index),
+      };
+    });
+  }, [application.requiredQuestions]);
+  const answersSignature = JSON.stringify(application.answers || {});
+  const questionsSignature = JSON.stringify(
+    questions.map((question) => [question.key, question.label, question.type, question.options || []]),
+  );
+  const profileSignature = JSON.stringify({
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    email: profile.email,
+    phone: profile.phone,
+    linkedin: profile.linkedin,
+    github: profile.github,
+    portfolio: profile.portfolio,
+    city: profile.city,
+    state: profile.state,
+    postalCode: profile.postalCode,
+    address: profile.address,
+    country: profile.country,
+    workAuthorization: profile.workAuthorization,
+    sponsorship: profile.sponsorship,
+  });
+  const seedAnswers = useMemo(() => {
+    const next: Record<string, string> = {};
+    const stored = application.answers || {};
+    for (const question of questions) {
+      const fromStored = [stored[question.key], ...question.priorKeys.map((key) => stored[key])]
+        .find((value) => String(value || "").trim());
+      if (fromStored) {
+        next[question.key] = String(fromStored);
+        continue;
+      }
+      const guessed = profileAnswerForLabel(question.label, profile);
+      if (guessed) next[question.key] = guessed;
+    }
+    return next;
+    // Signatures keep seed stable across poll-driven object identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [application.id, answersSignature, questionsSignature, profileSignature]);
+  const seedKey = `${application.id}|${answersSignature}|${questionsSignature}|${profileSignature}`;
+  const [answers, setAnswers] = useState(seedAnswers);
+  const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   const [saving, setSaving] = useState(false);
-  if (!questions.length) return <div className="action-required"><b>Action required</b><p>{application.lastSubmissionError || "The employer application needs manual review."}</p><div className="action-required-buttons"><button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button><a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a></div></div>;
+  if (appliedSeedKey !== seedKey) {
+    setAppliedSeedKey(seedKey);
+    setAnswers(seedAnswers);
+  }
+
+  if (!questions.length) {
+    return (
+      <div className="action-required">
+        <b>Action required</b>
+        <p>{application.lastSubmissionError || "The employer application needs manual review."}</p>
+        <div className="action-required-buttons">
+          <button className="apply" onClick={() => void resolve(application.id, {})}>Retry with browser worker</button>
+          <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open original application</a>
+        </div>
+      </div>
+    );
+  }
+
   const blocking = questions.some((question) => question.type === "blocking");
-  return <form className="action-required" onSubmit={async (event) => { event.preventDefault(); if (blocking) return; setSaving(true); try { await resolve(application.id, answers); } finally { setSaving(false); } }}>
-    <b>Additional employer questions</b>
-    <p>{application.lastSubmissionError}</p>
-    {questions.map((question) => <label key={question.key}>{question.label}
-      {question.type === "blocking" ? <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a> : question.type === "select" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option>{question.options?.map((option) => <option key={option}>{option}</option>)}</select> : question.type === "checkbox" ? <select required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })}><option value="">Select an answer</option><option value="yes">Yes</option><option value="no">No</option></select> : question.type === "textarea" ? <textarea required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} /> : <input required value={answers[question.key] || ""} onChange={(event) => setAnswers({ ...answers, [question.key]: event.target.value })} />}
-    </label>)}
-    {!blocking && <button className="apply" disabled={saving}>{saving ? "Saving…" : "Save answers and retry"}</button>}
-  </form>;
+  const answeredCount = questions.filter((question) => String(answers[question.key] || "").trim()).length;
+  const setAnswer = (key: string, value: string) => {
+    setAnswers((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <form
+      className="action-required"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (blocking) return;
+        setSaving(true);
+        try {
+          await resolve(application.id, answers);
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <div className="action-required-head">
+        <b>Employer questions ({questions.length})</b>
+        <small>{answeredCount} of {questions.length} filled · Profile values prefilled where possible</small>
+      </div>
+      <p>{application.lastSubmissionError}</p>
+      <div className="action-required-fields">
+        {questions.map((question, index) => {
+          const selectOptions = (question.options || []).filter((option) => String(option).trim().length > 0);
+          return (
+          <label key={question.key}>
+            <span>{question.label || `Question ${index + 1}`}</span>
+            {question.type === "blocking" ? (
+              <a href={application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
+            ) : question.type === "select" ? (
+              <select
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
+              >
+                <option value="">Select an answer</option>
+                {selectOptions.map((option, optionIndex) => (
+                  <option key={`${question.key}::${optionIndex}::${option}`} value={option}>{option}</option>
+                ))}
+              </select>
+            ) : question.type === "checkbox" ? (
+              <select
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
+              >
+                <option value="">Select an answer</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            ) : question.type === "textarea" ? (
+              <textarea
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
+              />
+            ) : (
+              <input
+                required={question.required !== false}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswer(question.key, event.target.value)}
+              />
+            )}
+          </label>
+          );
+        })}
+      </div>
+      {!blocking && (
+        <button className="apply" disabled={saving}>
+          {saving ? "Saving…" : "Save answers and retry"}
+        </button>
+      )}
+    </form>
+  );
 }
 function Resume({
   documents,
@@ -984,7 +1522,7 @@ function Resume({
       <div className="resume-library">
         <section className="resume-left">
           <div className="upload-card simple-card">
-            <span><Upload /></span>
+            <span><ArrowUpload24Regular /></span>
             <h2>Upload another résumé</h2>
             <p>PDF or DOCX, up to 4 MB · Stored privately in Azure</p>
             <label className="apply">
@@ -1003,10 +1541,10 @@ function Resume({
             {documents.map((item) => (
               <article className={selected?.id === item.id ? "selected" : ""} key={item.id}>
                 <button className="resume-select" onClick={() => { setSelectedId(item.id); setPdfUrl(""); setPreviewError(""); setPageCount(0); setZoom(1); }}>
-                  <FileText />
+                  <Document24Regular />
                   <span><b>{item.fileName}</b><small>{(item.sizeBytes / 1024).toFixed(0)} KB · {new Date(item.createdAt).toLocaleDateString()} {item.isPrimary ? "· Primary" : ""}</small></span>
                 </button>
-                <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Trash2 /></button>
+                <button className="resume-delete" aria-label={`Remove ${item.fileName}`} onClick={() => { if (confirm(`Remove ${item.fileName}?`)) void remove(item.id); }}><Delete24Regular /></button>
               </article>
             ))}
           </div>
@@ -1015,18 +1553,18 @@ function Resume({
           <div className="resume-preview-toolbar">
             <h2>{selected ? selected.fileName : "Preview"}</h2>
             {selected && <div>
-              <button disabled={busy} onClick={() => void renameSelected()}><Pencil /> Rename</button>
-              <button disabled={busy} onClick={() => void download()}><Download /> Download</button>
-              <button onClick={() => setFullScreen((value) => !value)} title={fullScreen ? "Exit full screen" : "View full screen"}>{fullScreen ? <Minimize2 /> : <Maximize2 />} {fullScreen ? "Exit" : "Full screen"}</button>
-              {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Minus /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Plus /></button></>}
+              <button disabled={busy} onClick={() => void renameSelected()}><Edit24Regular /> Rename</button>
+              <button disabled={busy} onClick={() => void download()}><ArrowDownload24Regular /> Download</button>
+              <button onClick={() => setFullScreen((value) => !value)} title={fullScreen ? "Exit full screen" : "View full screen"}>{fullScreen ? <FullScreenMinimize24Regular /> : <FullScreenMaximize24Regular />} {fullScreen ? "Exit" : "Full screen"}</button>
+              {selected.contentType === "application/pdf" && <><button onClick={() => setZoom((value) => Math.max(.5, value - .15))} aria-label="Zoom out"><Subtract24Regular /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(2.5, value + .15))} aria-label="Zoom in"><Add24Regular /></button></>}
             </div>}
           </div>
           {!selected ? <p>Select an uploaded PDF to preview it.</p> : selected.contentType !== "application/pdf" ? (
-            <div className="resume-preview-empty"><FileText /><p>DOCX preview is not available in the browser.</p><button className="apply" onClick={() => void download()}>Download DOCX</button></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>DOCX preview is not available in the browser.</p><button className="apply" onClick={() => void download()}>Download DOCX</button></div>
           ) : previewError ? (
-            <div className="resume-preview-empty"><FileText /><p>{previewError}</p></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>{previewError}</p></div>
           ) : !pdfUrl ? (
-            <div className="resume-preview-empty"><FileText /><p>Loading PDF…</p></div>
+            <div className="resume-preview-empty"><Document24Regular /><p>Loading PDF…</p></div>
           ) : (
             <PdfDocument key={pdfUrl} file={pdfUrl} loading="Loading PDF…" error="PDF preview could not be loaded." onLoadSuccess={({ numPages }) => setPageCount(numPages)}>
               {Array.from({ length: pageCount }, (_, index) => <PdfPage key={index + 1} pageNumber={index + 1} scale={zoom} renderAnnotationLayer renderTextLayer />)}
@@ -1043,70 +1581,271 @@ function JobSearchPage({ query, setQuery, location, setLocation, search }: { que
     <div className="simple-page narrow-page">
       <div className="page-heading"><h1>Job Search <em>BETA</em></h1><p>Search current opportunities using the same live feed as your dashboard.</p></div>
       <section className="simple-card search-panel">
-        <h2><Search /> Search Jobs</h2>
+        <h2><Search24Regular /> Search Jobs</h2>
         <label>Job title, company, or skill<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Software Engineer, React, Azure…" /></label>
         <label>Location<input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote, Seattle, United States…" /></label>
-        <button className="orange-action" onClick={search}><Search /> Search jobs</button>
+        <button className="orange-action" onClick={search}><Search24Regular /> Search jobs</button>
       </section>
     </div>
   );
 }
 
-function AuthPage() {
+function AuthPage({ signedIn }: { signedIn: boolean }) {
+  const [mode, setMode] = useState<"create" | "login">("create");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [providers, setProviders] = useState<Array<{ id: string; label: string; href: string; enabled: boolean }>>([
+    { id: "aad", label: "Microsoft", href: "/.auth/login/aad?post_login_redirect_uri=/dashboard", enabled: true },
+  ]);
+  useEffect(() => {
+    getAuthProviders()
+      .then((result) => setProviders(result.providers))
+      .catch(() => undefined);
+  }, []);
+  const mark = (id: string) => {
+    if (id === "aad") return <span className="microsoft-mark"><i /><i /><i /><i /></span>;
+    if (id === "google") return <span className="provider-letter google">G</span>;
+    if (id === "github") return <span className="provider-letter github">GH</span>;
+    return <span className="provider-letter">{id.slice(0, 1).toUpperCase()}</span>;
+  };
+  const continueWith = (provider: { id: string; href: string }) => {
+    if (import.meta.env.DEV) {
+      setDevSignedIn(true);
+      window.location.assign("/dashboard");
+      return;
+    }
+    window.location.assign(provider.href);
+  };
+  const submitPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (mode === "create") {
+        await registerWithPassword({ username, email, password });
+      } else {
+        await loginWithPassword({ username, password });
+      }
+      window.location.assign("/dashboard");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Sign in failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="auth-page">
       <section className="auth-card">
-        <div className="auth-brand"><WandSparkles /></div>
-        <h1>Create your ApplyPilot account</h1>
-        <p>Sign in and your account is created automatically. Your profile, resume, and applications remain scoped to that identity.</p>
-        <a className="provider-button microsoft" href="/.auth/login/aad?post_login_redirect_uri=/dashboard">
-          <span className="microsoft-mark"><i /><i /><i /><i /></span>
-          Continue with Microsoft
-        </a>
-        <button className="provider-button" disabled title="Google OAuth registration is not configured in Azure yet">
-          <span className="provider-letter google">G</span>
-          Continue with Google
-          <small>Provider setup required</small>
-        </button>
-        <button className="provider-button github" disabled title="GitHub OAuth registration is not configured in Azure yet">
-          <span className="provider-letter github">GH</span>
-          Continue with GitHub
-          <small>Provider setup required</small>
-        </button>
-        <button className="provider-button" disabled title="Facebook OAuth registration is not configured in Azure yet">
-          <span className="provider-letter facebook">f</span>
-          Continue with Facebook
-          <small>Provider setup required</small>
-        </button>
+        <div className="auth-brand"><Sparkle24Filled /></div>
+        <h1>{signedIn ? "You’re signed in" : mode === "create" ? "Create your ApplyPilot account" : "Log in to ApplyPilot"}</h1>
+        <p>
+          {signedIn
+            ? "Continue to your dashboard, sign out, or switch accounts."
+            : "Create an account with a username and password, or continue with a social provider."}
+        </p>
+        {signedIn && (
+          <div className="landing-actions auth-session-actions">
+            <a className="orange-action" href="/dashboard">Continue to dashboard</a>
+            <button type="button" className="secondary-action" onClick={() => { void beginSignOut(); }}>Sign out</button>
+          </div>
+        )}
+        {!signedIn && (
+          <form className="auth-password-form" onSubmit={submitPassword}>
+            <div className="auth-mode-toggle" role="tablist" aria-label="Account mode">
+              <button type="button" className={mode === "create" ? "active" : ""} onClick={() => { setMode("create"); setError(""); }}>Create account</button>
+              <button type="button" className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setError(""); }}>Log in</button>
+            </div>
+            <label>Username
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required minLength={3} maxLength={64} placeholder="your_name" />
+            </label>
+            {mode === "create" && (
+              <label>Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required placeholder="you@example.com" />
+              </label>
+            )}
+            <label>Password
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "create" ? "new-password" : "current-password"} required minLength={8} placeholder="At least 8 characters" />
+            </label>
+            {error ? <p className="auth-error">{error}</p> : null}
+            <button className="orange-action" type="submit" disabled={busy}>
+              {busy ? "Please wait…" : mode === "create" ? "Create account" : "Log in"}
+            </button>
+          </form>
+        )}
+        <div className="auth-divider"><span>Or continue with</span></div>
+        {providers.map((provider) =>
+          provider.enabled ? (
+            <button
+              key={provider.id}
+              type="button"
+              className={`provider-button ${provider.id === "aad" ? "microsoft" : provider.id}`}
+              onClick={() => continueWith(provider)}
+            >
+              {mark(provider.id)}
+              Continue with {provider.label}
+            </button>
+          ) : (
+            <button key={provider.id} className={`provider-button ${provider.id}`} disabled title={`${provider.label} OAuth registration is not configured in Azure yet`}>
+              {mark(provider.id)}
+              Continue with {provider.label}
+              <small>Provider setup required</small>
+            </button>
+          ),
+        )}
         <div className="auth-note">By continuing, you agree to use ApplyPilot for your own job search and to review information before submission.</div>
       </section>
     </div>
   );
 }
 
+function ProductTour({
+  page,
+  setPage,
+}: {
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem("applypilot.tour.done") !== "1"; } catch { return true; }
+  });
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const start = () => { setIndex(0); setOpen(true); };
+    window.addEventListener("applypilot:start-tour", start);
+    return () => window.removeEventListener("applypilot:start-tour", start);
+  }, []);
+  useEffect(() => {
+    if (open) setPage(productTourSteps[index].page);
+  }, [open, index, setPage]);
+  if (!open) return null;
+  const step = productTourSteps[index];
+  const finish = () => {
+    try { localStorage.setItem("applypilot.tour.done", "1"); } catch { /* ignore */ }
+    setOpen(false);
+  };
+  return (
+    <div className="tour-overlay" role="dialog" aria-modal="true" aria-label="ApplyPilot walkthrough">
+      <div className="tour-card">
+        <small>Step {index + 1} of {productTourSteps.length}</small>
+        <h2>{step.title}</h2>
+        <p>{step.body}</p>
+        <div className="tour-actions">
+          <button className="not" onClick={finish}>Skip</button>
+          {index > 0 && <button className="not" onClick={() => setIndex((value) => value - 1)}>Back</button>}
+          {index < productTourSteps.length - 1 ? (
+            <button className="apply" onClick={() => setIndex((value) => value + 1)}>Next</button>
+          ) : (
+            <button className="apply" onClick={finish}>Done</button>
+          )}
+        </div>
+        <p className="tour-hint">You are on: <b>{page}</b>. Restart anytime with Tour in the top nav.</p>
+      </div>
+    </div>
+  );
+}
+
 function AuthLoading() {
-  return <main className="public-shell"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><section className="public-centered"><div className="landing-orb"><WandSparkles /></div><h1>Preparing your workspace…</h1><p>Checking your secure session.</p></section></main>;
+  return <main className="public-shell"><div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div><section className="public-centered"><div className="landing-orb"><Sparkle24Filled /></div><h1>Preparing your workspace…</h1><p>Checking your secure session.</p></section></main>;
 }
 
 function LandingPage({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="public-shell">
-      <header className="public-header"><div className="public-brand"><WandSparkles /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Secure Microsoft delegated sign-in. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Check /></div><div className="preview-job"><Mail /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Check /></div></div></section>
-      <section className="landing-features" id="features"><article><Search /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><FileText /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
+      <header className="public-header">
+        <div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div>
+        <nav>
+          <a href="#features">Features</a>
+          {signedIn ? <a href="/dashboard" className="public-link">Dashboard</a> : null}
+          <a href="/login" className="public-link">Log in</a>
+          <a href="/login" className="orange-action">Create account</a>
+        </nav>
+      </header>
+      <section className="landing-hero">
+        <div>
+          <span className="landing-kicker">A focused job-search workspace</span>
+          <h1>Find better roles.<br /><em>Apply with confidence.</em></h1>
+          <p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p>
+          <p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p>
+          <div className="landing-actions">
+            <a className="orange-action" href="/login">Create account</a>
+            <a className="secondary-action" href="/login">Log in</a>
+            {signedIn ? <a className="secondary-action" href="/dashboard">Open dashboard</a> : null}
+          </div>
+          <small>Create an account with username and password, or sign in with Microsoft, Google, or GitHub.</small>
+        </div>
+        <div className="landing-preview">
+          <div className="preview-top"><span /><span /><span /></div>
+          <b>Your job search, organized</b>
+          <div className="preview-metrics">
+            <span><strong>10</strong> jobs per page</span>
+            <span><strong>1</strong> private inbox</span>
+            <span><strong>100%</strong> profile control</span>
+          </div>
+          <div className="preview-job"><Briefcase24Regular /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Checkmark24Regular /></div>
+          <div className="preview-job"><Mail24Regular /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Checkmark24Regular /></div>
+        </div>
+      </section>
+      <section className="landing-features" id="features">
+        <article><Search24Regular /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article>
+        <article><Document24Regular /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article>
+        <article><Mail24Regular /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article>
+      </section>
     </main>
   );
 }
 
 function LoggedOutPage({ signedIn }: { signedIn: boolean }) {
+  const [stillSignedIn, setStillSignedIn] = useState(signedIn);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    ensureSignedOut()
+      .then((cleared) => {
+        if (!active) return;
+        setStillSignedIn(!cleared);
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => { active = false; };
+  }, []);
+
   return (
-    <main className="public-shell"><header className="public-header"><a className="public-brand" href="/"><WandSparkles /><b>ApplyPilot</b></a></header><section className="public-centered"><div className="logout-check"><Check /></div><h1>{signedIn ? "You’re still signed in" : "You’re signed out"}</h1><p>{signedIn ? "Your session is still active. Return to your dashboard or sign out again." : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}</p><div className="landing-actions">{signedIn ? <><a className="orange-action" href="/.auth/logout?post_logout_redirect_uri=/logged-out">Sign out again</a><a className="secondary-action" href="/dashboard">Return to dashboard</a></> : <a className="orange-action" href="/login">Sign in again</a>}<a className="secondary-action" href="/">Go to home page</a></div></section></main>
+    <main className="public-shell">
+      <header className="public-header">
+        <a className="public-brand" href="/"><Sparkle24Filled /><b>ApplyPilot</b></a>
+      </header>
+      <section className="public-centered">
+        <div className="logout-check"><Checkmark24Regular /></div>
+        <h1>{checking ? "Signing you out…" : stillSignedIn ? "You’re still signed in" : "You’re signed out"}</h1>
+        <p>
+          {checking
+            ? "Clearing your ApplyPilot session."
+            : stillSignedIn
+              ? "Your browser still has an active identity-provider session. Sign out again to finish clearing it."
+              : "Your ApplyPilot session ended successfully. Your profile and applications remain safely stored."}
+        </p>
+        <div className="landing-actions">
+          {stillSignedIn && !checking ? (
+            <button type="button" className="orange-action" onClick={() => { void beginSignOut(); }}>Sign out again</button>
+          ) : (
+            <a className="orange-action" href="/login">Sign in again</a>
+          )}
+          <a className="secondary-action" href="/">Go to home page</a>
+        </div>
+      </section>
+    </main>
   );
 }
 
-function InboxPage() {
+function InboxPage({ openApplication }: { openApplication: (applicationId: string) => void }) {
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [address, setAddress] = useState<string | null>(null);
+  const [routingNote, setRoutingNote] = useState("");
   const [selected, setSelected] = useState<MailMessage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1114,6 +1853,7 @@ function InboxPage() {
   useEffect(() => {
     getMailbox().then((result) => {
       setAddress(result.address);
+      setRoutingNote(result.routingNote || "");
       setMessages(result.messages);
       setSelected(result.messages[0] || null);
     }).catch((cause) => setError(cause.message === "AUTH_REQUIRED" ? "Sign in to open your mailbox." : cause.message)).finally(() => setLoading(false));
@@ -1130,12 +1870,12 @@ function InboxPage() {
 
   return (
     <div className="simple-page">
-      <div className="page-heading left"><h1><Mail /> Email Inbox</h1><p>Application messages received through a connected mailbox appear here.</p></div>
-      {address && <div className="info-banner">Your private application address: <strong>{address}</strong></div>}
-      {loading ? <section className="simple-card empty-feature"><Mail /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail /><h2>Your inbox is ready</h2><p>Use the address above on applications. Recruiter replies and verification messages will appear here.</p></section> : (
+      <div className="page-heading left"><h1><Mail24Regular /> Email Inbox</h1><p>Queued, submitted, failed, and recruiter follow-ups for your applications.</p></div>
+      {address && <div className="info-banner">Your private application address: <strong>{address}</strong>{routingNote ? <span> — {routingNote}</span> : null}</div>}
+      {loading ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Loading mailbox…</h2></section> : error ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Mailbox unavailable</h2><p>{error}</p></section> : messages.length === 0 ? <section className="simple-card empty-feature"><Mail24Regular /><h2>Your inbox is ready</h2><p>Simple Apply uses the address above on employer forms. Status emails are copied here automatically, and recruiter replies to that address appear in this inbox.</p></section> : (
         <section className="simple-card mailbox-layout">
           <div className="mail-list">{messages.map((message) => <button className={`${selected?.id === message.id ? "active" : ""} ${message.isRead ? "" : "unread"}`} key={message.id} onClick={() => void openMessage(message)}><b>{message.from.name || message.from.email}</b><span>{message.subject}</span><small>{new Date(message.receivedAt).toLocaleString()}</small></button>)}</div>
-          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p><pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
+          <article className="mail-content">{selected && <><h2>{selected.subject}</h2><p className="mail-from">From {selected.from.name ? `${selected.from.name} <${selected.from.email}>` : selected.from.email}</p>{selected.applicationId && <button className="orange-action mail-application-link" onClick={() => openApplication(selected.applicationId!)}><Briefcase24Regular /> View application</button>}<pre>{selected.textBody}</pre>{selected.attachmentCount > 0 && <small>{selected.attachmentCount} attachment(s) recorded; downloads are disabled until malware scanning is configured.</small>}</>}</article>
         </section>
       )}
     </div>
@@ -1145,7 +1885,7 @@ function InboxPage() {
 function CreditsPage({ queued }: { queued: number }) {
   return (
     <div className="simple-page narrow-page">
-      <section className="simple-card credits-card"><CreditCard /><h1>Applications & usage</h1><strong>{queued}</strong><p>applications currently queued for review</p><hr /><h2>No artificial credit limit</h2><p>ApplyPilot does not sell or invent credits. Azure usage remains governed by your subscription budget.</p></section>
+      <section className="simple-card credits-card"><Payment24Regular /><h1>Applications & usage</h1><strong>{queued}</strong><p>applications currently queued for review</p><hr /><h2>No artificial credit limit</h2><p>ApplyPilot does not sell or invent credits. Azure usage remains governed by your subscription budget.</p></section>
     </div>
   );
 }
@@ -1162,7 +1902,7 @@ function SettingsPage() {
     localStorage.setItem("applypilot.settings", JSON.stringify(next));
   };
   return (
-    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings /> Settings</h1><p>Manage local notification preferences.</p>{([
+    <div className="simple-page narrow-page settings-page"><section className="simple-card"><h1><Settings24Regular /> Settings</h1><p>Manage local notification preferences.</p>{([
       ["jobAlerts", "Daily job alerts", "Show new matching roles when you return"],
       ["weeklySummary", "Weekly application summary", "Summarize queued and submitted applications"],
       ["profileReminders", "Profile improvement reminders", "Prompt when important profile fields are blank"],
@@ -1237,53 +1977,97 @@ function ProfileView({
   profile,
   setProfile,
   save,
+  hasResume,
+  goResume,
 }: {
   profile: Profile;
   setProfile: (p: Profile) => void;
   save: () => void;
+  hasResume: boolean;
+  goResume: () => void;
 }) {
+  const missing = missingProfileFields(profile);
+  const required = new Set<string>(REQUIRED_PROFILE_FIELDS);
+  const selectOptions: Partial<Record<keyof Profile, string[]>> = {
+    workAuthorization: ["US Citizen", "Green Card", "Authorized to work", "Need visa sponsorship", "Other"],
+    sponsorship: ["No", "Yes", "Not sure"],
+    educationLevel: ["High school", "Associate's", "Bachelor's", "Master's", "PhD", "Other"],
+    experienceLevel: ["0-1 years", "1-3 years", "3-5 years", "5-8 years", "8+ years"],
+  };
+  const fields = [
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "location",
+    "country",
+    "state",
+    "city",
+    "address",
+    "postalCode",
+    "linkedin",
+    "github",
+    "portfolio",
+    "workAuthorization",
+    "sponsorship",
+    "skills",
+    "targetRoles",
+    "preferredLocations",
+    "employmentTypes",
+    "experienceLevel",
+    "minSalary",
+    "educationLevel",
+    "preferredLanguages",
+    "companiesToExclude",
+    "additionalInfo",
+  ] as (keyof Profile)[];
+
   return (
     <div className="basic-page screenshot-profile">
       <h1>Profile Information</h1>
-      <p>These details are reused when applications ask common questions. Review extracted resume data before queueing applications.</p>
+      <p>
+        Required fields are collected once and reused by the browser worker on every Simple Apply.
+        Uploading a résumé auto-fills blank contact and skills fields from extraction.
+      </p>
+      {(missing.length > 0 || !hasResume) && (
+        <div className="onboarding-banner profile-setup">
+          <div>
+            <b>Required before Simple Apply</b>
+            <p>
+              {!hasResume ? "Upload a résumé. " : ""}
+              {missing.length ? `Still needed: ${missing.map(fieldLabel).join(", ")}.` : "Required profile fields look complete."}
+            </p>
+          </div>
+          {!hasResume && <button className="apply" onClick={goResume}>Upload résumé</button>}
+        </div>
+      )}
       <div className="settings-card profile-grid">
-        {(
-          [
-            "firstName",
-            "lastName",
-            "email",
-            "phone",
-            "location",
-            "country",
-            "state",
-            "city",
-            "address",
-            "postalCode",
-            "linkedin",
-            "github",
-            "portfolio",
-            "workAuthorization",
-            "sponsorship",
-            "skills",
-            "targetRoles",
-            "preferredLocations",
-            "employmentTypes",
-            "experienceLevel",
-            "minSalary",
-            "educationLevel",
-            "preferredLanguages",
-            "companiesToExclude",
-            "additionalInfo",
-          ] as (keyof Profile)[]
-        ).map((k) => (
-          <label key={k}>
-            {k.replace(/([A-Z])/g, " $1")}
-            <input
-              value={profile[k]}
-              onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
-            />
-          </label>
-        ))}
+        {fields.map((k) => {
+          const isRequired = required.has(k);
+          const options = selectOptions[k];
+          return (
+            <label key={k} className={isRequired && !String(profile[k] || "").trim() ? "required-missing" : undefined}>
+              {fieldLabel(k)}{isRequired ? " *" : ""}
+              {options ? (
+                <select
+                  required={isRequired}
+                  value={profile[k]}
+                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
+                >
+                  <option value="">Select…</option>
+                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                  {profile[k] && !options.includes(profile[k]) ? <option value={profile[k]}>{profile[k]}</option> : null}
+                </select>
+              ) : (
+                <input
+                  required={isRequired}
+                  value={profile[k]}
+                  onChange={(e) => setProfile({ ...profile, [k]: e.target.value })}
+                />
+              )}
+            </label>
+          );
+        })}
         <button className="apply" onClick={save}>
           Save profile
         </button>

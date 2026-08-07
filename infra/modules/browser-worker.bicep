@@ -6,6 +6,12 @@ param sqlServerFqdn string
 param sqlDatabaseName string
 param storageAccountName string
 param image string
+param postmarkInboundAddress string = ''
+param mailboxDomain string = ''
+param emailEndpoint string
+param emailSenderAddress string
+param deploymentEnvironment string = 'production'
+param applicationBaseUrl string
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -78,6 +84,12 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           { name: 'AZURE_STORAGE_ACCOUNT', value: storageAccountName }
           { name: 'RESUME_CONTAINER', value: 'resumes' }
           { name: 'AZURE_CLIENT_ID', value: workerIdentity.properties.clientId }
+          { name: 'POSTMARK_INBOUND_ADDRESS', value: postmarkInboundAddress }
+          { name: 'MAILBOX_DOMAIN', value: mailboxDomain }
+          { name: 'EMAIL_COMMUNICATION_ENDPOINT', value: emailEndpoint }
+          { name: 'EMAIL_SENDER_ADDRESS', value: emailSenderAddress }
+          { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
+          { name: 'APPLICATION_BASE_URL', value: applicationBaseUrl }
         ]
         resources: {
           cpu: json('1.0')
@@ -85,7 +97,7 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
         }
       }]
       scale: {
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 2
         rules: [{
           name: 'submission-queue'
@@ -148,3 +160,4 @@ output registryServer string = registry.properties.loginServer
 output identityName string = workerIdentity.name
 output identityId string = workerIdentity.id
 output identityClientId string = workerIdentity.properties.clientId
+output identityPrincipalId string = workerIdentity.properties.principalId

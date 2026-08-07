@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@fluentui/react-components": "^9.74.5",
+    "@fluentui/react-icons": "^2.0.334",
     "@vitejs/plugin-react": "latest",
-    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-pdf": "^10.4.1",

@@ -1,10 +1,10 @@
 name: Deploy non-production
 
 on:
+  # Called from CI after checks pass on non-main pushes.
+  # Do not also use workflow_run on CI — that double-starts deploy and
+  # concurrency cancel-in-progress cancels the in-flight run.
   workflow_call:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,9 @@ permissions:
 
 concurrency:
   group: non-production
-  cancel-in-progress: true
+  # Do not cancel in-progress deploys. Main still has workflow_run which can
+  # start a second run after CI; cancelling mid-flight left nonprod half-updated.
+  cancel-in-progress: false
 
 env:
   AZURE_CORE_OUTPUT: none
@@ -31,11 +33,7 @@ jobs:
   infrastructure:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'workflow_call' ||
-      (github.event_name == 'push' && github.ref_name != 'main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch != 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
     environment: non-production
     outputs:
@@ -53,7 +51,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
@@ -104,7 +102,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
@@ -168,7 +166,9 @@ jobs:
           blob_name="github/${GITHUB_SHA}/backend.zip"
           az storage blob upload --account-name "${{ needs.infrastructure.outputs.storageAccount }}" --account-key "$storage_key" -c function-releases -n "$blob_name" -f backend.zip --overwrite true
           package_url="https://${{ needs.infrastructure.outputs.storageAccount }}.blob.core.windows.net/function-releases/${blob_name}"
-          az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "${{ needs.infrastructure.outputs.backendName }}" --settings WEBSITE_RUN_FROM_PACKAGE="$package_url" WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=SystemAssigned
+          package_mi_id="$(az identity show -g "$RESOURCE_GROUP" -n "${{ needs.infrastructure.outputs.backendIdentityName }}" --query id -o tsv)"
+          test -n "$package_mi_id"
+          az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "${{ needs.infrastructure.outputs.backendName }}" --settings WEBSITE_RUN_FROM_PACKAGE="$package_url" WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID="$package_mi_id"
           az functionapp restart -g "$RESOURCE_GROUP" -n "${{ needs.infrastructure.outputs.backendName }}"
           function_resource="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${{ needs.infrastructure.outputs.backendName }}"
           az rest --method post --uri "https://management.azure.com${function_resource}/syncfunctiontriggers?api-version=2023-12-01"
@@ -204,7 +204,7 @@ jobs:
       - name: Check out verified revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3

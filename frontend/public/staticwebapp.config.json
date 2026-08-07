@@ -1,9 +1,10 @@
-{
+﻿{
   "routes": [
-    { "route": "/api/profile*", "allowedRoles": ["authenticated"] },
-    { "route": "/api/applications*", "allowedRoles": ["authenticated"] },
-    { "route": "/api/resume*", "allowedRoles": ["authenticated"] },
-    { "route": "/api/mailbox*", "allowedRoles": ["authenticated"] }
+    { "route": "/api/auth/*", "allowedRoles": ["anonymous"] },
+    { "route": "/api/profile*", "allowedRoles": ["anonymous", "authenticated"] },
+    { "route": "/api/applications*", "allowedRoles": ["anonymous", "authenticated"] },
+    { "route": "/api/resume*", "allowedRoles": ["anonymous", "authenticated"] },
+    { "route": "/api/mailbox*", "allowedRoles": ["anonymous", "authenticated"] }
   ],
   "auth": {
     "identityProviders": {
@@ -12,6 +13,18 @@
           "openIdIssuer": "https://login.microsoftonline.com/common/v2.0",
           "clientIdSettingName": "AZURE_CLIENT_ID",
           "clientSecretSettingName": "AZURE_CLIENT_SECRET"
+        }
+      },
+      "google": {
+        "registration": {
+          "clientIdSettingName": "GOOGLE_CLIENT_ID",
+          "clientSecretSettingName": "GOOGLE_CLIENT_SECRET"
+        }
+      },
+      "github": {
+        "registration": {
+          "clientIdSettingName": "GITHUB_CLIENT_ID",
+          "clientSecretSettingName": "GITHUB_CLIENT_SECRET"
         }
       }
     }

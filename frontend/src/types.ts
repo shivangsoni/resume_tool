@@ -48,12 +48,15 @@ export type Application = {
   source: string;
   updatedAt: string;
   appliedAt?: string;
+  submissionQueuedAt?: string;
   lastSubmissionError?: string;
+  answers?: Record<string, string>;
   requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "blocking"; options?: string[]; required: boolean }>;
 };
 
 export type MailMessage = {
   id: string;
+  applicationId?: string;
   from: { name?: string | null; email: string };
   subject: string;
   textBody: string;

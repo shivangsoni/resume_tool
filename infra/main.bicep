@@ -31,6 +31,24 @@ param azureClientSecretName string = 'azure-client-secret'
 @secure()
 param azureClientSecretValue string = ''
 
+@description('Optional Google OAuth web client ID for Static Web Apps custom auth.')
+param googleClientId string = ''
+
+@secure()
+param googleClientSecret string = ''
+
+@description('Optional GitHub OAuth app client ID for Static Web Apps custom auth.')
+param githubClientId string = ''
+
+@secure()
+param githubClientSecret string = ''
+
+@description('When true, SWA keeps Google/GitHub settings as Key Vault references so infrastructure deploys do not wipe social auth.')
+param persistSocialAuthInKeyVault bool = false
+
+@description('Ops alert destination for Application Insights action-group emails and runtime failure notices.')
+param opsAlertEmail string = 'shivangsoni22@gmail.com'
+
 @description('Azure AI Document Intelligence pricing tier. Use F0 for development or S0 when F0 is unavailable.')
 @allowed(['F0', 'S0'])
 param documentIntelligenceSku string = 'F0'
@@ -64,6 +82,32 @@ var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, app
 var safeBase = toLower(replace(appName, '-', ''))
 var keyVaultName = take('${safeBase}vault${suffix}', 24)
 var frontendResourceName = '${appName}-web-${suffix}'
+var enabledAuthProviders = join(concat(
+  ['aad'],
+  persistSocialAuthInKeyVault || !(empty(googleClientId) || empty(googleClientSecret)) ? ['google'] : [],
+  persistSocialAuthInKeyVault || !(empty(githubClientId) || empty(githubClientSecret)) ? ['github'] : []
+), ',')
+var swaAuthSettings = union(
+  {
+    AZURE_CLIENT_ID: azureClientId
+    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/${azureClientSecretName})'
+  },
+  persistSocialAuthInKeyVault ? {
+    GOOGLE_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/google-client-id)'
+    GOOGLE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/google-client-secret)'
+    GITHUB_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/github-client-id)'
+    GITHUB_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/github-client-secret)'
+  } : union(
+    empty(googleClientId) || empty(googleClientSecret) ? {} : {
+      GOOGLE_CLIENT_ID: googleClientId
+      GOOGLE_CLIENT_SECRET: googleClientSecret
+    },
+    empty(githubClientId) || empty(githubClientSecret) ? {} : {
+      GITHUB_CLIENT_ID: githubClientId
+      GITHUB_CLIENT_SECRET: githubClientSecret
+    }
+  )
+)
 
 module serviceBus 'modules/service-bus.bicep' = {
   name: 'serviceBus'
@@ -117,10 +161,7 @@ module keyVault 'modules/keyvault.bicep' = {
 
 resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-12-01' = {
   name: '${frontendResourceName}/appsettings'
-  properties: {
-    AZURE_CLIENT_ID: azureClientId
-    AZURE_CLIENT_SECRET: '@Microsoft.KeyVault(SecretUri=${keyVault.outputs.uri}secrets/${azureClientSecretName})'
-  }
+  properties: swaAuthSettings
 }
 
 module database 'modules/database.bicep' = {
@@ -154,7 +195,10 @@ module backend 'modules/backend.bicep' = {
     serviceBusNamespace: serviceBus.outputs.namespace
     submissionQueueName: serviceBus.outputs.queueName
     deploymentEnvironment: deploymentEnvironment
+    applicationBaseUrl: frontend.outputs.url
     packageUrl: backendPackageUrl
+    opsAlertEmail: opsAlertEmail
+    authProviders: enabledAuthProviders
     tags: tags
   }
 }
@@ -170,6 +214,22 @@ module browserWorker 'modules/browser-worker.bicep' = {
     sqlDatabaseName: database.outputs.name
     storageAccountName: backend.outputs.storageAccountName
     image: browserWorkerImage
+    postmarkInboundAddress: postmarkInboundAddress
+    mailboxDomain: mailboxDomain
+    emailEndpoint: email.outputs.endpoint
+    emailSenderAddress: email.outputs.senderAddress
+    deploymentEnvironment: deploymentEnvironment
+    applicationBaseUrl: frontend.outputs.url
+    tags: tags
+  }
+}
+
+module alerting 'modules/alerting.bicep' = {
+  name: 'alerting'
+  params: {
+    appInsightsId: backend.outputs.appInsightsId
+    actionGroupName: take('${appName}-ops', 60)
+    alertEmail: opsAlertEmail
     tags: tags
   }
 }
@@ -187,6 +247,7 @@ module emailAccess 'modules/email-access.bicep' = {
   params: {
     communicationServiceName: email.outputs.name
     functionPrincipalId: backend.outputs.principalId
+    workerPrincipalId: browserWorker.outputs.identityPrincipalId
   }
 }
 

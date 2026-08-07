@@ -15,7 +15,10 @@ param mailboxDomain string = ''
 param serviceBusNamespace string
 param submissionQueueName string
 param deploymentEnvironment string = 'production'
+param applicationBaseUrl string
 param packageUrl string = ''
+param opsAlertEmail string = 'shivangsoni22@gmail.com'
+param authProviders string = 'aad'
 param tags object
 
 resource functionIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -114,17 +117,23 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SERVICE_BUS__fullyQualifiedNamespace', value: serviceBusNamespace }
         { name: 'APPLICATION_SUBMISSION_QUEUE', value: submissionQueueName }
         { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
+        { name: 'APPLICATION_BASE_URL', value: applicationBaseUrl }
         { name: 'AZURE_CLIENT_ID', value: functionIdentity.properties.clientId }
+        { name: 'OPS_ALERT_EMAIL', value: opsAlertEmail }
+        { name: 'AUTH_PROVIDERS', value: authProviders }
+        { name: 'AUTH_SESSION_SECRET', value: uniqueString(resourceGroup().id, functionAppName, 'auth-session-v1') }
       ], empty(packageUrl) ? [] : [
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: packageUrl }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: 'SystemAssigned' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', value: functionIdentity.id }
       ])
     }
   }
 }
 
 resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionApp.name, 'StorageBlobDataContributor')
+  // Name must be known at deploy start (BCP120). Include the user-assigned identity name so this
+  // differs from older system-assigned assignments keyed only by functionAppName.
+  name: guid(storage.id, functionAppName, functionIdentity.name, 'StorageBlobDataContributor')
   scope: storage
   properties: {
     principalId: functionIdentity.properties.principalId
@@ -134,10 +143,13 @@ resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 resource packageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, functionApp.name, 'PackageStorageBlobDataReader')
+  // Use the stable user-assigned identity (same pattern as blobContributor). A fixed name bound to
+  // functionApp.identity.principalId fails with RoleAssignmentUpdateNotPermitted when the
+  // system-assigned MI is recreated.
+  name: guid(storage.id, functionAppName, functionIdentity.name, 'PackageStorageBlobDataReader')
   scope: storage
   properties: {
-    principalId: functionApp.identity.principalId
+    principalId: functionIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
   }
@@ -151,3 +163,5 @@ output identityName string = functionIdentity.name
 output identityClientId string = functionIdentity.properties.clientId
 output storageAccountName string = storage.name
 output id string = functionApp.id
+output appInsightsId string = insights.id
+output appInsightsConnectionString string = insights.properties.ConnectionString

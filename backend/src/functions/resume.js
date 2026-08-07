@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { DefaultAzureCredential } from "@azure/identity";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { getPrincipal, unauthorized } from "../identity.js";
-import { deleteResumeDocument, getResumeDocument, listResumeDocuments, renameResumeDocument, saveDocument } from "../database.js";
+import { deleteResumeDocument, getProfile, listResumeDocuments, mergeProfileSuggestions, refreshQueuedApplications, renameResumeDocument, saveDocument, getResumeDocument } from "../database.js";
 import { analyzeResume } from "../document-intelligence.js";
 
 const storage = () => {
@@ -42,7 +42,34 @@ app.http("resume", {
         context.warn("Resume extraction failed; the private upload was retained", analysisError);
       }
       const document = await saveDocument(principal, { fileName: file.name, contentType: file.type, blobName, size: file.size, extractionStatus, extraction });
-      return { status: 201, jsonBody: { document: { id: document.Id, fileName: document.FileName, contentType: document.ContentType, sizeBytes: Number(document.SizeBytes), isPrimary: true, extractionStatus: document.ExtractionStatus, createdAt: document.CreatedAt }, suggestions: extraction?.profile || {}, extractionStatus } };
+      let profile = null;
+      let mergedFields = [];
+      if (extractionStatus === "succeeded" && extraction?.profile) {
+        const before = await getProfile(principal);
+        const prior = before.profile || {};
+        const suggestions = { ...extraction.profile };
+        if (!String(suggestions.email || "").trim() && principal.email) suggestions.email = principal.email;
+        const merged = await mergeProfileSuggestions(principal, suggestions);
+        profile = merged.profile;
+        mergedFields = Object.keys(suggestions).filter((key) => {
+          const next = String(suggestions[key] || "").trim();
+          const previous = String(prior[key] || "").trim();
+          return Boolean(next && !previous && String(profile?.[key] || "").trim() === next);
+        });
+        if (mergedFields.length) {
+          try { await refreshQueuedApplications(principal, profile); } catch { /* ignore */ }
+        }
+      }
+      return {
+        status: 201,
+        jsonBody: {
+          document: { id: document.Id, fileName: document.FileName, contentType: document.ContentType, sizeBytes: Number(document.SizeBytes), isPrimary: true, extractionStatus: document.ExtractionStatus, createdAt: document.CreatedAt },
+          suggestions: extraction?.profile || {},
+          profile,
+          mergedFields,
+          extractionStatus,
+        },
+      };
     } catch (error) { context.error("Resume upload failed", error); return { status: 500, jsonBody: { error: "Résumé upload failed." } }; }
   },
 });

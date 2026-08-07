@@ -50,12 +50,89 @@ export async function ensureUser(principal) {
   return result.recordset[0].Id;
 }
 
+export async function registerLocalAccount({ username, email, passwordHash, subject }) {
+  const connection = pool();
+  if (!connection) throw new Error("Database is not configured.");
+  const db = await connection;
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    const existing = await new sql.Request(transaction)
+      .input("username", sql.NVarChar(64), username)
+      .input("email", sql.NVarChar(320), email)
+      .input("subject", sql.NVarChar(200), subject)
+      .query(`
+        SELECT TOP (1) 'username' AS Conflict
+        FROM dbo.UserCredentials WHERE Username=@username
+        UNION ALL
+        SELECT TOP (1) 'email' FROM dbo.Users WHERE LOWER(Email)=LOWER(@email)
+        UNION ALL
+        SELECT TOP (1) 'subject' FROM dbo.UserIdentities WHERE ExternalSubject=@subject;
+      `);
+    if (existing.recordset.length) {
+      const conflict = existing.recordset[0].Conflict;
+      const error = new Error(
+        conflict === "username"
+          ? "That username is already taken."
+          : conflict === "email"
+            ? "An account with that email already exists. Log in or use a social provider."
+            : "Account already exists.",
+      );
+      error.status = 409;
+      throw error;
+    }
+    const userId = cryptoRandomUuid();
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("subject", sql.NVarChar(200), subject)
+      .input("email", sql.NVarChar(320), email)
+      .query("INSERT dbo.Users (Id,ExternalSubject,Email) VALUES (@userId,@subject,@email);");
+    await new sql.Request(transaction)
+      .input("subject", sql.NVarChar(200), subject)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .query("INSERT dbo.UserIdentities (ExternalSubject,UserId) VALUES (@subject,@userId);");
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("username", sql.NVarChar(64), username)
+      .input("passwordHash", sql.NVarChar(500), passwordHash)
+      .query("INSERT dbo.UserCredentials (UserId,Username,PasswordHash) VALUES (@userId,@username,@passwordHash);");
+    await transaction.commit();
+    return { userId, subject, email, username };
+  } catch (error) {
+    try { await transaction.rollback(); } catch { /* ignore */ }
+    throw error;
+  }
+}
+
+export async function findLocalAccountByUsername(username) {
+  const db = await pool();
+  if (!db) throw new Error("Database is not configured.");
+  const result = await db.request()
+    .input("username", sql.NVarChar(64), username)
+    .query(`
+      SELECT c.UserId, c.Username, c.PasswordHash, u.Email, u.ExternalSubject
+      FROM dbo.UserCredentials c
+      JOIN dbo.Users u ON u.Id=c.UserId
+      WHERE c.Username=@username;
+    `);
+  return result.recordset[0] || null;
+}
+
+function cryptoRandomUuid() {
+  return globalThis.crypto.randomUUID();
+}
+
 export async function getProfile(principal) {
   const userId = await ensureUser(principal);
   const db = await pool();
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId)
     .query("SELECT ProfileJson, UpdatedAt FROM dbo.CandidateProfiles WHERE UserId=@userId");
-  if (!result.recordset.length) return { profile: null, updatedAt: null };
+  if (!result.recordset.length) {
+    const seeded = {};
+    if (principal.email) seeded.email = principal.email;
+    await saveProfile(principal, seeded);
+    return getProfile(principal);
+  }
   return { profile: JSON.parse(result.recordset[0].ProfileJson), updatedAt: result.recordset[0].UpdatedAt };
 }
 
@@ -161,8 +238,27 @@ export async function queueApplicationSubmission(principal, id) {
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id).query(`
     UPDATE dbo.Applications SET Status='queued', SubmissionQueuedAt=SYSUTCDATETIME(), LastSubmissionError=NULL, UpdatedAt=SYSUTCDATETIME()
     OUTPUT inserted.*
-    WHERE Id=@id AND UserId=@userId AND Status IN ('review','needs_action','failed','queued');
+    WHERE Id=@id AND UserId=@userId AND (
+      Status IN ('review','needs_action','failed','queued')
+      OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+    );
   `);
+  return result.recordset.length ? mapApplication(result.recordset[0]) : null;
+}
+
+export async function revertApplicationQueue(principal, id, detail) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request()
+    .input("userId", sql.UniqueIdentifier, userId)
+    .input("id", sql.UniqueIdentifier, id)
+    .input("detail", sql.NVarChar(2000), String(detail || "Submission queue unavailable.").slice(0, 2000))
+    .query(`
+      UPDATE dbo.Applications
+      SET Status='review', LastSubmissionError=@detail, UpdatedAt=SYSUTCDATETIME()
+      OUTPUT inserted.*
+      WHERE Id=@id AND UserId=@userId AND Status='queued';
+    `);
   return result.recordset.length ? mapApplication(result.recordset[0]) : null;
 }
 
@@ -218,6 +314,49 @@ export async function recordSubmissionOutcome(id, outcome) {
       `);
     await transaction.commit();
   } catch (error) { await transaction.rollback(); throw error; }
+}
+
+/** Permanently remove a non-submitted application (queued/failed/review/etc.). */
+export async function deleteApplication(principal, id) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const transaction = new sql.Transaction(db);
+  await transaction.begin();
+  try {
+    const existing = await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("id", sql.UniqueIdentifier, id)
+      .query(`
+        SELECT Id, Status FROM dbo.Applications
+        WHERE Id=@id AND UserId=@userId;
+      `);
+    if (!existing.recordset.length) {
+      await transaction.rollback();
+      return null;
+    }
+    const status = String(existing.recordset[0].Status || "");
+    const removable = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    if (!removable.includes(status)) {
+      const error = new Error("Only incomplete applications can be removed.");
+      error.status = 409;
+      throw error;
+    }
+    await new sql.Request(transaction)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("UPDATE dbo.InboundMessages SET ApplicationId=NULL WHERE ApplicationId=@id;");
+    await new sql.Request(transaction)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("DELETE FROM dbo.ApplicationSubmissionAttempts WHERE ApplicationId=@id;");
+    await new sql.Request(transaction)
+      .input("userId", sql.UniqueIdentifier, userId)
+      .input("id", sql.UniqueIdentifier, id)
+      .query("DELETE FROM dbo.Applications WHERE Id=@id AND UserId=@userId;");
+    await transaction.commit();
+    return { id, status };
+  } catch (error) {
+    try { await transaction.rollback(); } catch { /* ignore */ }
+    throw error;
+  }
 }
 
 export async function saveDocument(principal, document) {
@@ -333,7 +472,7 @@ export async function checkDatabase() {
 }
 
 const mailboxAlias = (subject) => `u${createHash("sha256").update(subject).digest("hex").slice(0, 20)}`;
-const mapMessage = (row) => ({ id: row.Id, from: { name: row.SenderName, email: row.SenderEmail }, subject: row.Subject, textBody: row.TextBody || "", receivedAt: row.ReceivedAt, isRead: Boolean(row.IsRead), attachmentCount: row.AttachmentCount });
+const mapMessage = (row) => ({ id: row.Id, applicationId: row.ApplicationId || undefined, from: { name: row.SenderName, email: row.SenderEmail }, subject: row.Subject, textBody: row.TextBody || "", receivedAt: row.ReceivedAt, isRead: Boolean(row.IsRead), attachmentCount: row.AttachmentCount });
 
 export async function ensureMailbox(principal) {
   const userId = await ensureUser(principal);
@@ -371,18 +510,52 @@ export async function saveInboundMessage(payload) {
   const alias = String(payload.MailboxHash || "").toLowerCase() || String(payload.ToFull?.[0]?.Email || payload.To || "").split("@")[0].split("+").pop().toLowerCase();
   if (!alias) return null;
   const db = await pool();
-  const result = await db.request().input("alias", sql.VarChar(64), alias)
-    .input("providerId", sql.NVarChar(255), String(payload.MessageID || "").slice(0, 255))
-    .input("senderName", sql.NVarChar(200), String(payload.FromName || payload.FromFull?.Name || "").slice(0, 200) || null)
-    .input("senderEmail", sql.NVarChar(320), String(payload.FromFull?.Email || payload.From || "").slice(0, 320))
-    .input("subject", sql.NVarChar(500), String(payload.Subject || "(no subject)").slice(0, 500))
-    .input("body", sql.NVarChar(sql.MAX), String(payload.TextBody || payload.StrippedTextReply || "").slice(0, 250000))
-    .input("receivedAt", sql.DateTime2, new Date(payload.Date || Date.now()))
-    .input("attachments", sql.Int, Math.min(Number(payload.Attachments?.length || 0), 100)).query(`
-      INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ReceivedAt,AttachmentCount)
+  const mailbox = await db.request().input("alias", sql.VarChar(64), alias).query("SELECT Id FROM dbo.Mailboxes WHERE Alias=@alias");
+  if (!mailbox.recordset.length) return null;
+  return appendMailboxMessage({
+    mailboxId: mailbox.recordset[0].Id,
+    providerMessageId: String(payload.MessageID || "").slice(0, 255),
+    senderName: String(payload.FromName || payload.FromFull?.Name || "").slice(0, 200) || null,
+    senderEmail: String(payload.FromFull?.Email || payload.From || "").slice(0, 320),
+    subject: String(payload.Subject || "(no subject)").slice(0, 500),
+    textBody: String(payload.TextBody || payload.StrippedTextReply || "").slice(0, 250000),
+    receivedAt: new Date(payload.Date || Date.now()),
+    attachmentCount: Math.min(Number(payload.Attachments?.length || 0), 100),
+  });
+}
+
+export async function appendMailboxMessage({
+  mailboxId,
+  providerMessageId,
+  senderName,
+  senderEmail,
+  subject,
+  textBody,
+  applicationId = null,
+  receivedAt = new Date(),
+  attachmentCount = 0,
+}) {
+  const db = await pool();
+  const result = await db.request()
+    .input("mailboxId", sql.UniqueIdentifier, mailboxId)
+    .input("providerId", sql.NVarChar(255), String(providerMessageId || "").slice(0, 255))
+    .input("senderName", sql.NVarChar(200), senderName ? String(senderName).slice(0, 200) : null)
+    .input("senderEmail", sql.NVarChar(320), String(senderEmail || "").slice(0, 320))
+    .input("subject", sql.NVarChar(500), String(subject || "(no subject)").slice(0, 500))
+    .input("body", sql.NVarChar(sql.MAX), String(textBody || "").slice(0, 250000))
+    .input("applicationId", sql.UniqueIdentifier, applicationId)
+    .input("receivedAt", sql.DateTime2, receivedAt)
+    .input("attachments", sql.Int, Math.min(Number(attachmentCount) || 0, 100)).query(`
+      INSERT dbo.InboundMessages (MailboxId,ProviderMessageId,SenderName,SenderEmail,Subject,TextBody,ApplicationId,ReceivedAt,AttachmentCount)
       OUTPUT inserted.*
-      SELECT Id,@providerId,@senderName,@senderEmail,@subject,@body,@receivedAt,@attachments FROM dbo.Mailboxes WHERE Alias=@alias
-      AND NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
+      SELECT @mailboxId,@providerId,@senderName,@senderEmail,@subject,@body,@applicationId,@receivedAt,@attachments
+      WHERE NOT EXISTS (SELECT 1 FROM dbo.InboundMessages WHERE ProviderMessageId=@providerId);
     `);
   return result.recordset.length ? mapMessage(result.recordset[0]) : null;
+}
+
+export async function getMailboxAliasForUserId(userId) {
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId).query("SELECT Alias FROM dbo.Mailboxes WHERE UserId=@userId");
+  return result.recordset[0]?.Alias || null;
 }

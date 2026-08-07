@@ -16,7 +16,7 @@ export async function enqueueApplicationSubmission(application) {
   const sender = client.createSender(queueName);
   try {
     await sender.sendMessages({
-      messageId: application.id,
+      messageId: `${application.id}:${Date.now()}`,
       subject: "application.submit",
       contentType: "application/json",
       body: { applicationId: application.id },

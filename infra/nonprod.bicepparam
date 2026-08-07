@@ -12,6 +12,7 @@ param sqlDatabaseName = 'applypilot_nonprod'
 param postmarkInboundAddress = 'c4e1c6ba7398a087b9d10354733b79fd@inbound.postmarkapp.com'
 param mailboxDomain = ''
 param deploymentEnvironment = 'nonproduction'
+param persistSocialAuthInKeyVault = true
 param tags = {
   application: 'ApplyPilot'
   environment: 'nonproduction'
