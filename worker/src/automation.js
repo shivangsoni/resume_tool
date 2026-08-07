@@ -104,15 +104,15 @@ const knownAnswer = (label, profile, answers) => {
   if (/\bfirst name\b/.test(text)) return profile.firstName;
   if (/\blast name\b/.test(text)) return profile.lastName;
   if (/\bfull name\b|\blegal name\b/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(" ");
-  if (/\bemail\b/.test(text)) return profile.email;
-  if (/\bphone\b|\bmobile\b/.test(text)) return profile.phone;
+  if (/\bemail\b/.test(text)) return answers.email || profile.email;
+  if (/\bphone\b|\bmobile\b|\btel\b/.test(text)) return answers.phone || profile.phone;
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
-  if (/\bcountry\b/.test(text)) return profile.country;
-  if (/\bcity\b/.test(text)) return profile.city;
-  if (/\bstate\b|\bprovince\b/.test(text)) return profile.state;
-  if (/\bpostal\b|\bzip\b/.test(text)) return profile.postalCode;
+  if (/\bcountry\b/.test(text)) return answers.country || profile.country;
+  if (/\bcity\b/.test(text)) return answers.city || profile.city;
+  if (/\bstate\b|\bprovince\b/.test(text)) return answers.state || profile.state;
+  if (/\bpostal\b|\bzip\b/.test(text)) return answers.postalCode || profile.postalCode;
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
   // Authorization/sponsorship before location: Stripe asks about work rights
   // "in the location(s) you selected", which must not match as a city/location field.
@@ -279,16 +279,55 @@ const liveFieldType = async (field, fallback = "text") => {
   return value || fallback;
 };
 
-/** Prefer id / name+value so actions survive checkbox-driven re-renders. */
+/** Prefer id / name(+value) so actions survive checkbox-driven re-renders. */
 const stabilizeField = (scope, item) => {
   const { info, field } = item;
   if (info.id) {
     return scope.locator(`[id=${JSON.stringify(info.id)}]`).first();
   }
-  if (info.name && info.value !== undefined && info.value !== "" && (info.type === "checkbox" || info.type === "radio")) {
+  if (info.name && (info.type === "checkbox" || info.type === "radio") && info.value !== undefined && info.value !== "") {
     return scope.locator(`input[type=${JSON.stringify(info.type)}][name=${JSON.stringify(info.name)}][value=${JSON.stringify(info.value)}]`).first();
   }
+  if (info.name) {
+    const tag = info.tag === "select" ? "select" : info.tag === "textarea" ? "textarea" : "input";
+    return scope.locator(`${tag}[name=${JSON.stringify(info.name)}]`).first();
+  }
   return field;
+};
+
+/** Fill a text-like control and verify the value stuck (Greenhouse/React-friendly). */
+const fillTextControl = async (field, answer) => {
+  const wanted = String(answer || "").trim();
+  if (!wanted) return false;
+  const digits = (value) => String(value || "").replace(/\D+/g, "");
+  const matches = (actual) => {
+    const text = String(actual || "").trim();
+    if (!text) return false;
+    if (text === wanted) return true;
+    const a = digits(text);
+    const b = digits(wanted);
+    return Boolean(a && b && (a === b || a.endsWith(b) || b.endsWith(a)));
+  };
+
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await field.fill("").catch(() => {});
+  await field.fill(wanted).catch(() => {});
+  let value = await field.inputValue().catch(() => "");
+  if (matches(value)) return true;
+
+  await field.pressSequentially(wanted, { delay: 15 }).catch(() => {});
+  value = await field.inputValue().catch(() => "");
+  if (matches(value)) return true;
+
+  await field.evaluate((el, next) => {
+    el.focus();
+    el.value = next;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, wanted).catch(() => {});
+  value = await field.inputValue().catch(() => "");
+  return matches(value);
 };
 
 /** Labels that are true yes/no prompts (not country / multi-select lists). */
@@ -699,6 +738,62 @@ export async function runApplication({ application, profile, resumePath }) {
       singles.push(...list);
     }
 
+    // Fill text/select/file first so checkbox mutations cannot rematerialize nth() locators.
+    const choiceSingles = [];
+    for (const item of singles) {
+      const { index, info } = item;
+      const field = stabilizeField(scope, item);
+      const key = questionKey(info.name, info.label, index);
+      let displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
+        || humanizeFieldName(info.name)
+        || humanizeFieldName(info.label)
+        || "";
+      if (!displayLabel || isUselessLabel(displayLabel)) displayLabel = `Question ${index + 1}`;
+      const liveType = await liveFieldType(field, info.type);
+      if (liveType === "checkbox" || liveType === "radio" || info.type === "checkbox" || info.type === "radio") {
+        choiceSingles.push({ item, field, key, displayLabel, liveType });
+        continue;
+      }
+      if (liveType === "file" || info.type === "file") {
+        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
+        continue;
+      }
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      let filled = false;
+      if (answer) {
+        if (info.tag === "select" || liveType === "select") {
+          const options = await selectOptionTexts(field);
+          const coerced = matchOptionLabel(options, answer) || answer;
+          filled = await fillSelect(field, coerced);
+          if (!filled && options.length) {
+            // City fields often list "Redmond, WA" — retry with includes match already in matchOptionLabel;
+            // if still empty try the first option that contains the answer token.
+            const token = normalize(answer).split(/\s+/)[0];
+            const fuzzy = options.find((option) => normalize(option).includes(token) && token.length >= 3);
+            if (fuzzy) filled = await fillSelect(field, fuzzy);
+          }
+        } else {
+          filled = await fillTextControl(field, answer);
+        }
+      }
+      const value = await field.inputValue().catch(() => "");
+      const digits = (text) => String(text || "").replace(/\D+/g, "");
+      const looksFilled = Boolean(String(value || "").trim())
+        || (filled && answer && digits(value) && digits(answer) && digits(value).includes(digits(answer)));
+      if (info.required && !looksFilled) {
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        const options = (info.tag === "select" || liveType === "select") ? await selectOptionTexts(field) : undefined;
+        missing.push({
+          key,
+          label: displayLabel,
+          type: (info.tag === "select" || liveType === "select") ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
+          options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
+          required: true,
+        });
+      }
+    }
+
     for (const [, group] of checkboxGroups) {
       const first = group[0];
       const groupLabel = sanitizeLabel(compactLabel(first.info.groupLabel))
@@ -748,69 +843,22 @@ export async function runApplication({ application, profile, resumePath }) {
       }
     }
 
-    for (const item of singles) {
-      const { index, info } = item;
-      const field = stabilizeField(scope, item);
-      const key = questionKey(info.name, info.label, index);
-      let displayLabel = sanitizeLabel(compactLabel(info.groupLabel || info.label))
-        || humanizeFieldName(info.name)
-        || humanizeFieldName(info.label)
-        || "";
-      if (!displayLabel || isUselessLabel(displayLabel)) displayLabel = `Question ${index + 1}`;
-      const liveType = await liveFieldType(field, info.type);
-      if (liveType === "file" || info.type === "file") {
-        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
-        continue;
-      }
-      if (liveType === "checkbox" || liveType === "radio" || info.type === "checkbox" || info.type === "radio") {
-        const optionText = info.optionLabel || displayLabel;
-        const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
-        const matched = matchOptionLabel([optionText], answer);
-        if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
-          await field.check().catch(() => {});
-        } else if (info.required && !await field.isChecked().catch(() => false)) {
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            if (isBooleanChoiceLabel(displayLabel)) {
-              missing.push({ key, label: displayLabel, type: "checkbox", required: true });
-            } else {
-              // Country / free-text prompts must not become Yes/No in the UI.
-              missing.push({ key, label: displayLabel, type: "text", required: true });
-            }
+    for (const { field, key, displayLabel, item } of choiceSingles) {
+      const info = item.info;
+      const optionText = info.optionLabel || displayLabel;
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      const matched = matchOptionLabel([optionText], answer);
+      if (matched || /^(true|yes|1|on)$/i.test(answer) || optionMatchesTokens(optionText, parseMultiselectAnswer(answer).concat(multiselectTokensFromProfile(profile)))) {
+        await field.check().catch(() => {});
+      } else if (info.required && !await field.isChecked().catch(() => false)) {
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          if (isBooleanChoiceLabel(displayLabel)) {
+            missing.push({ key, label: displayLabel, type: "checkbox", required: true });
+          } else {
+            missing.push({ key, label: displayLabel, type: "text", required: true });
           }
         }
-        continue;
-      }
-      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
-      if (answer) {
-        if (info.tag === "select" || liveType === "select") {
-          const options = await selectOptionTexts(field);
-          const coerced = matchOptionLabel(options, answer) || answer;
-          await fillSelect(field, coerced);
-        } else {
-          // Never fill() choice controls — Playwright throws on checkbox/radio.
-          await field.fill(answer).catch(async (error) => {
-            const message = String(error?.message || error || "");
-            if (/checkbox|radio|cannot be filled/i.test(message)) {
-              await field.check().catch(() => {});
-              return;
-            }
-            throw error;
-          });
-        }
-      }
-      const value = await field.inputValue().catch(() => "");
-      if (info.required && !value) {
-        if (seenKeys.has(key)) continue;
-        seenKeys.add(key);
-        const options = (info.tag === "select" || liveType === "select") ? await selectOptionTexts(field) : undefined;
-        missing.push({
-          key,
-          label: displayLabel,
-          type: (info.tag === "select" || liveType === "select") ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
-          options: options?.filter((item) => item.length > 0 && !/^(select|please select|choose)/i.test(item)),
-          required: true,
-        });
       }
     }
     if (missing.length) return { outcome: "needs_action", detail: `${missing.length} required employer question(s) need your answer.`, questions: missing };

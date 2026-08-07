@@ -269,6 +269,19 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
     .query("SELECT AnswersJson,RequiredQuestionsJson FROM dbo.Applications WHERE Id=@id AND UserId=@userId");
   if (!current.recordset.length) return null;
   const answers = { ...(current.recordset[0].AnswersJson ? JSON.parse(current.recordset[0].AnswersJson) : {}), ...suppliedAnswers };
+  const requiredList = current.recordset[0].RequiredQuestionsJson ? JSON.parse(current.recordset[0].RequiredQuestionsJson) : [];
+  // Mirror semantic fields so the worker can resolve Phone/City even if DOM keys shift.
+  for (const question of requiredList) {
+    const key = String(question?.key || "");
+    const value = String(answers[key] || "").trim();
+    if (!value) continue;
+    const label = String(question?.label || "").toLowerCase();
+    if (/\bphone\b|\bmobile\b|\btel\b/.test(label)) answers.phone = value;
+    if (/\bcity\b/.test(label)) answers.city = value;
+    if (/\bstate\b|\bprovince\b/.test(label)) answers.state = value;
+    if (/\bcountry\b/.test(label) && !/\bcitizenship\b/.test(label)) answers.country = value;
+    if (/\blocation\b/.test(label) && !/\bremot(e|ely)\b|\bhybrid\b/.test(label)) answers.location = value;
+  }
   const answerKeyBase = (key) => String(key || "").replace(/__(?:g)?\d+(?:_\d+)?$/i, "").trim();
   const isAnswered = (questionKey) => {
     if (String(answers[questionKey] ?? "").trim()) return true;
@@ -277,8 +290,7 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
     if (String(answers[base] ?? "").trim()) return true;
     return Object.entries(answers).some(([key, value]) => answerKeyBase(key) === base && String(value ?? "").trim());
   };
-  const questions = (current.recordset[0].RequiredQuestionsJson ? JSON.parse(current.recordset[0].RequiredQuestionsJson) : [])
-    .filter((question) => !isAnswered(question.key));
+  const questions = requiredList.filter((question) => !isAnswered(question.key));
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
     .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers)).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions)).query(`
       UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status='review',LastSubmissionError=NULL,UpdatedAt=SYSUTCDATETIME()

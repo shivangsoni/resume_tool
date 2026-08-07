@@ -55,6 +55,11 @@ async function fetchApplicationContext(id) {
   for (const [key, value] of Object.entries(extracted)) {
     if (typeof value === "string" && value.trim() && !String(profile[key] || "").trim()) profile[key] = value.trim();
   }
+  for (const key of ["phone", "city", "state", "country", "location", "email", "firstName", "lastName"]) {
+    if (typeof answers[key] === "string" && answers[key].trim()) {
+      profile[key] = answers[key].trim();
+    }
+  }
   const mailboxEmail = addressForAlias(context.MailboxAlias);
   // Prefer private inbound alias so recruiter replies land in ApplyPilot Inbox.
   const applyEmail = mailboxEmail || answers.email || profile.email || context.Email;

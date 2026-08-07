@@ -1702,7 +1702,11 @@ function ApplicationQuestions({
         jobExternalId={application.jobExternalId}
         applicationId={application.id}
       />
-      <p>{application.lastSubmissionError}</p>
+      <p>
+        {answeredCount >= questions.length && application.lastSubmissionError
+          ? "Answers look complete. Click Save answers and retry to re-queue submission."
+          : (application.lastSubmissionError || "")}
+      </p>
       <div className="action-required-fields">
         {questions.map((question, index) => {
           const inputType = resolveQuestionInputType(question);
