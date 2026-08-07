@@ -1,14 +1,12 @@
-# Enables Google / GitHub / Facebook on Static Web Apps after you create those OAuth apps.
+# Enables Google / GitHub on Static Web Apps after you create those OAuth apps.
 # Usage:
 #   pwsh scripts/enable-social-auth.ps1 -ResourceGroup apply -StaticWebApp applypilotcentral-web-khaah5ti4wzag `
 #     -GoogleClientId '...' -GoogleClientSecret '...' `
-#     -GitHubClientId '...' -GitHubClientSecret '...' `
-#     -FacebookAppId '...' -FacebookAppSecret '...'
+#     -GitHubClientId '...' -GitHubClientSecret '...'
 #
 # Callbacks to register with each provider:
 #   https://<host>/.auth/login/google/callback
 #   https://<host>/.auth/login/github/callback
-#   https://<host>/.auth/login/facebook/callback
 
 param(
   [Parameter(Mandatory = $true)][string]$ResourceGroup,
@@ -18,14 +16,15 @@ param(
   [string]$GoogleClientSecret = "",
   [string]$GitHubClientId = "",
   [string]$GitHubClientSecret = "",
-  [string]$FacebookAppId = "",
-  [string]$FacebookAppSecret = "",
   [string]$ConfigPath = "frontend/public/staticwebapp.config.json"
 )
 
 $ErrorActionPreference = "Stop"
 $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 $providers = $config.auth.identityProviders
+if ($providers.PSObject.Properties.Name -contains "facebook") {
+  $providers.PSObject.Properties.Remove("facebook")
+}
 $settings = @{}
 $enabled = @("aad")
 
@@ -53,24 +52,13 @@ if ($GitHubClientId -and $GitHubClientSecret) {
   $enabled += "github"
 }
 
-if ($FacebookAppId -and $FacebookAppSecret) {
-  $providers | Add-Member -NotePropertyName facebook -NotePropertyValue (@{
-      registration = @{
-        appIdSettingName     = "FACEBOOK_APP_ID"
-        appSecretSettingName = "FACEBOOK_APP_SECRET"
-      }
-    }) -Force
-  $settings["FACEBOOK_APP_ID"] = $FacebookAppId
-  $settings["FACEBOOK_APP_SECRET"] = $FacebookAppSecret
-  $enabled += "facebook"
-}
-
 if ($settings.Count -eq 0) {
   throw "Provide at least one complete provider credential pair."
 }
 
 $config.auth.identityProviders = $providers
-$config | ConvertTo-Json -Depth 20 | Set-Content $ConfigPath
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Resolve-Path $ConfigPath), ($config | ConvertTo-Json -Depth 20), $utf8)
 az staticwebapp appsettings set --name $StaticWebApp --resource-group $ResourceGroup --setting-names ($settings.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
 az functionapp config appsettings set --name $FunctionApp --resource-group $ResourceGroup --settings "AUTH_PROVIDERS=$($enabled -join ',')"
 Write-Host "Social auth settings applied. Redeploy the frontend so staticwebapp.config.json is published, then verify each /.auth/login/<provider> redirect."

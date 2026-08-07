@@ -24,28 +24,27 @@ select {
 }
 .sa-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: clamp(var(--sa-nav-min), var(--sa-nav-width), var(--sa-nav-max)) 1fr;
+  display: flex;
+  align-items: stretch;
   background: #f6f7f9;
   overflow-x: hidden;
 }
-.sa-shell.nav-collapsed {
-  grid-template-columns: 0 1fr;
-}
-.sa-shell.nav-collapsed .sa-nav {
-  pointer-events: none;
-  visibility: hidden;
-}
 .sa-nav {
+  flex: 0 0 clamp(var(--sa-nav-min), var(--sa-nav-width), var(--sa-nav-max));
+  width: clamp(var(--sa-nav-min), var(--sa-nav-width), var(--sa-nav-max));
+  max-width: clamp(var(--sa-nav-min), var(--sa-nav-width), var(--sa-nav-max));
   height: 100vh;
-  width: 100%;
-  max-width: 100%;
   position: sticky;
   top: 0;
-  align-self: start;
+  align-self: flex-start;
   overflow: hidden;
   border-right: 1px solid var(--colorNeutralStroke2, #e0e0e0) !important;
   background: var(--colorNeutralBackground1, #fff) !important;
+}
+.sa-shell.nav-collapsed .sa-nav {
+  /* Hide entirely so the main column is the only flex child and keeps full width.
+     A 0-width grid track + Fluent unmounting the drawer crushed the page into the corner. */
+  display: none !important;
 }
 .sa-nav.fui-NavDrawer,
 .sa-nav .fui-NavDrawer {
@@ -91,7 +90,9 @@ select {
   margin-left: auto;
 }
 .sa-main-column {
+  flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -103,6 +104,7 @@ select {
 }
 .sa-header {
   height: var(--sa-header-height);
+  width: 100%;
   background: var(--colorNeutralBackground1, #fff);
   border-bottom: 1px solid var(--colorNeutralStroke2, #e0e0e0);
   display: flex;
@@ -1262,18 +1264,17 @@ select {
 @media (max-width: 1050px) {
   .sa-shell,
   .sa-shell.nav-expanded {
-    grid-template-columns: 1fr;
-  }
-  .sa-shell.nav-collapsed {
-    grid-template-columns: 1fr;
+    display: flex;
   }
   .sa-nav {
     position: fixed;
     z-index: 40;
     height: 100vh;
+    left: 0;
+    top: 0;
   }
   .sa-shell.nav-collapsed .sa-nav {
-    display: none;
+    display: none !important;
   }
   .header-title b {
     font-size: 15px;
@@ -1293,7 +1294,7 @@ select {
 }
 @media (max-width: 700px) {
   .sa-shell {
-    grid-template-columns: 1fr;
+    display: flex;
   }
   .sa-nav {
     position: fixed;
@@ -1302,7 +1303,7 @@ select {
     height: 100vh;
   }
   .sa-shell.nav-collapsed .sa-nav {
-    display: none;
+    display: none !important;
   }
   .sa-logo,
   .side-lower {

@@ -305,7 +305,7 @@ export default function App() {
   return (
     <div className={`sa-shell ${navOpen ? "nav-expanded" : "nav-collapsed"}`}>
       <NavDrawer
-        open={navOpen}
+        open
         type="inline"
         selectedValue={page}
         onNavItemSelect={onNavSelect}
@@ -314,7 +314,7 @@ export default function App() {
         <NavDrawerHeader>
           <div className="sa-logo">
             <span><Sparkle24Filled /></span>
-            {navOpen && <b>ApplyPilot</b>}
+            <b>ApplyPilot</b>
           </div>
         </NavDrawerHeader>
         <NavDrawerBody>
@@ -1495,7 +1495,7 @@ function AuthPage() {
     if (id === "aad") return <span className="microsoft-mark"><i /><i /><i /><i /></span>;
     if (id === "google") return <span className="provider-letter google">G</span>;
     if (id === "github") return <span className="provider-letter github">GH</span>;
-    return <span className="provider-letter facebook">f</span>;
+    return <span className="provider-letter">{id.slice(0, 1).toUpperCase()}</span>;
   };
   const continueWith = (provider: { id: string; href: string }) => {
     if (import.meta.env.DEV) {
@@ -1589,9 +1589,55 @@ function AuthLoading() {
 function LandingPage({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="public-shell">
-      <header className="public-header"><div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div><nav><a href="#features">Features</a>{signedIn ? <a href="/dashboard" className="orange-action">Dashboard</a> : <><a href="/login" className="public-link">Sign in</a><a href="/login" className="orange-action">Get started</a></>}</nav></header>
-      <section className="landing-hero"><div><span className="landing-kicker">A focused job-search workspace</span><h1>Find better roles.<br /><em>Apply with confidence.</em></h1><p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p><p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p><div className="landing-actions">{signedIn ? <a className="orange-action" href="/dashboard">Open dashboard</a> : <><a className="orange-action" href="/login">Create your account</a><a className="secondary-action" href="/login">Sign in</a></>}</div><small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small></div><div className="landing-preview"><div className="preview-top"><span /><span /><span /></div><b>Your job search, organized</b><div className="preview-metrics"><span><strong>10</strong> jobs per page</span><span><strong>1</strong> private inbox</span><span><strong>100%</strong> profile control</span></div><div className="preview-job"><Briefcase24Regular /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Checkmark24Regular /></div><div className="preview-job"><Mail24Regular /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Checkmark24Regular /></div></div></section>
-      <section className="landing-features" id="features"><article><Search24Regular /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article><article><Document24Regular /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article><article><Mail24Regular /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article></section>
+      <header className="public-header">
+        <div className="public-brand"><Sparkle24Filled /><b>ApplyPilot</b></div>
+        <nav>
+          <a href="#features">Features</a>
+          {signedIn ? (
+            <a href="/dashboard" className="orange-action">Dashboard</a>
+          ) : (
+            <>
+              <a href="/login" className="public-link">Log in</a>
+              <a href="/login" className="orange-action">Create account</a>
+            </>
+          )}
+        </nav>
+      </header>
+      <section className="landing-hero">
+        <div>
+          <span className="landing-kicker">A focused job-search workspace</span>
+          <h1>Find better roles.<br /><em>Apply with confidence.</em></h1>
+          <p>Bring your profile, résumé, job matches, application queue, and recruiter messages into one secure place.</p>
+          <p className="landing-tagline">End-to-end job apply in one click, from match to submission.</p>
+          <div className="landing-actions">
+            {signedIn ? (
+              <a className="orange-action" href="/dashboard">Open dashboard</a>
+            ) : (
+              <>
+                <a className="orange-action" href="/login">Create account</a>
+                <a className="secondary-action" href="/login">Log in</a>
+              </>
+            )}
+          </div>
+          <small>Sign in with Microsoft, Google, or GitHub. No password stored by ApplyPilot.</small>
+        </div>
+        <div className="landing-preview">
+          <div className="preview-top"><span /><span /><span /></div>
+          <b>Your job search, organized</b>
+          <div className="preview-metrics">
+            <span><strong>10</strong> jobs per page</span>
+            <span><strong>1</strong> private inbox</span>
+            <span><strong>100%</strong> profile control</span>
+          </div>
+          <div className="preview-job"><Briefcase24Regular /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Checkmark24Regular /></div>
+          <div className="preview-job"><Mail24Regular /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Checkmark24Regular /></div>
+        </div>
+      </section>
+      <section className="landing-features" id="features">
+        <article><Search24Regular /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article>
+        <article><Document24Regular /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article>
+        <article><Mail24Regular /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article>
+      </section>
     </main>
   );
 }

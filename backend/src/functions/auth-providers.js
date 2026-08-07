@@ -12,7 +12,6 @@ app.http("authProviders", {
       { id: "aad", label: "Microsoft", href: "/.auth/login/aad?post_login_redirect_uri=/dashboard", enabled: configured.includes("aad") },
       { id: "google", label: "Google", href: "/.auth/login/google?post_login_redirect_uri=/dashboard", enabled: configured.includes("google") },
       { id: "github", label: "GitHub", href: "/.auth/login/github?post_login_redirect_uri=/dashboard", enabled: configured.includes("github") },
-      { id: "facebook", label: "Facebook", href: "/.auth/login/facebook?post_login_redirect_uri=/dashboard", enabled: configured.includes("facebook") },
     ];
     return { jsonBody: { providers }, headers: { "Cache-Control": "public, max-age=60" } };
   },
