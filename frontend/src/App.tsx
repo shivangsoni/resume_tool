@@ -41,7 +41,6 @@ import {
   Document24Regular,
   Edit24Regular,
   ErrorCircle24Regular,
-  Filter24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
   Location24Regular,
@@ -898,17 +897,6 @@ function Dashboard(p: {
 }) {
   return (
     <div className="dash">
-      <TabList
-        className="page-tabs"
-        selectedValue={p.status}
-        onTabSelect={(_e, data) => p.setStatus(String(data.value) as typeof p.status)}
-      >
-        <Tab value="all">All matches</Tab>
-        <Tab value="ready">Not applied</Tab>
-        <Tab value="queued">Queued</Tab>
-        <Tab value="applied">Applied</Tab>
-        <Tab value="failed">Failed</Tab>
-      </TabList>
       <Toolbar className="page-command-bar">
         <ToolbarButton
           appearance="primary"
@@ -917,12 +905,6 @@ function Dashboard(p: {
           onClick={p.retry}
         >
           Refresh
-        </ToolbarButton>
-        <ToolbarButton
-          icon={<Filter24Regular />}
-          onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
-        >
-          {p.status === "ready" ? "Clear filter" : "Not applied"}
         </ToolbarButton>
         <span className={`feed toolbar-feed ${p.feedState}`}>
           {p.feedState === "live"
@@ -1103,6 +1085,28 @@ function Metric({
     </button>
   );
 }
+function failureHint(job: Job) {
+  const questions = job.requiredQuestions || [];
+  const answers = job.applicationAnswers || {};
+  if (questions.length) {
+    const ready = questions.every((question) => {
+      const key = String(question.key || "");
+      if (String(answers[key] || "").trim()) return true;
+      const base = key.replace(/__(?:g)?\d+(?:_\d+)?$/i, "");
+      if (base && String(answers[base] || "").trim()) return true;
+      const label = String(question.label || "").toLowerCase();
+      if ((/\bphone\b|\bmobile\b|\btel\b/.test(label)) && String(answers.phone || "").trim()) return true;
+      if (/\bcity\b/.test(label) && String(answers.city || "").trim()) return true;
+      if (/\bcountry\b/.test(label) && String(answers.country || "").trim()) return true;
+      if (/\blocation\b/.test(label) && (String(answers.location || "").trim() || String(answers.city || "").trim())) return true;
+      return false;
+    });
+    if (ready) return "Answers ready — open to save and retry.";
+    return job.applicationError || "Open to answer employer questions and retry.";
+  }
+  return job.applicationError || "Submission failed. Tap to answer questions and retry.";
+}
+
 function JobRow({
   j,
   active,
@@ -1148,7 +1152,7 @@ function JobRow({
         {j.status === "failed" && (
           <p className="job-error">
             <ErrorCircle24Regular />
-            {j.applicationError || "Submission failed. Tap to answer questions and retry."}
+            {failureHint(j)}
           </p>
         )}
         <span className="job-row-cta">
@@ -1833,9 +1837,9 @@ function ApplicationQuestions({
         applicationId={application.id}
       />
       <p>
-        {answeredCount >= questions.length && application.lastSubmissionError
+        {answeredCount >= questions.length
           ? "Answers look complete. Click Save answers and retry to re-queue submission."
-          : (application.lastSubmissionError || "")}
+          : (application.lastSubmissionError || "Fill the required fields below, then save to retry.")}
       </p>
       <div className="action-required-fields">
         {questions.map((question, index) => {

@@ -35,6 +35,24 @@ export function matchSelectOption(options: string[] | undefined, answer: string)
     const noOpt = usable.find((option) => /^(no|false|n)\b/i.test(option.trim()) || normalize(option) === "no");
     if (noOpt) return noOpt;
   }
+  const COUNTRY_ALIASES: Record<string, string[]> = {
+    us: ["united states", "usa", "america"],
+    usa: ["united states", "us", "america"],
+    "united states": ["us", "usa", "america"],
+    "united states of america": ["us", "usa", "united states", "america"],
+  };
+  const aliasHit = usable.find((option) => {
+    const label = normalize(option);
+    const labelCompact = label.replace(/\s+/g, "");
+    const aliases = COUNTRY_ALIASES[needle] || COUNTRY_ALIASES[needle.replace(/\s+/g, "")] || [];
+    if (aliases.some((alias) => {
+      const a = normalize(alias);
+      return label === a || labelCompact === a.replace(/\s+/g, "") || (a.length >= 4 && label.includes(a));
+    })) return true;
+    const reverse = COUNTRY_ALIASES[label] || COUNTRY_ALIASES[labelCompact] || [];
+    return reverse.some((alias) => normalize(alias) === needle || needle.includes(normalize(alias)));
+  });
+  if (aliasHit) return aliasHit;
   const includes = usable.find((option) => {
     const label = normalize(option);
     if (!label) return false;

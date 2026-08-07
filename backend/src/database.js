@@ -283,14 +283,25 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
     if (/\blocation\b/.test(label) && !/\bremot(e|ely)\b|\bhybrid\b/.test(label)) answers.location = value;
   }
   const answerKeyBase = (key) => String(key || "").replace(/__(?:g)?\d+(?:_\d+)?$/i, "").trim();
-  const isAnswered = (questionKey) => {
+  const isAnswered = (question) => {
+    const questionKey = String(question?.key || "");
     if (String(answers[questionKey] ?? "").trim()) return true;
     const base = answerKeyBase(questionKey);
-    if (!base) return false;
-    if (String(answers[base] ?? "").trim()) return true;
-    return Object.entries(answers).some(([key, value]) => answerKeyBase(key) === base && String(value ?? "").trim());
+    if (base && String(answers[base] ?? "").trim()) return true;
+    if (base && Object.entries(answers).some(([key, value]) => answerKeyBase(key) === base && String(value ?? "").trim())) {
+      return true;
+    }
+    // Prefer semantic aliases mirrored above (and profile-seeded phone/city/country).
+    const label = String(question?.label || "").toLowerCase();
+    if ((/\bphone\b|\bmobile\b|\btel\b/.test(label)) && String(answers.phone || "").trim()) return true;
+    if (/\bcity\b/.test(label) && String(answers.city || "").trim()) return true;
+    if ((/\bstate\b|\bprovince\b/.test(label)) && String(answers.state || "").trim()) return true;
+    if (/\bcountry\b/.test(label) && !/\bcitizenship\b/.test(label) && String(answers.country || "").trim()) return true;
+    if (/\blocation\b/.test(label) && !/\bremot(e|ely)\b|\bhybrid\b/.test(label)
+      && (String(answers.location || "").trim() || String(answers.city || "").trim())) return true;
+    return false;
   };
-  const questions = requiredList.filter((question) => !isAnswered(question.key));
+  const questions = requiredList.filter((question) => !isAnswered(question));
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
     .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers)).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions)).query(`
       UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status='review',LastSubmissionError=NULL,UpdatedAt=SYSUTCDATETIME()

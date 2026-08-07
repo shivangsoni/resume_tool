@@ -86,6 +86,12 @@ test("lookupAnswer recovers answers when DOM index suffix shifts", () => {
   assert.equal(answerKeyBase("foo__10_2"), "foo");
 });
 
+test("matchOptionLabel maps country aliases onto select options", () => {
+  assert.equal(matchOptionLabel(["US", "CA", "MX"], "United States"), "US");
+  assert.equal(matchOptionLabel(["United States", "Canada"], "USA"), "United States");
+  assert.equal(matchOptionLabel(["United States of America", "Canada"], "US"), "United States of America");
+});
+
 test("matchOptionLabel coerces Yes/No onto clear options", () => {
   assert.equal(matchOptionLabel(["Yes", "No"], "yes"), "Yes");
   assert.equal(matchOptionLabel(["No", "Yes"], "true"), "Yes");

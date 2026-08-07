@@ -172,9 +172,12 @@ const parseMultiselectAnswer = (value) => {
 
 const COUNTRY_ALIASES = {
   us: ["united states", "usa", "u s", "u s a", "america"],
+  usa: ["united states", "us", "u s", "u s a", "america"],
   "united states": ["us", "usa", "u s", "u s a", "america"],
+  "united states of america": ["us", "usa", "u s", "u s a", "america", "united states"],
   uk: ["united kingdom", "great britain", "britain", "england"],
   "united kingdom": ["uk", "great britain", "britain", "england"],
+  "great britain": ["uk", "united kingdom", "britain", "england"],
 };
 
 /** True when option text matches any wanted token (with common country aliases). */
@@ -251,6 +254,10 @@ const matchOptionLabel = (options, answer) => {
     if (noOpt) return noOpt;
   }
 
+  // Country aliases: "United States" ↔ "US" / "USA", etc.
+  const aliasHit = usable.find((option) => optionMatchesTokens(option, [wanted]));
+  if (aliasHit) return aliasHit;
+
   const includes = usable.find((option) => {
     const label = normalize(option);
     if (!label) return false;
@@ -313,18 +320,28 @@ const fillTextControl = async (field, answer) => {
   await field.click({ timeout: 3000 }).catch(() => {});
   await field.fill("").catch(() => {});
   await field.fill(wanted).catch(() => {});
+  await field.evaluate((el) => el.dispatchEvent(new Event("blur", { bubbles: true }))).catch(() => {});
   let value = await field.inputValue().catch(() => "");
   if (matches(value)) return true;
 
-  await field.pressSequentially(wanted, { delay: 15 }).catch(() => {});
+  await field.click({ timeout: 3000 }).catch(() => {});
+  await field.fill("").catch(() => {});
+  await field.pressSequentially(wanted, { delay: 20 }).catch(() => {});
+  await field.press("Tab").catch(() => {});
   value = await field.inputValue().catch(() => "");
   if (matches(value)) return true;
 
+  // React controlled inputs ignore direct .value assigns — use the native setter.
   await field.evaluate((el, next) => {
     el.focus();
-    el.value = next;
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+    if (descriptor?.set) descriptor.set.call(el, next);
+    else el.value = next;
     el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: next, inputType: "insertText" }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
   }, wanted).catch(() => {});
   value = await field.inputValue().catch(() => "");
   return matches(value);
@@ -372,6 +389,17 @@ async function fillSelect(field, answer) {
       label: (option.textContent || "").trim(),
     })),
   );
+  const labels = options.map((option) => option.label);
+  const matchedLabel = matchOptionLabel(labels, wanted);
+  if (matchedLabel) {
+    const match = options.find((option) => option.label === matchedLabel);
+    if (match && match.value !== "") {
+      const ok = await field.selectOption(match.value).then(() => true).catch(() => false);
+      if (ok) return true;
+    }
+    const byMatchedLabel = await field.selectOption({ label: matchedLabel }).then(() => true).catch(() => false);
+    if (byMatchedLabel) return true;
+  }
   const needle = wanted.toLowerCase();
   const needleCompact = needle.replace(/[^a-z0-9]+/g, "");
   const match = options.find((option) => {
@@ -760,8 +788,9 @@ export async function runApplication({ application, profile, resumePath }) {
       }
       const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
       let filled = false;
+      const isSelect = info.tag === "select" || liveType === "select";
       if (answer) {
-        if (info.tag === "select" || liveType === "select") {
+        if (isSelect) {
           const options = await selectOptionTexts(field);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(field, coerced);
@@ -774,22 +803,48 @@ export async function runApplication({ application, profile, resumePath }) {
           }
         } else {
           filled = await fillTextControl(field, answer);
+          // Some Greenhouse "text" questions are actually selects rematerialized after load.
+          if (!filled) {
+            const retryType = await liveFieldType(field, liveType);
+            if (retryType === "select") {
+              const options = await selectOptionTexts(field);
+              const coerced = matchOptionLabel(options, answer) || answer;
+              filled = await fillSelect(field, coerced);
+            }
+          }
         }
       }
-      const value = await field.inputValue().catch(() => "");
+      let value = await field.inputValue().catch(() => "");
+      if (answer && !String(value || "").trim() && !filled) {
+        // nth() locators can rematerialize — retry once with a fresh stable locator.
+        const retryField = stabilizeField(scope, item);
+        if (isSelect || await liveFieldType(retryField, liveType) === "select") {
+          const options = await selectOptionTexts(retryField);
+          const coerced = matchOptionLabel(options, answer) || answer;
+          filled = await fillSelect(retryField, coerced);
+        } else {
+          filled = await fillTextControl(retryField, answer);
+        }
+        value = await retryField.inputValue().catch(() => "");
+      }
       const digits = (text) => String(text || "").replace(/\D+/g, "");
-      const looksFilled = Boolean(String(value || "").trim())
-        || (filled && answer && digits(value) && digits(answer) && digits(value).includes(digits(answer)));
+      const hasValue = Boolean(String(value || "").trim());
+      const digitsMatch = Boolean(
+        answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
+      );
+      // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
+      const looksFilled = hasValue || digitsMatch || (isSelect && filled);
       if (info.required && !looksFilled) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
-        const options = (info.tag === "select" || liveType === "select") ? await selectOptionTexts(field) : undefined;
+        const options = isSelect ? await selectOptionTexts(field) : undefined;
         missing.push({
           key,
           label: displayLabel,
-          type: (info.tag === "select" || liveType === "select") ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
+          type: isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text",
           options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
           required: true,
+          hadAnswer: Boolean(answer),
         });
       }
     }
@@ -861,7 +916,17 @@ export async function runApplication({ application, profile, resumePath }) {
         }
       }
     }
-    if (missing.length) return { outcome: "needs_action", detail: `${missing.length} required employer question(s) need your answer.`, questions: missing };
+    if (missing.length) {
+      const unanswered = missing.filter((item) => !item.hadAnswer);
+      const detail = unanswered.length
+        ? `${unanswered.length} required employer question(s) need your answer.`
+        : `Could not apply your saved answers on the employer form (${missing.map((item) => item.label).join(", ")}). Open the employer page or retry.`;
+      return {
+        outcome: "needs_action",
+        detail,
+        questions: missing.map(({ hadAnswer, ...question }) => question),
+      };
+    }
 
     // Advance multi-step employer flows (Continue/Next) until a final submit appears.
     for (let step = 0; step < 4; step += 1) {
