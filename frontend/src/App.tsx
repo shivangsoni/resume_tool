@@ -348,16 +348,12 @@ export default function App() {
         <NavDrawerHeader>
           <div className="sa-nav-top">
             <Button
-              appearance="subtle"
+              appearance="transparent"
               className="sa-nav-toggle"
               icon={<Navigation24Regular />}
               aria-label={navOpen ? "Collapse navigation" : "Expand navigation"}
               onClick={() => setNavOpen((value) => !value)}
             />
-            <div className="sa-logo">
-              <span><Sparkle24Filled /></span>
-              <b>ApplyPilot</b>
-            </div>
           </div>
         </NavDrawerHeader>
         <NavDrawerBody>
@@ -396,13 +392,17 @@ export default function App() {
 
       <div className="sa-main-column">
         <header className="sa-header">
+          <div className="sa-logo" aria-label="ApplyPilot">
+            <span><Sparkle24Filled /></span>
+            <b>ApplyPilot</b>
+          </div>
           <div className="header-title">
             <b>{pageTitles[page]}</b>
           </div>
           <div className="header-spacer" />
           <Tooltip content="Email notifications" relationship="label">
             <Button
-              appearance="subtle"
+              appearance="transparent"
               className="header-icon-btn"
               icon={
                 <span className="header-bell">
@@ -416,7 +416,7 @@ export default function App() {
           </Tooltip>
           <Menu positioning={{ position: "below", align: "end" }}>
             <MenuTrigger disableButtonEnhancement>
-              <Button appearance="subtle" className="header-profile-btn" aria-label="Account menu">
+              <Button appearance="transparent" className="header-profile-btn" aria-label="Account menu">
                 <Avatar name={displayName} initials={avatarInitials} color="colorful" size={32} />
               </Button>
             </MenuTrigger>

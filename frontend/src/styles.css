@@ -51,8 +51,7 @@ select {
   min-width: 56px;
 }
 .sa-shell.nav-collapsed .sa-nav .fui-NavDrawerBody,
-.sa-shell.nav-collapsed .sa-nav .fui-NavDrawerFooter,
-.sa-shell.nav-collapsed .sa-logo {
+.sa-shell.nav-collapsed .sa-nav .fui-NavDrawerFooter {
   display: none !important;
 }
 .sa-shell.nav-collapsed .sa-nav-top {
@@ -132,23 +131,36 @@ select {
   height: var(--sa-header-height);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 0 8px 0 4px;
+  padding: 0;
   border-bottom: 1px solid var(--colorNeutralStroke2, #e0e0e0);
 }
-.sa-nav-toggle {
+.sa-nav-toggle,
+.header-icon-btn,
+.header-profile-btn {
   flex: none;
   min-width: 40px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--colorNeutralForeground2, #424242) !important;
+}
+.sa-nav-toggle:hover,
+.header-icon-btn:hover,
+.header-profile-btn:hover {
+  background: var(--colorNeutralBackground3, #f0f0f0) !important;
 }
 .sa-logo {
   height: var(--sa-header-height);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 4px;
+  padding: 0 4px 0 0;
   min-width: 0;
   color: var(--colorNeutralForeground1, #242424);
   font-size: 16px;
+  flex: none;
 }
 .sa-logo > span {
   width: 32px;
@@ -220,6 +232,9 @@ select {
   display: flex;
   align-items: center;
   min-width: 0;
+  padding-left: 12px;
+  margin-left: 4px;
+  border-left: 1px solid var(--colorNeutralStroke2, #e0e0e0);
 }
 .header-title b {
   font-size: 16px;
@@ -1280,10 +1295,18 @@ select {
   align-items: center;
   gap: 5px;
   border: 1px solid #d0d5dd;
-  background: white;
+  background: transparent;
   border-radius: 7px;
   padding: 7px 9px;
   color: #344054;
+  cursor: pointer;
+}
+.resume-preview-toolbar button:hover:not(:disabled) {
+  background: #f2f4f7;
+}
+.resume-preview-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .resume-preview-toolbar button svg { width: 15px; height: 15px; }
 .resume-preview-toolbar span { min-width: 42px; text-align: center; font-size: 11px; color: #475467; }
@@ -1410,12 +1433,18 @@ select {
     width: 56px;
     max-width: 56px;
   }
-  .sa-logo,
   .side-lower {
     display: none;
   }
   .sa-header {
     padding: 0 12px;
+  }
+  .sa-logo b {
+    display: none;
+  }
+  .header-title {
+    padding-left: 8px;
+    margin-left: 0;
   }
   .dash {
     padding: 22px 14px 24px;
