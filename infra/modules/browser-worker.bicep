@@ -12,6 +12,8 @@ param emailEndpoint string
 param emailSenderAddress string
 param deploymentEnvironment string = 'production'
 param applicationBaseUrl string
+param azureOpenAiEndpoint string = ''
+param azureOpenAiDeployment string = ''
 param tags object
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -90,6 +92,9 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
           { name: 'EMAIL_SENDER_ADDRESS', value: emailSenderAddress }
           { name: 'DEPLOYMENT_ENVIRONMENT', value: deploymentEnvironment }
           { name: 'APPLICATION_BASE_URL', value: applicationBaseUrl }
+          { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
+          { name: 'AZURE_OPENAI_DEPLOYMENT', value: azureOpenAiDeployment }
+          { name: 'AZURE_OPENAI_API_VERSION', value: '2024-10-21' }
         ]
         resources: {
           cpu: json('1.0')

@@ -352,7 +352,7 @@ test("resolveApplicationUrl rewrites Stripe search deep-links to Greenhouse embe
     source: "Greenhouse",
     sourceUrl: "https://stripe.com/jobs/search?gh_jid=7277110",
   });
-  assert.equal(url, "https://boards.greenhouse.io/embed/job_app?for=stripe&token=7277110");
+  assert.equal(url, "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=7277110");
 });
 
 test("resolveApplicationUrl leaves unrelated listings unchanged", () => {

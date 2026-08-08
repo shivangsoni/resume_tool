@@ -1,4 +1,6 @@
 import { chromium } from "playwright";
+import { harvestFormCatalog, catalogAnswersForFill } from "./option-harvest.js";
+import { resolveCatalogAnswers } from "./option-match.js";
 
 const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -400,10 +402,9 @@ const knownAnswer = (label, profile, answers) => {
     return formatLocationQuery(answers.location || "", profile);
   }
   if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) {
-    const school = String(profile.school || "").trim();
-    // Greenhouse school typeahead matches "Davis" → "University of California - Davis"
-    if (/university of california.*davis|uc\s*davis/i.test(school)) return "Davis";
-    return school;
+    // Return the full profile school so option matching can score "University of California - Davis"
+    // over shorter false friends like "Davis College". Typeahead harvest still probes with short tokens.
+    return String(profile.school || "").trim();
   }
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
     return profile.currentEmployer;
@@ -574,16 +575,34 @@ const matchOptionLabel = (options, answer) => {
     return usable.find((option) => normalize(option) === needle) || "";
   }
 
-  const includes = usable.find((option) => {
+  // Score substring / token overlap so "University of California, Davis" beats "Davis College".
+  const needleTokens = needle.split(/\s+/).filter((token) => token.length > 2);
+  let best = "";
+  let bestScore = 0;
+  for (const option of usable) {
     const label = normalize(option);
-    if (!label) return false;
-    if (label.includes(needle) || needle.includes(label)) return true;
+    if (!label) continue;
     const labelCompact = label.replace(/\s+/g, "");
     const needleCompact = needle.replace(/\s+/g, "");
-    return Boolean(needleCompact && labelCompact && (labelCompact === needleCompact
-      || (needleCompact.length >= 4 && (labelCompact.includes(needleCompact) || needleCompact.includes(labelCompact)))));
-  });
-  return includes || "";
+    let score = 0;
+    if (label === needle || labelCompact === needleCompact) score += 100;
+    if (label.includes(needle)) score += 40 + needle.length;
+    if (needle.includes(label) && label.length >= 8) score += 20 + label.length;
+    if (needleCompact.length >= 4 && (labelCompact.includes(needleCompact) || needleCompact.includes(labelCompact))) {
+      score += 15;
+    }
+    for (const token of needleTokens) {
+      if (label.includes(token)) score += token.length >= 5 ? 6 : 2;
+    }
+    // Penalize short options that only share a single short token (Davis College vs UC Davis).
+    const labelTokens = label.split(/\s+/).filter(Boolean);
+    if (labelTokens.length <= 2 && needleTokens.length >= 3) score -= 10;
+    if (score > bestScore) {
+      bestScore = score;
+      best = option;
+    }
+  }
+  return bestScore >= 8 ? best : "";
 };
 
 const selectOptionTexts = async (field) => {
@@ -856,21 +875,17 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
       await trigger.click({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(350);
 
-      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li, .select__option');
-      const optionCount = await options.count().catch(() => 0);
-      if (!optionCount) {
+      const labels = await page.evaluate(() => {
+        const nodes = [
+          ...document.querySelectorAll(".select__menu .select__option, [role=listbox] [role=option], .iti__country, .iti__country-list li, .select__option"),
+        ].filter((el) => el.offsetParent || el.closest(".iti__country-list:not(.iti__hide)"));
+        return nodes.map((o) => o.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
+      }).catch(() => []);
+      if (!labels.length) {
         await page.keyboard.press("Escape").catch(() => {});
         continue;
       }
 
-      const labels = [];
-      const max = Math.min(optionCount, 320);
-      for (let j = 0; j < max; j += 1) {
-        const text = String(await options.nth(j).innerText().catch(() => ""))
-          .replace(/\s+/g, " ")
-          .trim();
-        labels.push(text);
-      }
       const matched = matchOptionLabel(labels.filter(Boolean), wanted)
         || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
       if (matched) {
@@ -883,8 +898,7 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
           return true;
         }, matched);
         if (!clicked) {
-          const index = labels.findIndex((label) => label === matched);
-          if (index >= 0) await options.nth(index).click({ timeout: 3000 }).catch(() => {});
+          await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
         }
         await page.waitForTimeout(200);
         return true;
@@ -968,15 +982,17 @@ const fillCustomBooleanChoice = async (field, answer) => {
   const page = field.page();
   const wanted = matchOptionLabel(["Yes", "No"], wantedRaw) || wantedRaw;
 
+  if (!(await field.isVisible().catch(() => false))) return false;
+
   await field.scrollIntoViewIfNeeded().catch(() => {});
   // Prefer clicking the react-select control chrome, not a leaked phone dial menu.
   const control = field.locator("xpath=ancestor::div[contains(@class,'select__container')][1]//div[contains(@class,'select__control')]").first();
   if (await control.isVisible().catch(() => false)) {
-    await control.click({ timeout: 4000 }).catch(() => {});
+    await control.click({ timeout: 3000 }).catch(() => {});
   } else {
-    await field.click({ timeout: 4000 }).catch(() => {});
+    await field.click({ timeout: 3000 }).catch(() => {});
   }
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(250);
 
   // Searchable selects (School, Degree, experience): type to filter options.
   const isSearchable = await field.evaluate((el) => {
@@ -986,74 +1002,69 @@ const fillCustomBooleanChoice = async (field, answer) => {
   const typeFilter = isSearchable && wanted.length >= 1 && !/^(yes|no)$/i.test(wanted);
   if (typeFilter) {
     await field.fill("").catch(() => {});
-    await field.pressSequentially(wanted.slice(0, 48), { delay: 40 }).catch(() => {});
-    // School/location typeaheads need longer for remote options.
+    // School lists are huge — type a short distinctive token so the target option appears.
+    let typeToken = wanted.slice(0, 48);
+    if (/university of california.*davis|uc\s*davis/i.test(wanted)) typeToken = "Davis";
+    else if (/master'?s/i.test(wanted)) typeToken = "Master";
+    else if (/united states/i.test(wanted)) typeToken = "United States";
+    await field.pressSequentially(typeToken, { delay: 25 }).catch(() => {});
     const fieldId = await field.getAttribute("id").catch(() => "");
-    await page.waitForTimeout(/school|degree/i.test(fieldId || "") ? 1800 : 900);
+    await page.waitForTimeout(/school|degree/i.test(fieldId || "") ? 1200 : 500);
   }
 
-  const optionSelectors = [
-    ".select__menu .select__option",
-    ".select__option",
-    '[role="listbox"] [role="option"]',
-    '[role="option"]',
-  ];
-  for (let pass = 0; pass < 2; pass += 1) {
-    for (const selector of optionSelectors) {
-      const options = page.locator(selector);
-      const count = await options.count().catch(() => 0);
-      if (!count) continue;
-      const labels = [];
-      for (let i = 0; i < Math.min(count, 80); i += 1) {
-        const option = options.nth(i);
-        if (!(await option.isVisible().catch(() => false))) continue;
-        const text = String(await option.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-        // Ignore leftover intl-tel dial menus (Afghanistan+93) when filling other fields.
-        if (/\+\d+$/.test(text) && !/\+/.test(wanted) && !/united states|country/i.test(wanted)) continue;
-        if (text) labels.push({ i, text });
-      }
-      if (!labels.length) continue;
-      let matched = matchOptionLabel(labels.map((row) => row.text), wanted);
-      if (!matched && wanted.length > 3) {
-        matched = labels.find((row) => normalize(row.text).includes(normalize(wanted)))?.text || "";
-      }
-      if (!matched && /^(yes|no)$/i.test(wanted)) {
-        matched = labels.find((row) => normalize(row.text) === normalize(wanted)
-          || normalize(row.text).startsWith(normalize(wanted)))?.text || "";
-      }
-      // School: prefer UC Davis over Davis College when typing Davis.
-      if (/davis/i.test(wanted) && labels.some((row) => /california\s*-\s*davis/i.test(row.text))) {
-        matched = labels.find((row) => /california\s*-\s*davis/i.test(row.text))?.text || matched;
-      }
-      if (!matched) continue;
-      // Exact option text click — Playwright hasText("US") wrongly matches "Australia".
-      const clicked = await page.evaluate((label) => {
-        const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
-        for (const menu of menus) {
-          const opt = [...menu.querySelectorAll(".select__option, [role=option]")].find(
-            (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
-          );
-          if (opt) {
-            opt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-            opt.click();
-            return true;
-          }
+  // Read visible menu options in one evaluate — avoid N× isVisible round-trips (was hanging 45s+).
+  const labels = await page.evaluate(() => {
+    const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+    return menus.flatMap((menu) =>
+      [...menu.querySelectorAll(".select__option, [role=option]")]
+        .map((o) => o.textContent.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    );
+  }).catch(() => []);
+
+  const usable = labels.filter((text) => {
+    if (/\+\d+$/.test(text) && !/\+/.test(wanted) && !/united states|country/i.test(wanted)) return false;
+    return true;
+  });
+
+  let matched = matchOptionLabel(usable, wanted);
+  if (!matched && wanted.length > 3) {
+    matched = usable.find((text) => normalize(text).includes(normalize(wanted))) || "";
+  }
+  if (!matched && /^(yes|no)$/i.test(wanted)) {
+    matched = usable.find((text) => normalize(text) === normalize(wanted)
+      || normalize(text).startsWith(normalize(wanted))) || "";
+  }
+  if (/davis/i.test(wanted) && usable.some((text) => /california\s*-\s*davis/i.test(text))) {
+    matched = usable.find((text) => /california\s*-\s*davis/i.test(text)) || matched;
+  }
+
+  if (matched) {
+    const clicked = await page.evaluate((label) => {
+      const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+      for (const menu of menus) {
+        const opt = [...menu.querySelectorAll(".select__option, [role=option]")].find(
+          (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+        );
+        if (opt) {
+          opt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          opt.click();
+          return true;
         }
-        return false;
-      }, matched);
-      if (!clicked) {
-        const hit = labels.find((row) => row.text === matched) || labels.find((row) => normalize(row.text) === normalize(matched));
-        if (hit) await options.nth(hit.i).click({ timeout: 4000 }).catch(() => {});
       }
-      await page.waitForTimeout(350);
-      return true;
+      return false;
+    }, matched);
+    if (!clicked) {
+      await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
     }
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(200);
+    return true;
   }
 
-  await page.getByRole("option", { name: wanted, exact: wanted.length <= 3 }).first().click({ timeout: 3000 }).catch(() => {});
-  await page.waitForTimeout(300);
-  return true;
+  await page.getByRole("option", { name: wanted, exact: wanted.length <= 3 }).first().click({ timeout: 2000 }).catch(() => {});
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(150);
+  return false;
 };
 
 /** True when a text input behaves like a Greenhouse custom select/combobox. */
@@ -1092,7 +1103,7 @@ function resolveApplicationUrl(application) {
     const jobId = jid || tokenFromPath;
     const board = guessGreenhouseBoard(application);
     if (jobId && board && (host.includes("stripe.com") || host.includes("greenhouse.io") || host.includes(board))) {
-      return `https://boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(jobId)}`;
+      return `https://job-boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(jobId)}`;
     }
   } catch {
     // Fall through to the original listing URL.
@@ -1106,14 +1117,18 @@ function guessGreenhouseBoard(application) {
   if (company.includes("cloudflare")) return "cloudflare";
   if (company.includes("figma")) return "figma";
   if (company.includes("airbnb")) return "airbnb";
+  try {
+    const host = new URL(String(application?.sourceUrl || "")).hostname.toLowerCase();
+    if (host.includes("stripe.com")) return "stripe";
+    if (host.includes("cloudflare.com")) return "cloudflare";
+    if (host.includes("figma.com")) return "figma";
+  } catch { /* ignore */ }
   const source = normalize(application?.source);
   if (source.includes("greenhouse")) {
     try {
       const url = new URL(String(application?.sourceUrl || ""));
-      const fromPath = url.pathname.match(/\/(?:embed\/job_app|boards?\/|job-boards\/)?(?:for=)?/i);
       const token = url.searchParams.get("for") || url.pathname.split("/").filter(Boolean)[0];
       if (token && /^[a-z0-9_-]+$/i.test(token) && !["embed", "jobs", "job", "boards", "job-boards"].includes(token)) return token;
-      void fromPath;
     } catch { /* ignore */ }
   }
   return "";
@@ -1233,6 +1248,30 @@ export async function runApplication({ application, profile, resumePath, dryRun 
       }
       await page.waitForTimeout(800);
     }
+
+    let harvestedCatalog = [];
+    try {
+      harvestedCatalog = await harvestFormCatalog(page, scope, profile, application);
+      const { answers: matched } = await resolveCatalogAnswers({
+        catalog: harvestedCatalog,
+        profile,
+        answers: application.answers || {},
+        knownAnswer,
+        lookupAnswer,
+        matchOptionLabel,
+        useGpt: true,
+      });
+      application.answers = catalogAnswersForFill(harvestedCatalog, matched);
+    } catch (error) {
+      console.error("Option harvest/match failed; continuing with heuristics", error);
+    }
+    const catalogOptionsByKey = new Map(
+      harvestedCatalog.map((entry) => [entry.key, entry.options || []]),
+    );
+    const catalogOptionsByLabel = new Map(
+      harvestedCatalog.map((entry) => [normalize(entry.label), entry.options || []]),
+    );
+
     const missing = [];
     const seenKeys = new Set();
     const collected = [];
@@ -1557,6 +1596,13 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         if (isLocationField && !isSelect) missingType = "autocomplete";
         if (isPhoneField) missingType = "phone";
         let missingOptions = options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt));
+        const harvested = catalogOptionsByKey.get(info.id)
+          || catalogOptionsByLabel.get(normalize(displayLabel))
+          || [];
+        if ((!missingOptions || !missingOptions.length) && harvested.length) {
+          missingOptions = harvested;
+          missingType = "select";
+        }
         // Stripe WhatsApp / other Yes-No selects sometimes arrive without scraped options.
         if ((missingType === "select" || missingType === "text") && isBooleanChoiceLabel(displayLabel)) {
           missingType = "select";
