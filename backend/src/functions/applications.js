@@ -86,17 +86,28 @@ app.http("applicationAnswers", {
       const answers = body?.answers && typeof body.answers === "object" ? body.answers : {};
       if (Object.values(answers).some((value) => typeof value !== "string" || value.length > 4000)) return { status: 400, jsonBody: { error: "Invalid screening answers." } };
       const saved = await saveApplicationAnswers(principal, request.params.id, answers);
-      if (!saved) return { status: 404, jsonBody: { error: "Application not found." } };
-      const application = await queueApplicationSubmission(principal, saved.id);
+      if (!saved?.application) return { status: 404, jsonBody: { error: "Application not found." } };
+      if (saved.awaitingVerification) {
+        return {
+          status: 200,
+          jsonBody: {
+            application: saved.application,
+            queued: false,
+            awaitingVerification: true,
+            message: "Verification code saved. The open browser session will use it shortly.",
+          },
+        };
+      }
+      const application = await queueApplicationSubmission(principal, saved.application.id);
       if (!application) return { status: 409, jsonBody: { error: "Application could not be re-queued yet. Try again shortly." } };
       try {
         await enqueueApplicationSubmission(application);
       } catch (enqueueError) {
-        await revertApplicationQueue(principal, saved.id, enqueueError instanceof Error ? enqueueError.message : "Submission queue unavailable.");
+        await revertApplicationQueue(principal, saved.application.id, enqueueError instanceof Error ? enqueueError.message : "Submission queue unavailable.");
         throw enqueueError;
       }
       try { await notifyApplicationStatus(principal, application, "re-queued after answers", "Your answers were saved and the application was queued again."); } catch { /* ignore */ }
-      return { status: 202, jsonBody: { application } };
+      return { status: 202, jsonBody: { application, queued: true } };
     } catch (error) { context.error("Application answers failed", error); return { status: 500, jsonBody: { error: "Answers could not be saved and queued." } }; }
   },
 });

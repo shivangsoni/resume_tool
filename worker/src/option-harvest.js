@@ -119,16 +119,21 @@ function guessBoard(application = {}) {
 
 export function fieldKindFromLabel(label = "", id = "") {
   const text = `${label} ${id}`.toLowerCase();
-  if (/school|university|college|alma mater/.test(text) || /school--/i.test(id)) return "school";
-  if (/\bdegree\b/.test(text)) return "degree";
+  // Experience before school — "software engineer" questions must not hit /school|college/.
+  if (/years? of experience|software engineer/.test(text) && !/school--|degree--/i.test(id)) return "experience_years";
+  if (/school--|degree--/i.test(id) || (/school|university|college|alma mater/.test(text) && !/years? of experience/.test(text))) {
+    if (/\bdegree\b/.test(text) || /degree--/i.test(id)) return "degree";
+    return "school";
+  }
+  if (/\bdegree\b/.test(text) || /degree--/i.test(id)) return "degree";
   if (/currently reside|country where you/.test(text)) return "reside_country";
-  if (/years? of experience|software engineer/.test(text)) return "experience_years";
   if (/whatsapp|opt-?in/.test(text)) return "whatsapp";
   if (/sponsor|work permit/.test(text)) return "sponsorship";
   if (/authorized to work/.test(text)) return "work_auth";
   if (/work remotely|plan to work remotely/.test(text)) return "remote";
   if (/employed by stripe/.test(text)) return "stripe_employee";
   if (/^country\*?$|#country/.test(text) || id === "country") return "phone_country";
+  if (/candidate-location|location \(city\)/i.test(text) || id === "candidate-location") return "location";
   return "select";
 }
 
@@ -198,7 +203,9 @@ export async function harvestFormCatalog(page, scope, profile = {}, application 
 
     const kind = fieldKindFromLabel(label, id);
     let options = [];
-    if (kind === "school" || /school--/i.test(id)) {
+    if (kind === "location") {
+      options = [];
+    } else if (kind === "school" || /school--/i.test(id)) {
       if (!schoolOptionsCache) {
         schoolOptionsCache = await harvestSchoolOptions(page, field, profile, { board });
       }

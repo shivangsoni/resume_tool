@@ -6,7 +6,7 @@ export type FilterableJob = {
   skills: string[];
   source?: string;
   remote: boolean;
-  status: "ready" | "queued" | "applied" | "failed";
+  status: "ready" | "queued" | "applied" | "failed" | "needs_review";
 };
 
 export function matchesJob(job: FilterableJob, query: string, status: string, source: string, workplace: string, location = "") {

@@ -111,8 +111,11 @@ export function isBooleanQuestionLabel(label: string) {
 export function resolveQuestionInputType(question: { type?: string; label?: string; options?: string[] }) {
   const options = (question.options || []).filter((option) => String(option).trim());
   const type = String(question.type || "text").toLowerCase();
-  if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file") return type;
+  if (type === "blocking" || type === "textarea" || type === "multiselect" || type === "file" || type === "otp") return type;
   if (type === "autocomplete" || type === "phone") return type;
+  if (/email_verification|verification code|security code/i.test(String(question.label || "") + String((question as { key?: string }).key || ""))) {
+    return "otp";
+  }
   if (type === "select") {
     if (options.length) return "select";
     // Stripe WhatsApp etc. sometimes arrive as select without scraped options.
@@ -306,6 +309,9 @@ export function isQuestionAnswered(
   const raw = String(answers[question.key] || "").trim();
   if (!raw) return false;
   const inputType = resolveQuestionInputType(question);
+  if (inputType === "otp") {
+    return /^\d{8}$/.test(raw.replace(/\s+/g, ""));
+  }
   if (inputType === "select") {
     const options = (question.options || []).filter((option) => String(option).trim());
     if (!options.length) return true;

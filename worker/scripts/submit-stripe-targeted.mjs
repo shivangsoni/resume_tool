@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import {
   fillCustomBooleanChoice,
   fillLocationAutocomplete,
+  fillPhoneCountryDial,
   formatLocationQuery,
 } from "../src/automation.js";
 
@@ -178,20 +179,17 @@ try {
   }
 
   console.log("Phone country…");
-  const phoneCountry = await fillReactSelectById(page, "country", {
-    typeText: "United States",
-    exactOption: "United States +1",
-    optionIncludes: ["United States"],
-    waitMs: 1000,
-  });
-  report.steps.push({ field: "phoneCountry", ...phoneCountry });
-  console.log(phoneCountry);
+  const dialOk = await fillPhoneCountryDial(page.locator("#phone"), "United States", profile);
+  const phoneCountryValue = await readSelectValue(page, "country");
+  report.steps.push({ field: "phoneCountry", ok: dialOk, value: phoneCountryValue });
+  console.log({ dialOk, phoneCountryValue });
 
   const phone = page.locator("#phone");
   await phone.click();
   await phone.fill("");
   await phone.pressSequentially(profile.phone, { delay: 35 });
-  report.steps.push({ field: "phone", ok: true });
+  report.steps.push({ field: "phone", ok: true, value: await phone.inputValue() });
+  console.log("Phone:", await phone.inputValue());
 
   await closeMenus(page);
   const locOk = await fillLocationAutocomplete(page.locator("#candidate-location"), formatLocationQuery("", profile), profile);
@@ -257,7 +255,7 @@ try {
   const questionnaire = [
     { id: "question_68165588", answer: "Yes", name: "authorized" },
     { id: "question_68165589", answer: "Yes", name: "sponsorship" },
-    { id: "question_68165590", answer: "Yes", name: "remote" },
+    { id: "question_68165590", answer: "Yes, I intend to work remotely.", name: "remote" },
     { id: "question_68165591", answer: "No", name: "stripeEmployee" },
     { id: "question_68165592", answer: "No", name: "whatsapp" },
   ];
@@ -308,6 +306,12 @@ try {
     report.outcome = "blocked_missing_required";
     report.missingRequired = missingRequired;
     console.log("Blocked — missing:", missingRequired);
+  } else if (process.env.SKIP_SUBMIT === "1" || process.env.DRY_RUN === "1") {
+    report.outcome = "filled_dry_run";
+    console.log("SKIP_SUBMIT=1 — form filled for review (no submit).");
+    const holdMs = Number(process.env.HOLD_MS || 60000);
+    console.log(`Holding browser open ${holdMs}ms — check the form now.`);
+    await page.waitForTimeout(holdMs);
   } else {
     const submit = page.locator("#submit_app, button:has-text('Submit application')").first();
     await submit.scrollIntoViewIfNeeded();
@@ -387,7 +391,7 @@ try {
 }
 
 await writeFile(path.join(tmpDir, "stripe-submit-report.json"), JSON.stringify(report, null, 2));
-process.exit(report.outcome === "submitted" ? 0 : 1);
+process.exit(report.outcome === "submitted" || report.outcome === "filled_dry_run" ? 0 : 1);
 
 async function waitForVerifyCode(dir, timeoutMs) {
   const filePath = path.join(dir, "stripe-verify-code.txt");
@@ -399,7 +403,7 @@ async function waitForVerifyCode(dir, timeoutMs) {
     try {
       const { readFile } = await import("node:fs/promises");
       const raw = (await readFile(filePath, "utf8")).trim().replace(/\s+/g, "");
-      if (/^[A-Za-z0-9]{4,8}$/.test(raw)) return raw;
+      if (/^[A-Za-z0-9]{6,8}$/.test(raw) || /^\d{8}$/.test(raw)) return raw;
     } catch {
       // ignore
     }

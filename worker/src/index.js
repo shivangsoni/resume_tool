@@ -124,15 +124,70 @@ async function ensureMailboxId(userId, alias) {
 }
 
 async function record(id, outcome, notify = {}) {
-  await pool.request().input("id", sql.UniqueIdentifier, id).input("outcome", sql.VarChar(30), outcome.outcome).input("provider", sql.NVarChar(100), outcome.provider || null).input("receipt", sql.NVarChar(300), outcome.receiptId || null).input("detail", sql.NVarChar(2000), outcome.detail || null).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(outcome.questions || [])).query(`
+  const mappedStatus = outcome.outcome === "submitted"
+    ? "submitted"
+    : outcome.outcome === "failed"
+      ? "failed"
+      : outcome.outcome === "needs_review" || outcome.outcome === "needs_action"
+        ? "needs_review"
+        : "needs_review";
+  await pool.request().input("id", sql.UniqueIdentifier, id).input("outcome", sql.VarChar(30), outcome.outcome).input("status", sql.VarChar(30), mappedStatus).input("provider", sql.NVarChar(100), outcome.provider || null).input("receipt", sql.NVarChar(300), outcome.receiptId || null).input("detail", sql.NVarChar(2000), outcome.detail || null).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(outcome.questions || [])).query(`
     INSERT dbo.ApplicationSubmissionAttempts(ApplicationId,Outcome,Provider,ProviderReceiptId,Detail) VALUES(@id,@outcome,@provider,@receipt,@detail);
-    UPDATE dbo.Applications SET Status=CASE WHEN @outcome='submitted' THEN 'submitted' ELSE 'needs_action' END,SubmissionProvider=@provider,ProviderReceiptId=@receipt,LastSubmissionError=CASE WHEN @outcome='submitted' THEN NULL ELSE @detail END,RequiredQuestionsJson=@questions,AppliedAt=CASE WHEN @outcome='submitted' THEN SYSUTCDATETIME() ELSE AppliedAt END,SubmittedConfirmedAt=CASE WHEN @outcome='submitted' THEN SYSUTCDATETIME() ELSE SubmittedConfirmedAt END,UpdatedAt=SYSUTCDATETIME() WHERE Id=@id;
+    UPDATE dbo.Applications SET Status=@status,SubmissionProvider=@provider,ProviderReceiptId=@receipt,LastSubmissionError=CASE WHEN @status='submitted' THEN NULL ELSE @detail END,RequiredQuestionsJson=@questions,AppliedAt=CASE WHEN @status='submitted' THEN SYSUTCDATETIME() ELSE AppliedAt END,SubmittedConfirmedAt=CASE WHEN @status='submitted' THEN SYSUTCDATETIME() ELSE SubmittedConfirmedAt END,UpdatedAt=SYSUTCDATETIME() WHERE Id=@id;
   `);
   try {
     await notifySubmissionOutcome(id, outcome, notify);
   } catch (error) {
     console.error("Failed to notify submission status", error);
   }
+}
+
+/** Soft-park the application as needs_review while the browser stays open for OTP entry. */
+async function parkNeedsReview(id, { detail, questions }) {
+  await pool.request()
+    .input("id", sql.UniqueIdentifier, id)
+    .input("detail", sql.NVarChar(2000), detail || null)
+    .input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions || []))
+    .query(`
+      UPDATE dbo.Applications
+      SET Status='needs_review',
+          LastSubmissionError=@detail,
+          RequiredQuestionsJson=@questions,
+          UpdatedAt=SYSUTCDATETIME()
+      WHERE Id=@id;
+    `);
+}
+
+function extractVerificationCode(answers = {}) {
+  const keys = ["email_verification", "verification_code", "verificationCode", "otp", "security_code"];
+  for (const key of keys) {
+    const raw = String(answers[key] || "").trim().replace(/\s+/g, "");
+    if (/^\d{8}$/.test(raw)) return raw;
+    if (/^[A-Za-z0-9]{6,8}$/.test(raw)) return raw;
+  }
+  for (const value of Object.values(answers || {})) {
+    const raw = String(value || "").trim().replace(/\s+/g, "");
+    if (/^\d{8}$/.test(raw)) return raw;
+  }
+  return "";
+}
+
+async function pollVerificationCode(id, { timeoutMs = 10 * 60 * 1000, pollMs = 2500 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const result = await pool.request().input("id", sql.UniqueIdentifier, id)
+      .query("SELECT AnswersJson, Status FROM dbo.Applications WHERE Id=@id");
+    const row = result.recordset[0];
+    if (!row) return "";
+    const answers = row.AnswersJson ? JSON.parse(row.AnswersJson) : {};
+    const code = extractVerificationCode(answers);
+    if (code) return code;
+    // Heartbeat so the row does not look abandoned in the UI.
+    await pool.request().input("id", sql.UniqueIdentifier, id)
+      .query("UPDATE dbo.Applications SET UpdatedAt=SYSUTCDATETIME() WHERE Id=@id AND Status='needs_review'");
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return "";
 }
 
 async function notifySubmissionOutcome(applicationId, outcome, notify) {
@@ -149,16 +204,19 @@ async function notifySubmissionOutcome(applicationId, outcome, notify) {
   const title = row.Title || notify.title;
   const company = row.Company || notify.company;
   const submitted = outcome.outcome === "submitted";
-  const statusLabel = submitted ? "submitted" : "failed";
+  const needsReview = outcome.outcome === "needs_review" || outcome.outcome === "needs_action";
+  const statusLabel = submitted ? "submitted" : needsReview ? "needs review" : "failed";
   const { subjectPrefix, bodyPrefix } = environmentMarker();
   const subject = `${subjectPrefix}Application ${statusLabel}: ${title} at ${company}`;
   const plainText = [
     ...bodyPrefix,
     submitted
       ? `Your ApplyPilot application for ${title} at ${company} was submitted successfully.`
-      : `Your ApplyPilot application for ${title} at ${company} needs attention.`,
+      : needsReview
+        ? `Your ApplyPilot application for ${title} at ${company} needs your input (for example an email verification code).`
+        : `Your ApplyPilot application for ${title} at ${company} failed and needs a retry.`,
     outcome.detail || "",
-    "Open ApplyPilot → Email Inbox or Applications for the latest details.",
+    "Open ApplyPilot → Applications for the latest details.",
     applicationUrl(applicationId),
   ].filter(Boolean).join("\n\n");
 
@@ -217,7 +275,7 @@ async function claimNextQueuedApplication() {
   return result.recordset[0]?.Id ? String(result.recordset[0].Id) : null;
 }
 
-const TERMINAL_STATUSES = ["submitted", "needs_action", "failed", "interview", "offer", "rejected", "review"];
+const TERMINAL_STATUSES = ["submitted", "needs_action", "needs_review", "failed", "interview", "offer", "rejected", "review"];
 
 async function processApplicationId(id, { completeMessage, alreadyClaimed = false } = {}) {
   const data = alreadyClaimed ? await fetchApplicationContext(id) : await load(id);
@@ -242,10 +300,20 @@ async function processApplicationId(id, { completeMessage, alreadyClaimed = fals
       await blobs.getBlobClient(data.document.blobName).downloadToFile(resumePath);
     }
     const APPLICATION_TIMEOUT_MS = Number(process.env.APPLICATION_TIMEOUT_MS || 8 * 60 * 1000);
-    await record(id, await runApplication({ ...data, resumePath, timeoutMs: APPLICATION_TIMEOUT_MS }), data.notify);
+    const VERIFY_WAIT_MS = Number(process.env.VERIFICATION_WAIT_MS || 10 * 60 * 1000);
+    await record(id, await runApplication({
+      ...data,
+      resumePath,
+      timeoutMs: APPLICATION_TIMEOUT_MS + VERIFY_WAIT_MS,
+      onVerificationRequired: async ({ detail, questions }) => {
+        console.log("Awaiting email verification code", { id });
+        await parkNeedsReview(id, { detail, questions });
+      },
+      waitForVerificationCode: async () => pollVerificationCode(id, { timeoutMs: VERIFY_WAIT_MS }),
+    }), data.notify);
     if (completeMessage) await completeMessage();
   } catch (error) {
-    await record(id, { outcome: "needs_action", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify);
+    await record(id, { outcome: "failed", detail: error instanceof Error ? error.message : "Browser automation failed.", questions: [] }, data?.notify);
     if (completeMessage) await completeMessage().catch(() => {});
   } finally {
     if (resumePath) await fs.unlink(resumePath).catch(() => {});
@@ -279,7 +347,7 @@ receiver.subscribe({ processMessage: async (message) => {
 }, processError: async (args) => console.error("Service Bus worker error", args.error) }, {
   autoCompleteMessages: false,
   maxConcurrentCalls: 1,
-  maxAutoLockRenewalDurationInMs: 10 * 60 * 1000,
+  maxAutoLockRenewalDurationInMs: 20 * 60 * 1000,
 });
 
 // Sweep SQL after subscribe settles, then every 20s when the bus has no pending messages.

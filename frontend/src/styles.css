@@ -963,6 +963,9 @@ body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
 .job-card-status.failed {
   color: #b42318;
 }
+.job-card-status.needs_review {
+  color: #946200;
+}
 .job-card-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1569,7 +1572,8 @@ body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
   background: #eef2ff;
   color: #5145cd;
 }
-.status-pill.review {
+.status-pill.review,
+.status-pill.needs_review {
   background: #fff6df;
   color: #946200;
 }
@@ -1578,10 +1582,13 @@ body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
   background: #e8f3fc;
   color: #0f6cbd;
 }
-.status-pill.failed,
-.status-pill.needs_action {
+.status-pill.failed {
   background: #fff0f0;
   color: #d34848;
+}
+.status-pill.needs_action {
+  background: #fff6df;
+  color: #946200;
 }
 .status-pill svg {
   width: 10px;

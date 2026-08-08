@@ -158,8 +158,8 @@ const pageSubtitles: Record<Page, string> = {
   auth: "Sign in to your ApplyPilot account.",
 };
 const productTourSteps = [
-  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Not applied, Queued, Failed, or Submitted jobs." },
-  { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
+  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Not applied, Queued, Needs review, Failed, or Submitted jobs." },
+  { page: "applications" as const, title: "Applications", body: "Track every submission. Needs review is for your input (like an email code); Failed is a hard stop to retry." },
   { page: "inbox" as const, title: "Email Inbox", body: "Status emails and related application messages land here. Employer forms use your signed-in email." },
   { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
   { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
@@ -176,7 +176,7 @@ type Job = {
   salary: string;
   level: string;
   remote: boolean;
-  status: "ready" | "queued" | "applied" | "failed";
+  status: "ready" | "queued" | "applied" | "failed" | "needs_review";
   summary: string;
   skills: string[];
   sourceUrl?: string;
@@ -201,7 +201,7 @@ export default function App() {
   const [focusedApplicationId, setFocusedApplicationId] = useState(linkedApplicationId);
   const [selected, setSelected] = useState(0);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | "ready" | "queued" | "applied" | "failed">(
+  const [status, setStatus] = useState<"all" | "ready" | "queued" | "applied" | "failed" | "needs_review">(
     "all",
   );
   const [source, setSource] = useState("all");
@@ -249,7 +249,11 @@ export default function App() {
     try {
       const result = await answerApplicationQuestions(id, answers);
       setApplications((items) => items.map((item) => (item.id === id ? result.application : item)));
-      notify("Answers saved. Application queued again.");
+      notify(
+        result.awaitingVerification
+          ? (result.message || "Verification code submitted. Finishing on the open employer page…")
+          : "Answers saved. Application queued again.",
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Answers could not be saved");
     }
@@ -264,7 +268,7 @@ export default function App() {
     }
   };
   const dismissJob = async (job: Job) => {
-    const removableStatuses = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    const removableStatuses = ["draft", "review", "queued", "processing", "needs_action", "needs_review", "failed", "rejected"];
     if (job.applicationId && removableStatuses.includes(String(job.applicationStatus || ""))) {
       try {
         await deleteApplication(job.applicationId);
@@ -382,7 +386,9 @@ export default function App() {
               ? ("applied" as const)
               : application && ["review", "queued", "processing"].includes(application.status)
                 ? ("queued" as const)
-              : application && ["failed", "needs_action"].includes(application.status)
+              : application && ["needs_action", "needs_review"].includes(application.status)
+                ? ("needs_review" as const)
+              : application && ["failed"].includes(application.status)
                 ? ("failed" as const)
                 : ("ready" as const),
         };
@@ -907,8 +913,8 @@ function Dashboard(p: {
   job?: Job;
   query: string;
   setQuery: (s: string) => void;
-  status: "all" | "ready" | "queued" | "applied" | "failed";
-  setStatus: (s: "all" | "ready" | "queued" | "applied" | "failed") => void;
+  status: "all" | "ready" | "queued" | "applied" | "failed" | "needs_review";
+  setStatus: (s: "all" | "ready" | "queued" | "applied" | "failed" | "needs_review") => void;
   source: string;
   setSource: (source: string) => void;
   workplace: string;
@@ -959,6 +965,13 @@ function Dashboard(p: {
           onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
         />
         <Metric
+          n={String(p.allJobs.filter((job) => job.status === "needs_review").length)}
+          label="Needs review"
+          color="brand"
+          active={p.status === "needs_review"}
+          onClick={() => p.setStatus(p.status === "needs_review" ? "all" : "needs_review")}
+        />
+        <Metric
           n={String(p.allJobs.filter((job) => job.status === "failed").length)}
           label="Failed"
           color="red"
@@ -1004,6 +1017,7 @@ function Dashboard(p: {
           <option value="all">All matches</option>
           <option value="ready">Not applied</option>
           <option value="queued">Queued</option>
+          <option value="needs_review">Needs review</option>
           <option value="failed">Failed</option>
           <option value="applied">Submitted</option>
         </select>
@@ -1111,6 +1125,11 @@ function Metric({
 function failureHint(job: Job) {
   const questions = job.requiredQuestions || [];
   const answers = job.applicationAnswers || {};
+  if (job.status === "needs_review" || job.applicationStatus === "needs_review" || job.applicationStatus === "needs_action") {
+    if (questions.some((question) => question.type === "otp" || question.key === "email_verification")) {
+      return job.applicationError || "Enter the 8-digit email verification code in Applications.";
+    }
+  }
   if (questions.length) {
     const ready = questions.every((question) => {
       const key = String(question.key || "");
@@ -1127,7 +1146,8 @@ function failureHint(job: Job) {
     if (ready) return "Answers ready — open to save and retry.";
     return job.applicationError || "Open to answer employer questions and retry.";
   }
-  return job.applicationError || "Submission failed. Tap to answer questions and retry.";
+  if (job.status === "failed") return job.applicationError || "Submission failed. Retry from Applications.";
+  return job.applicationError || "Open Applications for the next step.";
 }
 
 function JobRow({
@@ -1150,9 +1170,11 @@ function JobRow({
     ? "Submitted"
     : j.status === "queued"
       ? (j.applicationStatus === "processing" ? "Submitting" : "Queued")
-      : j.status === "failed"
-        ? "Needs attention"
-        : "Auto-Apply Ready";
+      : j.status === "needs_review"
+        ? "Needs review"
+        : j.status === "failed"
+          ? "Failed"
+          : "Auto-Apply Ready";
   const workplaceLabel = j.remote ? "Remote" : "On-site";
   return (
     <article className={`job-card ${active ? "active" : ""} ${j.status}`}>
@@ -1592,29 +1614,32 @@ function Applications({
   profile: Profile;
 }) {
   const nowMs = useNow();
-  const [appTab, setAppTab] = useState<"all" | "action">("all");
+  const [appTab, setAppTab] = useState<"all" | "review" | "failed">("all");
   useEffect(() => {
     if (!focusedApplicationId) return;
     document.getElementById(`application-${focusedApplicationId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [focusedApplicationId]);
 
-  const visibleApps = appTab === "action"
-    ? applications.filter((item) => ["failed", "needs_action", "review"].includes(item.status))
-    : applications;
+  const visibleApps = appTab === "review"
+    ? applications.filter((item) => ["needs_review", "needs_action", "review"].includes(item.status))
+    : appTab === "failed"
+      ? applications.filter((item) => item.status === "failed")
+      : applications;
 
   return (
     <div className="basic-page">
       <TabList
         className="page-tabs"
         selectedValue={appTab}
-        onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "action")}
+        onTabSelect={(_e, data) => setAppTab(String(data.value) as "all" | "review" | "failed")}
       >
         <Tab value="all">All applications</Tab>
-        <Tab value="action">Needs action</Tab>
+        <Tab value="review">Needs review</Tab>
+        <Tab value="failed">Failed</Tab>
       </TabList>
       <Toolbar className="page-command-bar">
-        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("action")}>
-          Needs action
+        <ToolbarButton appearance="primary" className="sa-cmd-primary" icon={<Briefcase24Regular />} onClick={() => setAppTab("review")}>
+          Needs review
         </ToolbarButton>
         <ToolbarButton icon={<ArrowClockwise24Regular />} onClick={() => window.location.reload()}>
           Refresh
@@ -1629,7 +1654,7 @@ function Applications({
         {visibleApps.length === 0 && (
           <div className="no-results">
             <Briefcase24Regular />
-            <b>{appTab === "action" ? "No applications need action" : "No applications in progress"}</b>
+            <b>{appTab === "review" ? "Nothing needs review" : appTab === "failed" ? "No failed applications" : "No applications in progress"}</b>
             <span>Choose Simple Apply on a job match to queue submission.</span>
           </div>
         )}
@@ -1646,7 +1671,9 @@ function Applications({
             </div>
             <span className={`status-pill ${application.status}`}>
               {application.status === "submitted" && <Checkmark24Regular />}{" "}
-              {application.status}
+              {application.status === "needs_review" || application.status === "needs_action"
+                ? "needs review"
+                : application.status}
             </span>
             <div className="application-actions">
               {(application.status === "queued" || application.status === "processing" || application.status === "review") && (
@@ -1674,9 +1701,21 @@ function Applications({
                   )}
                 </div>
               )}
-              {(application.status === "needs_action" || application.status === "failed") && (
+              {(application.status === "needs_review" || application.status === "needs_action") && (
                 <div className="queued-message">
-                  <span>{application.lastSubmissionError || "Submission needs attention."}</span>
+                  <span>{application.lastSubmissionError || "Waiting for your input (answers or email verification code)."}</span>
+                  <EmployerApplicationChrome
+                    sourceUrl={application.sourceUrl}
+                    company={application.company}
+                    source={application.source}
+                    jobExternalId={application.jobExternalId}
+                    applicationId={application.id}
+                  />
+                </div>
+              )}
+              {application.status === "failed" && (
+                <div className="queued-message">
+                  <span>{application.lastSubmissionError || "Submission failed. Retry the queue or finish on the employer page."}</span>
                   <button onClick={() => void requeue(application.id)}>Retry queue</button>
                   <EmployerApplicationChrome
                     sourceUrl={application.sourceUrl}
@@ -1701,7 +1740,7 @@ function Applications({
                 {new Date(application.updatedAt).toLocaleDateString()}
               </time>
             </div>
-            {(application.status === "needs_action" || application.status === "failed") && (
+            {(application.status === "needs_review" || application.status === "needs_action") && (
               <ApplicationQuestions application={application} resolve={resolve} profile={profile} />
             )}
           </div>
@@ -1928,6 +1967,7 @@ function ApplicationQuestions({
   }
 
   const blocking = questions.some((question) => question.type === "blocking");
+  const otpOnly = questions.length > 0 && questions.every((question) => resolveQuestionInputType(question) === "otp");
   const answeredCount = questions.filter((question) => isQuestionAnswered(question, answers)).length;
   const setAnswer = (key: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
@@ -1964,6 +2004,10 @@ function ApplicationQuestions({
               coerced.city = value.split(",")[0]?.trim() || value;
               coerced.location = value;
             }
+            if (resolveQuestionInputType(question) === "otp" && value) {
+              coerced.email_verification = value.replace(/\s+/g, "");
+              coerced.verification_code = value.replace(/\s+/g, "");
+            }
           }
           await resolve(application.id, coerced);
         } finally {
@@ -1972,8 +2016,12 @@ function ApplicationQuestions({
       }}
     >
       <div className="action-required-head">
-        <b>Employer questions ({questions.length})</b>
-        <small>{answeredCount} of {questions.length} filled · Profile values prefilled where possible</small>
+        <b>{otpOnly ? "Email verification" : `Employer questions (${questions.length})`}</b>
+        <small>
+          {otpOnly
+            ? "Enter the 8-digit code from your email. Keep this tab open — the worker uses the same browser session."
+            : `${answeredCount} of ${questions.length} filled · Profile values prefilled where possible`}
+        </small>
       </div>
       <EmployerApplicationChrome
         sourceUrl={application.sourceUrl}
@@ -1983,9 +2031,11 @@ function ApplicationQuestions({
         applicationId={application.id}
       />
       <p>
-        {answeredCount >= questions.length
-          ? "Answers look complete. Click Save answers and retry to re-queue submission."
-          : (application.lastSubmissionError || "Fill the required fields below, then save to retry.")}
+        {otpOnly
+          ? (application.lastSubmissionError || "Greenhouse emailed an 8-digit code to your sign-in address.")
+          : answeredCount >= questions.length
+            ? "Answers look complete. Click Save answers and retry to re-queue submission."
+            : (application.lastSubmissionError || "Fill the required fields below, then save to retry.")}
       </p>
       <div className="action-required-fields">
         {questions.map((question, index) => {
@@ -2022,6 +2072,17 @@ function ApplicationQuestions({
                 source: application.source,
                 jobExternalId: application.jobExternalId,
               }) || application.sourceUrl} target="_blank" rel="noreferrer">Open employer application</a>
+            ) : inputType === "otp" ? (
+              <input
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{8}"
+                maxLength={8}
+                placeholder={question.placeholder || "12345678"}
+                value={answers[question.key] || ""}
+                onChange={(event) => setAnswer(question.key, event.target.value.replace(/\D+/g, "").slice(0, 8))}
+              />
             ) : inputType === "multiselect" ? (
               <div className="multiselect-options">
                 {selectOptions.map((option, optionIndex) => (
@@ -2118,8 +2179,8 @@ function ApplicationQuestions({
         })}
       </div>
       {!blocking && (
-        <button className="apply" disabled={saving}>
-          {saving ? "Saving…" : "Save answers and retry"}
+        <button className="apply" disabled={saving || (otpOnly && answeredCount < questions.length)}>
+          {saving ? "Saving…" : otpOnly ? "Submit verification code" : "Save answers and retry"}
         </button>
       )}
     </form>

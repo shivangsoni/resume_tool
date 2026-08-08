@@ -839,74 +839,103 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
 };
 
 /**
- * Select the custom phone Country dial-code widget (flags + +1) next to Phone.
- * Returns true when no dial widget exists or a matching country was chosen.
+ * Select the phone Country dial-code widget (#country) next to Phone.
+ * For US: type "+1" and click "United States +1" — do not scan the full country list
+ * (that path was hanging the 8‑minute submission budget).
  */
 const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => {
   const wanted = String(countryAnswer || profile.country || "").trim();
   if (!wanted) return true;
   const page = phoneField.page();
+  const isUs = /united states|^us$|usa|\+ ?1\b/i.test(wanted);
 
-  // Greenhouse remix phone Country is often a react-select with id=country (e.g. "United States +1").
   const countryInput = page.locator("#country").first();
-  if (await countryInput.isVisible().catch(() => false)) {
-    const dialWanted = /united states|^us$|usa/i.test(wanted) ? "United States" : wanted;
-    const ok = await fillCustomBooleanChoice(countryInput, dialWanted);
-    if (ok) return true;
+  if (!(await countryInput.isVisible().catch(() => false))) {
+    // No Greenhouse dial select — leave intl-tel-input defaults alone.
+    return true;
   }
 
-  const containers = [
-    phoneField.locator("xpath=ancestor::*[contains(@class,'phone') or contains(@class,'field') or contains(@class,'application')][1]"),
-    phoneField.locator("xpath=../.."),
-    phoneField.locator("xpath=.."),
-  ];
+  // Already on US +1?
+  const current = await countryInput.evaluate((el) => {
+    const root = el.closest(".select")
+      || el.closest(".select__container")?.parentElement
+      || el.parentElement;
+    return root?.querySelector(".select__single-value")?.textContent?.trim() || el.value || "";
+  }).catch(() => "");
+  if (isUs && /\+1\b/.test(current) && /united states/i.test(current)) return true;
 
-  for (const container of containers) {
-    const triggers = container.locator('button, [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="true"]');
-    const triggerCount = await triggers.count().catch(() => 0);
-    for (let i = 0; i < triggerCount; i += 1) {
-      const trigger = triggers.nth(i);
-      if (!(await trigger.isVisible().catch(() => false))) continue;
-      const box = await trigger.boundingBox().catch(() => null);
-      const phoneBox = await phoneField.boundingBox().catch(() => null);
-      // Prefer controls sitting to the left of / beside the phone input.
-      if (box && phoneBox && box.x > phoneBox.x + 20) continue;
+  const typeToken = isUs ? "+1" : wanted.slice(0, 40);
+  const exactOption = isUs ? "United States +1" : "";
 
-      await trigger.click({ timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(350);
+  await countryInput.scrollIntoViewIfNeeded().catch(() => {});
+  const control = countryInput.locator(
+    "xpath=ancestor::div[contains(@class,'select__container')][1]//div[contains(@class,'select__control')]",
+  ).first();
+  if (await control.isVisible().catch(() => false)) {
+    await control.click({ timeout: 3000 }).catch(() => {});
+  } else {
+    await countryInput.click({ timeout: 3000 }).catch(() => {});
+  }
+  await page.waitForTimeout(200);
+  await countryInput.fill("").catch(() => {});
+  await countryInput.pressSequentially(typeToken, { delay: 20 }).catch(() => {});
+  await page.waitForTimeout(500);
 
-      const labels = await page.evaluate(() => {
-        const nodes = [
-          ...document.querySelectorAll(".select__menu .select__option, [role=listbox] [role=option], .iti__country, .iti__country-list li, .select__option"),
-        ].filter((el) => el.offsetParent || el.closest(".iti__country-list:not(.iti__hide)"));
-        return nodes.map((o) => o.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
-      }).catch(() => []);
-      if (!labels.length) {
-        await page.keyboard.press("Escape").catch(() => {});
-        continue;
-      }
+  const options = await page.evaluate(() =>
+    [...document.querySelectorAll(".select__menu")]
+      .filter((m) => m.offsetParent)
+      .flatMap((m) => [...m.querySelectorAll(".select__option, [role=option]")]
+        .map((o) => (o.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)),
+  ).catch(() => []);
 
-      const matched = matchOptionLabel(labels.filter(Boolean), wanted)
-        || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
-      if (matched) {
-        const clicked = await page.evaluate((label) => {
-          const opt = [...document.querySelectorAll(".select__option, [role=option], .iti__country")].find(
-            (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
-          );
-          if (!opt) return false;
-          opt.click();
-          return true;
-        }, matched);
-        if (!clicked) {
-          await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
-        }
-        await page.waitForTimeout(200);
+  const pick =
+    (exactOption && options.find((o) => o === exactOption))
+    || options.find((o) => isUs && /\+1\b/.test(o) && /united states/i.test(o))
+    || matchOptionLabel(options, isUs ? "United States +1" : wanted)
+    || options.find((o) => /\+1\b/.test(o) && isUs)
+    || options[0]
+    || "";
+
+  if (!pick) {
+    await countryInput.fill("").catch(() => {});
+    await page.keyboard.press("Escape").catch(() => {});
+    return false;
+  }
+
+  const clicked = await page.evaluate((label) => {
+    const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+    for (const menu of menus) {
+      const opt = [...menu.querySelectorAll(".select__option, [role=option]")].find(
+        (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+      );
+      if (opt) {
+        opt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        opt.click();
         return true;
       }
-      await page.keyboard.press("Escape").catch(() => {});
     }
+    return false;
+  }, pick);
+
+  if (!clicked) {
+    await page.getByRole("option", { name: pick, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
   }
-  return false;
+  await page.waitForTimeout(200);
+
+  const selected = await countryInput.evaluate((el) => {
+    const root = el.closest(".select")
+      || el.closest(".select__container")?.parentElement
+      || el.parentElement;
+    return root?.querySelector(".select__single-value")?.textContent?.trim() || "";
+  }).catch(() => "");
+
+  if (!selected) {
+    await countryInput.fill("").catch(() => {});
+    await page.keyboard.press("Escape").catch(() => {});
+    return false;
+  }
+  return isUs ? /\+1\b/.test(selected) : Boolean(selected);
 };
 
 /** Labels that are true yes/no prompts (not country / multi-select lists). */
@@ -1005,8 +1034,8 @@ const fillCustomBooleanChoice = async (field, answer) => {
     // School lists are huge — type a short distinctive token so the target option appears.
     let typeToken = wanted.slice(0, 48);
     if (/university of california.*davis|uc\s*davis/i.test(wanted)) typeToken = "Davis";
+    else if (/united states|\+ ?1/i.test(wanted)) typeToken = "+1";
     else if (/master'?s/i.test(wanted)) typeToken = "Master";
-    else if (/united states/i.test(wanted)) typeToken = "United States";
     await field.pressSequentially(typeToken, { delay: 25 }).catch(() => {});
     const fieldId = await field.getAttribute("id").catch(() => "");
     await page.waitForTimeout(/school|degree/i.test(fieldId || "") ? 1200 : 500);
@@ -1038,6 +1067,9 @@ const fillCustomBooleanChoice = async (field, answer) => {
   if (/davis/i.test(wanted) && usable.some((text) => /california\s*-\s*davis/i.test(text))) {
     matched = usable.find((text) => /california\s*-\s*davis/i.test(text)) || matched;
   }
+  if (/united states|\+ ?1/i.test(wanted) && usable.some((text) => /united states\s*\+1/i.test(text))) {
+    matched = usable.find((text) => /united states\s*\+1/i.test(text)) || matched;
+  }
 
   if (matched) {
     const clicked = await page.evaluate((label) => {
@@ -1058,10 +1090,17 @@ const fillCustomBooleanChoice = async (field, answer) => {
       await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
     }
     await page.waitForTimeout(200);
-    return true;
+    const selected = await field.evaluate((el) => {
+      const root = el.closest(".select")
+        || el.closest(".select__container")?.parentElement
+        || el.parentElement;
+      return root?.querySelector(".select__single-value")?.textContent?.trim() || "";
+    }).catch(() => "");
+    if (selected) return true;
   }
 
-  await page.getByRole("option", { name: wanted, exact: wanted.length <= 3 }).first().click({ timeout: 2000 }).catch(() => {});
+  // Failed — clear typed filter text so the control does not look filled.
+  await field.fill("").catch(() => {});
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(150);
   return false;
@@ -1076,9 +1115,31 @@ const isCustomSelectInput = async (field) => {
     if (el.getAttribute("aria-haspopup") === "listbox") return true;
     if (el.readOnly) return true;
     const id = String(el.id || "");
+    const className = String(el.className || "");
+    if (className.includes("select__input")) return true;
     if (/^question_/i.test(id)) return true;
+    if (/^(school|degree)--/i.test(id)) return true;
+    if (/^education/i.test(id)) return true;
     return false;
   }).catch(() => false);
+};
+
+const isEducationSelectMeta = (label = "", id = "", name = "") => {
+  const text = normalize(`${label} ${id} ${name}`);
+  if (/^(school|degree)--/i.test(id)) return true;
+  if (/\bschool\b|\bdegree\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return true;
+  return false;
+};
+
+/** Read committed react-select display value (not the filter input text). */
+const readReactSelectValue = async (field) => {
+  return field.evaluate((el) => {
+    const root = el.closest(".select")
+      || el.closest(".select__container")?.parentElement
+      || el.closest("[class*='select']")
+      || el.parentElement;
+    return root?.querySelector(".select__single-value")?.textContent?.trim() || "";
+  }).catch(() => "");
 };
 
 const isSkippableFieldMeta = (info) => {
@@ -1159,7 +1220,7 @@ async function pageHasBlockingCaptcha(page) {
   return false;
 }
 
-export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false, timeoutMs = 8 * 60 * 1000 }) {
+export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false, timeoutMs = 8 * 60 * 1000, onVerificationRequired = null, waitForVerificationCode = null }) {
   const browser = await chromium.launch({
     headless: !headed,
     args: ["--disable-dev-shm-usage", "--no-sandbox"],
@@ -1188,9 +1249,9 @@ export async function runApplication({ application, profile, resumePath, dryRun 
 
     if (await pageHasBlockingCaptcha(page)) {
       return {
-        outcome: "needs_action",
+        outcome: "failed",
         detail: "Employer CAPTCHA requires completion on the original application page.",
-        questions: [{ key: "captcha", label: "Complete the employer CAPTCHA on the original listing, then retry.", type: "blocking", required: true }],
+        questions: [],
       };
     }
 
@@ -1275,7 +1336,8 @@ export async function runApplication({ application, profile, resumePath, dryRun 
     const missing = [];
     const seenKeys = new Set();
     const collected = [];
-    for (let index = 0; index < await fields.count(); index += 1) {
+    const fieldTotal = await fields.count();
+    for (let index = 0; index < fieldTotal; index += 1) {
       const field = fields.nth(index);
       const choiceType = await field.evaluate((el) => {
         if (!(el instanceof HTMLInputElement)) return "";
@@ -1428,10 +1490,11 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         const groupLabel = isChoice
           ? pickText(groupHeading(), labelledBy, siblingText(), humanize(name), humanize(dataHint))
           : "";
-        // Prefer fieldset/group heading and nearby labels over placeholder/"Select..."/generic names
+        // Prefer the control's own label[for=id] — group headings often leak prior questions
+        // (e.g. School picking up "Location (City)" and getting filled with Redmond).
         const label = isChoice
           ? pickText(groupLabel, labelledBy, shortText(optionLabel, 100), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"))
-          : pickText(groupHeading(), labelledBy, readLabelText(labelNode), siblingText(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), element.getAttribute("placeholder"), element.getAttribute("title"));
+          : pickText(readLabelText(labelNode), labelledBy, shortText(optionLabel, 100), siblingText(), groupHeading(), humanize(dataHint), humanize(name), humanize(id), element.getAttribute("aria-label"), element.getAttribute("placeholder"), element.getAttribute("title"));
         const selfRequired = element.required || element.getAttribute("aria-required") === "true";
         const groupRequired = !!element.closest("fieldset[required], [aria-required='true'], .required");
         // For choice options, do not treat every option as required just because the group is.
@@ -1501,14 +1564,31 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         }
         continue;
       }
-      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile)
+      const answerRaw = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile)
         || (isBooleanChoiceLabel(displayLabel) ? "No" : "");
       let filled = false;
       const isSelect = info.tag === "select" || liveType === "select";
       const isLocationField = isLocationAutocompleteLabel(displayLabel, `${info.name} ${info.id || ""}`);
       const isPhoneField = isPhoneFieldLabel(displayLabel, info.name);
+      const educationSelect = isEducationSelectMeta(displayLabel, info.id || "", info.name || "");
       const customSelect = !isSelect && !isLocationField && !isPhoneField
-        && (isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field));
+        && (educationSelect || isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field));
+      // Prefer catalog / id-keyed answers for education dropdowns so city/location never leaks in.
+      let answer = answerRaw;
+      if (educationSelect) {
+        const byId = info.id && application.answers?.[info.id];
+        const bySchool = application.answers?.school || profile.school;
+        const byDegree = application.answers?.educationLevel || application.answers?.degree || profile.educationLevel;
+        if (/\bdegree\b/i.test(`${displayLabel} ${info.id || ""}`)) {
+          answer = String(byId || byDegree || answerRaw || "").trim();
+        } else {
+          answer = String(byId || bySchool || answerRaw || "").trim();
+        }
+        // Reject location/city bleed into school/degree.
+        if (answer && looksLikePlaceString(answer, profile) && !/\buniversity\b|\bcollege\b|\bschool\b|\binstitute\b|\bdegree\b|\bmaster\b|\bbachelor\b/i.test(answer)) {
+          answer = String(/\bdegree\b/i.test(`${displayLabel} ${info.id || ""}`) ? (byDegree || "") : (bySchool || "")).trim();
+        }
+      }
       let dialOk = true;
       if (answer || isLocationField || isPhoneField) {
         if (isPhoneField) {
@@ -1533,14 +1613,13 @@ export async function runApplication({ application, profile, resumePath, dryRun 
             if (fuzzy) filled = await fillSelect(field, fuzzy);
           }
         } else if (customSelect && answer) {
-          // Stripe Greenhouse: Yes/No and many questionnaire fields are text inputs + popup lists.
-          if (isBooleanChoiceLabel(displayLabel) || /^(yes|no)$/i.test(answer)) {
-            filled = await fillCustomBooleanChoice(field, answer);
-          } else {
-            filled = await fillCustomBooleanChoice(field, answer);
-            if (!filled) filled = await fillTextControl(field, answer);
+          // Stripe Greenhouse: School/Degree/Yes-No are comboboxes — must click an option, never leave typed filter text.
+          filled = await fillCustomBooleanChoice(field, answer);
+          if (filled) {
+            const selected = await readReactSelectValue(field);
+            if (!selected) filled = false;
           }
-        } else if (answer) {
+        } else if (answer && !educationSelect) {
           filled = await fillTextControl(field, answer);
           if (!filled) {
             const retryType = await liveFieldType(field, liveType);
@@ -1555,19 +1634,27 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         }
       }
       let value = await field.inputValue().catch(() => "");
-      if (answer && !String(value || "").trim() && !filled) {
+      if (answer && !filled) {
         // nth() locators can rematerialize — retry once with a fresh stable locator.
         const retryField = stabilizeField(scope, item);
         if (isLocationField && !isSelect) {
           filled = await fillLocationAutocomplete(retryField, answer, profile);
+        } else if (customSelect || educationSelect) {
+          filled = await fillCustomBooleanChoice(retryField, answer);
+          if (filled && !(await readReactSelectValue(retryField))) filled = false;
         } else if (isSelect || await liveFieldType(retryField, liveType) === "select") {
           const options = await selectOptionTexts(retryField);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(retryField, coerced);
-        } else {
+        } else if (!educationSelect) {
           filled = await fillTextControl(retryField, answer);
         }
         value = await retryField.inputValue().catch(() => "");
+      }
+      if ((customSelect || educationSelect) && !filled) {
+        // Clear leftover filter text so the form does not look "filled" with Redmond / Davis typed junk.
+        await field.fill("").catch(() => {});
+        await field.page().keyboard.press("Escape").catch(() => {});
       }
       if (isLocationField && filled) {
         const display = await readLocationDisplayValue(stabilizeField(scope, item));
@@ -1576,17 +1663,23 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         if (!latLon.hasHidden && !display) filled = false;
       }
       const digits = (text) => String(text || "").replace(/\D+/g, "");
+      const reactSelectValue = (customSelect || educationSelect) ? await readReactSelectValue(stabilizeField(scope, item)) : "";
       const displayValue = isLocationField
         ? (await readLocationDisplayValue(stabilizeField(scope, item))) || String(value || "")
-        : String(value || "");
+        : (customSelect || educationSelect)
+          ? reactSelectValue
+          : String(value || "");
       const hasValue = Boolean(String(displayValue || "").trim());
       const digitsMatch = Boolean(
         answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
       );
       // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
       // Phone: number filled is enough — dial-code widget failure must not re-ask Phone.
-      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled)
-        || (customSelect && filled) || (isBooleanChoiceLabel(displayLabel) && filled);
+      // Custom selects: only .select__single-value counts — typed filter text is not a selection.
+      const looksFilled = (customSelect || educationSelect)
+        ? Boolean(filled && reactSelectValue)
+        : hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled)
+          || (isBooleanChoiceLabel(displayLabel) && filled);
       void dialOk;
       if (info.required && !looksFilled) {
         if (seenKeys.has(key)) continue;
@@ -1694,7 +1787,7 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         ? `${unanswered.length} required employer question(s) need your answer.`
         : `Could not apply your saved answers on the employer form (${deduped.map((item) => item.label).join(", ")}). Open the employer page or retry.`;
       return {
-        outcome: "needs_action",
+        outcome: "needs_review",
         detail,
         questions: deduped.map(({ hadAnswer, ...question }) => question),
       };
@@ -1718,22 +1811,59 @@ export async function runApplication({ application, profile, resumePath, dryRun 
         await page.waitForTimeout(2000);
         await page.waitForLoadState("networkidle", { timeout: 45000 }).catch(() => {});
         await page.waitForTimeout(1500);
-        const confirmation = await page.locator("body").innerText().catch(() => "");
+        let confirmation = await page.locator("body").innerText().catch(() => "");
         if (/verification code was sent|enter the \d+-character code|confirm you.?re a human/i.test(confirmation)) {
-          return {
-            outcome: "needs_action",
-            detail: "Greenhouse emailed a verification code. Enter it on the employer page, then retry or mark submitted.",
-            questions: [{
-              key: "email_verification",
-              label: "Enter the verification code from your email on the employer application page.",
-              type: "blocking",
-              required: true,
-            }],
-            confirmationSnippet: confirmation.slice(0, 500),
+          const otpQuestion = {
+            key: "email_verification",
+            label: "Enter the 8-digit verification code from your email.",
+            type: "otp",
+            required: true,
+            placeholder: "12345678",
           };
+          if (typeof onVerificationRequired === "function") {
+            await onVerificationRequired({
+              detail: "Greenhouse emailed an 8-digit verification code. Enter it in ApplyPilot while this submission stays open.",
+              questions: [otpQuestion],
+            });
+          }
+          const code = typeof waitForVerificationCode === "function"
+            ? await waitForVerificationCode()
+            : "";
+          if (!code) {
+            return {
+              outcome: "needs_review",
+              detail: "Timed out waiting for the email verification code. Open Applications → Needs review and submit a fresh apply to get a new code.",
+              questions: [otpQuestion],
+              confirmationSnippet: confirmation.slice(0, 500),
+            };
+          }
+          await enterEmailVerificationCode(page, code);
+          await page.waitForTimeout(1000);
+          const submitAfterCode = await findSubmitControl([scope, root, page]);
+          if (submitAfterCode) {
+            await submitAfterCode.click().catch(() => {});
+            await page.waitForTimeout(2000);
+            await page.waitForLoadState("networkidle", { timeout: 45000 }).catch(() => {});
+            await page.waitForTimeout(1500);
+          }
+          confirmation = await page.locator("body").innerText().catch(() => "");
+          if (/verification code was sent|enter the \d+-character code|incorrect code|invalid code|try again/i.test(confirmation)
+            && !/thank you|application (has been )?(submitted|received)|thanks for applying/i.test(confirmation)) {
+            return {
+              outcome: "needs_review",
+              detail: "Verification code was not accepted. Request a new code by retrying the application.",
+              questions: [otpQuestion],
+              confirmationSnippet: confirmation.slice(0, 500),
+            };
+          }
         }
         if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent|we (have )?received your application/i.test(confirmation)) {
-          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }], confirmationSnippet: confirmation.slice(0, 500) };
+          return {
+            outcome: "needs_review",
+            detail: "Employer did not return a recognizable submission confirmation.",
+            questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }],
+            confirmationSnippet: confirmation.slice(0, 500),
+          };
         }
         return { outcome: "submitted", provider: "ApplyPilot Playwright", receiptId: `${application.id}:${Date.now()}`, detail: `Confirmed at ${page.url()}` };
       }
@@ -1742,21 +1872,20 @@ export async function runApplication({ application, profile, resumePath, dryRun 
       await page.waitForTimeout(1000);
     }
 
-    return { outcome: "needs_action", detail: "The employer submission control could not be identified.", questions: [{ key: "submission_control", label: "Open the original listing to review its unsupported submission step.", type: "blocking", required: true }] };
+    return {
+      outcome: "failed",
+      detail: "The employer submission control could not be identified.",
+      questions: [],
+    };
     })();
 
     const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 8 * 60 * 1000;
     const timedOut = new Promise((resolve) => {
       timeoutHandle = setTimeout(() => {
         resolve({
-          outcome: "needs_action",
+          outcome: "failed",
           detail: `Browser submission timed out after ${Math.round(limit / 60000)} minutes.`,
-          questions: [{
-            key: "submission_timeout",
-            label: "Submission timed out. Retry queue or finish on the employer page.",
-            type: "blocking",
-            required: true,
-          }],
+          questions: [],
         });
       }, limit);
     });
@@ -1765,6 +1894,30 @@ export async function runApplication({ application, profile, resumePath, dryRun 
     if (timeoutHandle) clearTimeout(timeoutHandle);
     await browser.close();
   }
+}
+
+async function enterEmailVerificationCode(page, code) {
+  const chars = String(code || "").trim().replace(/\s+/g, "").split("");
+  if (!chars.length) return false;
+  const multi = page.locator("input[autocomplete='one-time-code'], input[inputmode='numeric'][maxlength='1'], input[maxlength='1']");
+  const multiCount = await multi.count().catch(() => 0);
+  if (multiCount >= chars.length) {
+    for (let i = 0; i < chars.length; i += 1) {
+      await multi.nth(i).fill(chars[i]).catch(() => {});
+    }
+    return true;
+  }
+  const single = page.locator("input[name*='verification' i], input[id*='verification' i], input[placeholder*='code' i], input[autocomplete='one-time-code']").first();
+  if (await single.isVisible().catch(() => false)) {
+    await single.fill(chars.join(""));
+    return true;
+  }
+  const boxes = page.locator("xpath=//*[contains(translate(., 'VERIFICATION', 'verification'), 'verification code')]/following::input[position()<=8]");
+  const n = Math.min(await boxes.count().catch(() => 0), chars.length);
+  for (let i = 0; i < n; i += 1) {
+    await boxes.nth(i).fill(chars[i]).catch(() => {});
+  }
+  return n > 0;
 }
 
 const SUBMIT_NAME = /submit(\s+(my\s+)?application)?|send(\s+my)?\s+application|finish(\s+application)?|complete(\s+application)?/i;

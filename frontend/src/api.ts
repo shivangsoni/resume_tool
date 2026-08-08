@@ -285,7 +285,7 @@ export const submitApplication = (id: string) =>
     body: "{}",
   });
 export const answerApplicationQuestions = (id: string, answers: Record<string, string>) =>
-  request<{ application: Application }>(`/applications/${encodeURIComponent(id)}/answers`, {
+  request<{ application: Application; queued?: boolean; awaitingVerification?: boolean; message?: string }>(`/applications/${encodeURIComponent(id)}/answers`, {
     method: "POST",
     body: JSON.stringify({ answers }),
   });

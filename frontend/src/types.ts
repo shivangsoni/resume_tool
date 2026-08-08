@@ -45,6 +45,7 @@ export type Application = {
     | "queued"
     | "processing"
     | "needs_action"
+    | "needs_review"
     | "submitted"
     | "interview"
     | "offer"
@@ -57,7 +58,7 @@ export type Application = {
   submissionQueuedAt?: string;
   lastSubmissionError?: string;
   answers?: Record<string, string>;
-  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "autocomplete" | "phone" | "blocking"; options?: string[]; required: boolean; placeholder?: string }>;
+  requiredQuestions?: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "autocomplete" | "phone" | "blocking" | "otp"; options?: string[]; required: boolean; placeholder?: string }>;
 };
 
 export type MailMessage = {

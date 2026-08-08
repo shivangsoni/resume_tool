@@ -218,7 +218,7 @@ export async function createApplication(principal, job, answers = {}) {
 
 export async function updateApplication(principal, id, update) {
   const userId = await ensureUser(principal);
-  const allowed = ["review", "queued", "needs_action", "submitted", "interview", "offer", "rejected", "failed"];
+  const allowed = ["review", "queued", "needs_action", "needs_review", "submitted", "interview", "offer", "rejected", "failed"];
   if (!allowed.includes(update.status)) throw new Error("Invalid application status.");
   const db = await pool();
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
@@ -239,7 +239,7 @@ export async function queueApplicationSubmission(principal, id) {
     UPDATE dbo.Applications SET Status='queued', SubmissionQueuedAt=SYSUTCDATETIME(), LastSubmissionError=NULL, UpdatedAt=SYSUTCDATETIME()
     OUTPUT inserted.*
     WHERE Id=@id AND UserId=@userId AND (
-      Status IN ('review','needs_action','failed','queued')
+      Status IN ('review','needs_action','needs_review','failed','queued')
       OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
     );
   `);
@@ -266,8 +266,9 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
   const userId = await ensureUser(principal);
   const db = await pool();
   const current = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
-    .query("SELECT AnswersJson,RequiredQuestionsJson FROM dbo.Applications WHERE Id=@id AND UserId=@userId");
+    .query("SELECT AnswersJson,RequiredQuestionsJson,Status FROM dbo.Applications WHERE Id=@id AND UserId=@userId");
   if (!current.recordset.length) return null;
+  const priorStatus = String(current.recordset[0].Status || "");
   const answers = { ...(current.recordset[0].AnswersJson ? JSON.parse(current.recordset[0].AnswersJson) : {}), ...suppliedAnswers };
   const requiredList = current.recordset[0].RequiredQuestionsJson ? JSON.parse(current.recordset[0].RequiredQuestionsJson) : [];
   // Mirror semantic fields so the worker can resolve Phone/City even if DOM keys shift.
@@ -302,12 +303,22 @@ export async function saveApplicationAnswers(principal, id, suppliedAnswers) {
     return false;
   };
   const questions = requiredList.filter((question) => !isAnswered(question));
+  const otpOnly = requiredList.length > 0
+    && requiredList.every((question) => question?.type === "otp" || question?.key === "email_verification")
+    && Object.keys(suppliedAnswers || {}).some((key) => /email_verification|verification_code|otp|security_code/i.test(key));
+  // While worker holds the Greenhouse session for OTP, only persist the code — do not flip to review/queue.
+  const keepNeedsReview = otpOnly && (priorStatus === "needs_review" || priorStatus === "processing" || priorStatus === "needs_action");
+  const nextStatus = keepNeedsReview ? "needs_review" : "review";
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId).input("id", sql.UniqueIdentifier, id)
-    .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers)).input("questions", sql.NVarChar(sql.MAX), JSON.stringify(questions)).query(`
-      UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status='review',LastSubmissionError=NULL,UpdatedAt=SYSUTCDATETIME()
+    .input("answers", sql.NVarChar(sql.MAX), JSON.stringify(answers))
+    .input("questions", sql.NVarChar(sql.MAX), JSON.stringify(keepNeedsReview ? requiredList : questions))
+    .input("status", sql.VarChar(30), nextStatus)
+    .query(`
+      UPDATE dbo.Applications SET AnswersJson=@answers,RequiredQuestionsJson=@questions,Status=@status,LastSubmissionError=CASE WHEN @status='needs_review' THEN LastSubmissionError ELSE NULL END,UpdatedAt=SYSUTCDATETIME()
       OUTPUT inserted.* WHERE Id=@id AND UserId=@userId;
     `);
-  return mapApplication(result.recordset[0]);
+  const application = mapApplication(result.recordset[0]);
+  return { application, awaitingVerification: keepNeedsReview };
 }
 
 export async function claimApplicationForSubmission(id) {
@@ -334,7 +345,7 @@ export async function recordSubmissionOutcome(id, outcome) {
         VALUES (@id,@outcome,@provider,@receipt,@detail);
 
         UPDATE dbo.Applications SET
-          Status=CASE WHEN @outcome='submitted' THEN 'submitted' WHEN @outcome='retrying' THEN 'queued' ELSE 'needs_action' END,
+          Status=CASE WHEN @outcome='submitted' THEN 'submitted' WHEN @outcome='retrying' THEN 'queued' WHEN @outcome='failed' THEN 'failed' WHEN @outcome='needs_review' THEN 'needs_review' ELSE 'needs_review' END,
           SubmissionProvider=COALESCE(@provider,SubmissionProvider),
           ProviderReceiptId=COALESCE(@receipt,ProviderReceiptId),
           LastSubmissionError=CASE WHEN @outcome='submitted' THEN NULL ELSE @detail END,
@@ -366,7 +377,7 @@ export async function deleteApplication(principal, id) {
       return null;
     }
     const status = String(existing.recordset[0].Status || "");
-    const removable = ["draft", "review", "queued", "processing", "needs_action", "failed", "rejected"];
+    const removable = ["draft", "review", "queued", "processing", "needs_action", "needs_review", "failed", "rejected"];
     if (!removable.includes(status)) {
       const error = new Error("Only incomplete applications can be removed.");
       error.status = 409;

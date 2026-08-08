@@ -56,7 +56,7 @@ async function step(name, fn) {
   }
 }
 
-const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] });
+const browser = await chromium.launch({ headless: process.env.HEADED !== "1", args: ["--disable-dev-shm-usage", "--no-sandbox"] });
 const page = await browser.newPage();
 try {
   const url = resolveApplicationUrl({
