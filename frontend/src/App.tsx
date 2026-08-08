@@ -683,6 +683,17 @@ export default function App() {
             }}
             resolve={resolveAnswers}
             requeue={requeueApplication}
+            update={async (id, nextStatus) => {
+              try {
+                const result = await updateApplication(id, nextStatus);
+                setApplications((items) =>
+                  items.map((item) => (item.id === id ? result.application : item)),
+                );
+                notify(`Application updated to ${nextStatus}`);
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "Update failed");
+              }
+            }}
             profile={profile}
           />
         )}
@@ -928,6 +939,7 @@ function Dashboard(p: {
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
+  update: (id: string, status: Application["status"]) => Promise<void>;
   profile: Profile;
 }) {
   return (
@@ -1087,6 +1099,7 @@ function Dashboard(p: {
             apply={p.apply}
             resolve={p.resolve}
             requeue={p.requeue}
+            update={p.update}
             profile={p.profile}
             mobileOpen={p.mobileDetailOpen}
             onMobileClose={() => p.setMobileDetailOpen(false)}
@@ -1302,6 +1315,7 @@ function JobDetail({
   apply,
   resolve,
   requeue,
+  update,
   profile,
   mobileOpen = false,
   onMobileClose,
@@ -1312,6 +1326,7 @@ function JobDetail({
   apply: (j: Job) => Promise<void>;
   resolve: (id: string, answers: Record<string, string>) => Promise<void>;
   requeue: (id: string) => Promise<void>;
+  update: (id: string, status: Application["status"]) => Promise<void>;
   profile: Profile;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -1320,8 +1335,13 @@ function JobDetail({
   const nowMs = useNow();
   const [applying, setApplying] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
+  const [markingFailed, setMarkingFailed] = useState(false);
   const processingStale = job.applicationStatus === "processing" && isStaleTimestamp(job.applicationUpdatedAt, nowMs);
-  const failedApplication = job.status === "failed" && job.applicationId
+  const needsReview = job.status === "needs_review"
+    || job.applicationStatus === "needs_review"
+    || job.applicationStatus === "needs_action";
+  const isFailed = job.status === "failed" || job.applicationStatus === "failed";
+  const actionApplication = job.applicationId && (needsReview || isFailed)
     ? {
         id: job.applicationId,
         jobId: job.id,
@@ -1329,7 +1349,8 @@ function JobDetail({
         company: job.company,
         title: job.title,
         location: job.location,
-        status: (job.applicationStatus || "needs_action") as Application["status"],
+        status: (job.applicationStatus
+          || (needsReview ? "needs_review" : "failed")) as Application["status"],
         sourceUrl: job.sourceUrl || "",
         source: job.source || "",
         updatedAt: job.applicationUpdatedAt || new Date().toISOString(),
@@ -1338,6 +1359,11 @@ function JobDetail({
         answers: job.applicationAnswers,
       }
     : null;
+  const hasOtp = Boolean(
+    actionApplication?.requiredQuestions?.some(
+      (question) => question.type === "otp" || question.key === "email_verification",
+    ),
+  );
   return (
     <section className={`job-detail ${mobileOpen ? "mobile-open" : ""}`}>
       <div className="mobile-detail-bar">
@@ -1412,24 +1438,45 @@ function JobDetail({
           </div>
         </div>
       )}
-      {job.status === "failed" && !failedApplication && (
-        <div className="submission-banner failed">
+      {needsReview && (
+        <div className="submission-banner review">
           <ErrorCircle24Regular />
           <div>
-            <b>Application failed</b>
-            <p>{job.applicationError || "Submission could not be completed. Retry from Applications after fixing any missing answers."}</p>
+            <b>{hasOtp ? "Email verification needed" : "Needs your review"}</b>
+            <p>
+              {hasOtp
+                ? (job.applicationError || "Enter the 8-digit code from your email below while the worker session is still open.")
+                : (job.applicationError || "Answer the questions below, or open Applications for more detail.")}
+            </p>
             {job.applicationId && (
-              <>
+              <div className="banner-actions">
+                {!hasOtp && (
+                  <button
+                    className="apply"
+                    disabled={requeuing}
+                    onClick={async () => {
+                      setRequeuing(true);
+                      try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                    }}
+                  >
+                    {requeuing ? "Re-queuing…" : "Retry queue"}
+                  </button>
+                )}
                 <button
-                  className="apply"
-                  disabled={requeuing}
+                  className="not"
+                  disabled={markingFailed}
                   onClick={async () => {
-                    setRequeuing(true);
-                    try { await requeue(job.applicationId!); } finally { setRequeuing(false); }
+                    setMarkingFailed(true);
+                    try { await update(job.applicationId!, "failed"); } finally { setMarkingFailed(false); }
                   }}
                 >
-                  {requeuing ? "Re-queuing…" : "Retry queue"}
+                  {markingFailed ? "Updating…" : "Mark as failed"}
                 </button>
+                {onOpenApplications && (
+                  <button type="button" className="not" onClick={onOpenApplications}>
+                    Open in Applications
+                  </button>
+                )}
                 <EmployerApplicationChrome
                   sourceUrl={job.sourceUrl}
                   company={job.company}
@@ -1437,19 +1484,19 @@ function JobDetail({
                   jobExternalId={job.jobExternalId}
                   applicationId={job.applicationId}
                 />
-              </>
+              </div>
             )}
           </div>
         </div>
       )}
-      {failedApplication && (
+      {isFailed && !needsReview && (
         <div className="submission-banner failed">
           <ErrorCircle24Regular />
           <div>
-            <b>Action needed</b>
-            <p>{job.applicationError || "Answer the questions below, or retry the queue to try again."}</p>
+            <b>Application failed</b>
+            <p>{job.applicationError || "Submission could not be completed. Retry the queue or finish on the employer page."}</p>
             {job.applicationId && (
-              <>
+              <div className="banner-actions">
                 <button
                   className="apply"
                   disabled={requeuing}
@@ -1460,6 +1507,11 @@ function JobDetail({
                 >
                   {requeuing ? "Re-queuing…" : "Retry queue"}
                 </button>
+                {onOpenApplications && (
+                  <button type="button" className="not" onClick={onOpenApplications}>
+                    Open in Applications
+                  </button>
+                )}
                 <EmployerApplicationChrome
                   sourceUrl={job.sourceUrl}
                   company={job.company}
@@ -1467,7 +1519,7 @@ function JobDetail({
                   jobExternalId={job.jobExternalId}
                   applicationId={job.applicationId}
                 />
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -1503,6 +1555,9 @@ function JobDetail({
           ))}
         </div>
       </div>
+      {actionApplication && (
+        <ApplicationQuestions application={actionApplication} resolve={resolve} profile={profile} />
+      )}
       <div className="detail-actions">
         <button className="not" onClick={() => dismiss(job)}>
           Not interested
@@ -1516,16 +1571,15 @@ function JobDetail({
             ? "Queuing..."
             : job.status === "ready"
               ? "Simple Apply"
-              : job.status === "failed"
-                ? "Answer questions below"
-                : job.status === "applied"
-                  ? "Already submitted"
-                  : "Queued"}
+              : job.status === "needs_review"
+                ? (hasOtp ? "Enter code above" : "Review questions above")
+                : job.status === "failed"
+                  ? "Retry from banner above"
+                  : job.status === "applied"
+                    ? "Already submitted"
+                    : "Queued"}
         </button>
       </div>
-      {failedApplication && (
-        <ApplicationQuestions application={failedApplication} resolve={resolve} profile={profile} />
-      )}
       <div className="detail-footer">
         <EmployerApplicationChrome
           sourceUrl={job.sourceUrl}
@@ -1704,6 +1758,7 @@ function Applications({
               {(application.status === "needs_review" || application.status === "needs_action") && (
                 <div className="queued-message">
                   <span>{application.lastSubmissionError || "Waiting for your input (answers or email verification code)."}</span>
+                  <button onClick={() => void update(application.id, "failed")}>Mark as failed</button>
                   <EmployerApplicationChrome
                     sourceUrl={application.sourceUrl}
                     company={application.company}

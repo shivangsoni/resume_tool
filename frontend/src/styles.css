@@ -1180,6 +1180,18 @@ body:has(.sa-profile-drawer) > .fui-OverlayDrawer__backdrop {
 .submission-banner .apply {
   margin-top: 10px;
 }
+.submission-banner.review {
+  background: #fff6df;
+  border-color: #f5d78e;
+  color: #946200;
+}
+.submission-banner .banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
 .submission-banner.failed {
   background: #fef3f2;
   border-color: #fecdca;
