@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "test:playwright-auth": "npx playwright test playwright-auth.spec.ts"
+    "test:playwright-auth": "npx playwright test playwright-auth.spec.ts",
+    "probe:stripe": "node scripts/probe-stripe-dom.mjs",
+    "probe:stripe:full": "node scripts/probe-stripe-form.mjs",
+    "harvest:stripe": "node scripts/harvest-and-match-stripe.mjs",
+    "seed:schools": "node scripts/seed-school-catalog.mjs"
   },
   "dependencies": {
     "@azure/communication-email": "^1.0.0",

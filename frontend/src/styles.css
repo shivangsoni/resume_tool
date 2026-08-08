@@ -2385,20 +2385,11 @@ button.secondary-action, button.orange-action { cursor: pointer; font: inherit; 
 }
 .profile-form-intro {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   align-items: flex-start;
   margin-bottom: 18px;
   flex-wrap: wrap;
-}
-.profile-form-intro h2 {
-  margin: 0 0 6px;
-  font-size: 24px;
-}
-.profile-form-intro p {
-  margin: 0;
-  color: #667085;
-  max-width: 52ch;
 }
 .profile-page-photo {
   margin-bottom: 18px;

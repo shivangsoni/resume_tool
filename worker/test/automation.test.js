@@ -20,6 +20,8 @@ import {
   isBooleanChoiceLabel,
   isCheckboxGroupName,
   formatLocationQuery,
+  expandLocationStates,
+  findBestLocationOption,
   looksLikePlaceString,
   dedupeMissingQuestions,
   isLocationAutocompleteLabel,
@@ -102,6 +104,15 @@ test("matchOptionLabel maps country aliases onto select options", () => {
     matchOptionLabel(["🇺🇸 United States +1", "🇦🇫 Afghanistan +93"], "United States"),
     "🇺🇸 United States +1",
   );
+  // Short "US" must not substring-match "Australia"
+  assert.equal(matchOptionLabel(["Australia", "US"], "US"), "US");
+});
+
+test("knownAnswer maps Stripe residence country to US short code", () => {
+  assert.equal(
+    knownAnswer("Please select the country where you currently reside.", { country: "United States" }, {}),
+    "US",
+  );
 });
 
 test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
@@ -111,6 +122,10 @@ test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
   );
   assert.equal(
     formatLocationQuery("Redmond, Washington, United States", { city: "Redmond", state: "WA", country: "US" }),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(
+    formatLocationQuery("Redmond, WA, United States", { city: "Redmond", state: "WA", country: "United States" }),
     "Redmond, Washington, United States",
   );
   assert.equal(
@@ -131,6 +146,15 @@ test("formatLocationQuery builds Greenhouse-shaped city strings", () => {
     false,
   );
   assert.equal(looksLikePlaceString("Redmond, Washington, United States"), true);
+  assert.equal(
+    findBestLocationOption([
+      "Redmond, Oregon, United States",
+      "Redmond, Washington, United States",
+      "Redmond, Utah, United States",
+    ], "Redmond, WA, United States"),
+    "Redmond, Washington, United States",
+  );
+  assert.equal(expandLocationStates("Redmond, WA, United States"), "Redmond, Washington, United States");
 });
 
 test("detects Greenhouse location autocomplete and phone field labels", () => {
@@ -210,7 +234,7 @@ test("knownAnswer prefers authorization over incidental location wording", () =>
     knownAnswer("Will you require Stripe to sponsor you for a work permit now or in the future for the location(s) you selected?", profile, {}),
     "No",
   );
-  assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, WA, United States");
+  assert.equal(knownAnswer("Where do you plan to work from?", profile, {}), "Redmond, Washington, United States");
 });
 
 test("knownAnswer does not map remote-intent questions to city/location", () => {
@@ -225,15 +249,26 @@ test("knownAnswer does not map remote-intent questions to city/location", () => 
   assert.equal(knownAnswer("Would you consider a hybrid role?", profile, {}), "");
 });
 
-test("knownAnswer maps school employer and job title from profile", () => {
+test("knownAnswer maps Stripe US city/state and WhatsApp opt-in", () => {
   const profile = {
-    school: "University of Washington",
-    currentEmployer: "Contoso",
-    currentJobTitle: "Senior Software Engineer",
+    city: "Redmond",
+    state: "WA",
+    country: "United States",
   };
-  assert.equal(knownAnswer("School / University", profile, {}), "University of Washington");
-  assert.equal(knownAnswer("Current employer", profile, {}), "Contoso");
-  assert.equal(knownAnswer("Previous job title", profile, {}), "Senior Software Engineer");
+  assert.equal(
+    knownAnswer("If located in the US, in what city and state do you reside?", profile, {}),
+    "Redmond, Washington",
+  );
+  assert.equal(
+    knownAnswer("Do you opt-in to receive WhatsApp messages from Stripe Recruiting?", profile, {}),
+    "No",
+  );
+  assert.equal(
+    knownAnswer("Do you opt-in to receive WhatsApp messages from Stripe Recruiting?", profile, {
+      "job_application[answers][99][boolean_value]": "Yes",
+    }),
+    "Yes",
+  );
 });
 
 test("multiselect helpers pick country options from profile and answers", () => {
@@ -317,7 +352,7 @@ test("resolveApplicationUrl rewrites Stripe search deep-links to Greenhouse embe
     source: "Greenhouse",
     sourceUrl: "https://stripe.com/jobs/search?gh_jid=7277110",
   });
-  assert.equal(url, "https://boards.greenhouse.io/embed/job_app?for=stripe&token=7277110");
+  assert.equal(url, "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=7277110");
 });
 
 test("resolveApplicationUrl leaves unrelated listings unchanged", () => {

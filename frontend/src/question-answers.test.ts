@@ -4,6 +4,7 @@ import {
   answersCoverQuestionKey,
   coerceQuestionAnswer,
   dedupeEmployerQuestions,
+  expandLocationStates,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel,
@@ -72,6 +73,11 @@ describe("question-answers helpers", () => {
       state: "WA",
       country: "United States",
     })).toBe("Redmond, Washington, United States");
+    expect(formatLocationAnswer("Redmond, WA, United States", {
+      city: "Redmond",
+      state: "Washington",
+      country: "United States",
+    })).toBe("Redmond, Washington, United States");
     expect(formatLocationAnswer("", {
       location: "DEEPLEARNING.AI, ANDREW NG Advancements in AI",
       city: "Redmond",
@@ -81,6 +87,21 @@ describe("question-answers helpers", () => {
     expect(looksLikePlaceString("DEEPLEARNING.AI, ANDREW NG Advancements in AI")).toBe(false);
     expect(matchPhoneDialCountry("USA")).toBe("United States");
     expect(coerceQuestionAnswer({ type: "phone", label: "Phone" }, "(530) 204-8592")).toBe("5302048592");
+  });
+
+  it("renders WhatsApp opt-in text questions as Yes/No", () => {
+    expect(resolveQuestionInputType({
+      type: "text",
+      label: "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?",
+    })).toBe("checkbox");
+    expect(coerceQuestionAnswer({
+      type: "text",
+      label: "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?",
+    }, "no")).toBe("No");
+  });
+
+  it("expands US city and state answers", () => {
+    expect(expandLocationStates("Redmond, WA")).toBe("Redmond, Washington");
   });
 
   it("dedupes duplicate Phone employer questions", () => {

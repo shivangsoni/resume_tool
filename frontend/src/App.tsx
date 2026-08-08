@@ -117,6 +117,7 @@ import { CompanyLogo } from "./company-logo";
 import {
   coerceQuestionAnswer,
   dedupeEmployerQuestions,
+  expandLocationStates,
   formatLocationAnswer,
   isQuestionAnswered,
   isUselessQuestionLabel as isUselessQuestionLabelHelper,
@@ -149,7 +150,7 @@ const pageSubtitles: Record<Page, string> = {
   applications: "Track every submission, answer follow-ups, and retry failed applies.",
   resume: "Upload a PDF or DOCX. Extracted details help fill employer forms.",
   preferences: "Set target titles, locations, and workplace types to improve match quality.",
-  profile: "Keep contact details and work history current for Simple Apply.",
+  profile: "",
   inbox: "Status emails and recruiter replies for your applications.",
   search: "Search current opportunities using the same live feed as Job Matches.",
   credits: "Review queued volume and Azure-backed usage for your account.",
@@ -577,7 +578,7 @@ export default function App() {
             <div className="page-chrome">
               <div className="page-chrome-heading">
                 <h1>{pageTitles[page]}</h1>
-                <p>{pageSubtitles[page]}</p>
+                {pageSubtitles[page] ? <p>{pageSubtitles[page]}</p> : null}
               </div>
             </div>
         {currentUser && (() => {
@@ -1254,6 +1255,25 @@ function JobRow({
     </article>
   );
 }
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
+
+/** Wall clock for stale-processing checks — updated on an interval, never read via Date.now in render. */
+function useNow(intervalMs = 30_000) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return nowMs;
+}
+
+function isStaleTimestamp(updatedAt: string | undefined, nowMs: number, maxAgeMs = STALE_PROCESSING_MS) {
+  if (!updatedAt) return false;
+  const updatedMs = new Date(updatedAt).getTime();
+  if (Number.isNaN(updatedMs)) return false;
+  return nowMs - updatedMs > maxAgeMs;
+}
+
 function JobDetail({
   job,
   dismiss,
@@ -1275,8 +1295,10 @@ function JobDetail({
   onMobileClose?: () => void;
   onOpenApplications?: () => void;
 }) {
+  const nowMs = useNow();
   const [applying, setApplying] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
+  const processingStale = job.applicationStatus === "processing" && isStaleTimestamp(job.applicationUpdatedAt, nowMs);
   const failedApplication = job.status === "failed" && job.applicationId
     ? {
         id: job.applicationId,
@@ -1332,13 +1354,19 @@ function JobDetail({
         <div className="submission-banner queued">
           <Clock24Regular />
           <div>
-            <b>{job.applicationStatus === "processing" ? "Submitting now" : "Queued for submission"}</b>
+            <b>
+              {job.applicationStatus === "processing"
+                ? (processingStale ? "Submission stuck" : "Submitting now")
+                : "Queued for submission"}
+            </b>
             <p>
               {job.applicationStatus === "processing"
-                ? "A browser worker is filling out the employer application."
+                ? (processingStale
+                  ? "Taking longer than expected. Retry the queue or finish on the employer page."
+                  : "A browser worker is filling out the employer application.")
                 : "Waiting for a browser worker. If this stays queued for more than a few minutes, retry the queue below."}
             </p>
-            {job.applicationId && job.applicationStatus !== "processing" && (
+            {job.applicationId && (job.applicationStatus !== "processing" || processingStale) && (
               <>
                 <button
                   className="apply"
@@ -1563,6 +1591,7 @@ function Applications({
   requeue: (id: string) => Promise<void>;
   profile: Profile;
 }) {
+  const nowMs = useNow();
   const [appTab, setAppTab] = useState<"all" | "action">("all");
   useEffect(() => {
     if (!focusedApplicationId) return;
@@ -1624,12 +1653,14 @@ function Applications({
                 <div className="queued-message">
                   <span>
                     {application.status === "processing"
-                      ? "Browser worker is submitting this application now."
+                      ? (isStaleTimestamp(application.updatedAt, nowMs)
+                        ? "Taking longer than expected. The worker may be stuck — retry the queue or open the employer page."
+                        : "Browser worker is submitting this application now.")
                       : application.status === "review"
                         ? "Ready to queue. Submission was not accepted by the queue yet."
                         : "Waiting in the submission queue for a browser worker."}
                   </span>
-                  {application.status !== "processing" && (
+                  {(application.status !== "processing" || isStaleTimestamp(application.updatedAt, nowMs)) && (
                     <>
                       <button onClick={() => void requeue(application.id)}>Retry queue</button>
                       <EmployerApplicationChrome
@@ -1691,6 +1722,11 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
   if (/\bcountry\b/.test(text)) return profile.country;
+  if (/\bcity and state\b|\bin what city and state\b|\blocate[d]? in the (us|united states).*\breside\b/.test(text)) {
+    const city = String(profile.city || "").trim();
+    const state = expandLocationStates(String(profile.state || "").trim()) || String(profile.state || "").trim();
+    return [city, state].filter(Boolean).join(", ");
+  }
   if (/\bcity\b/.test(text)) {
     if (/\blocation\b/.test(text)) {
       return formatLocationAnswer("", profile);
@@ -1704,6 +1740,7 @@ function profileAnswerForLabel(label: string, profile: Profile, options?: string
   // "in the location(s) you selected", which must not match as a city/location field.
   if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
   if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) return "No";
   // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
   if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
     const prefs = [profile.preferredLocations, profile.location, profile.employmentTypes]
@@ -2012,12 +2049,12 @@ function ApplicationQuestions({
             ) : inputType === "checkbox" ? (
               <select
                 required={question.required !== false}
-                value={matchSelectOption(["yes", "no"], answers[question.key] || "") || answers[question.key] || ""}
+                value={matchSelectOption(["Yes", "No"], answers[question.key] || "") || answers[question.key] || ""}
                 onChange={(event) => setAnswer(question.key, event.target.value)}
               >
                 <option value="">Select an answer</option>
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
               </select>
             ) : inputType === "textarea" ? (
               <textarea
@@ -2691,10 +2728,6 @@ function ProfileView({
   return (
     <div className="basic-page screenshot-profile profile-form-page">
       <div className="profile-form-intro">
-        <div>
-          <h2>Profile information</h2>
-          <p>Update your details once — Simple Apply reuses them on every employer form.</p>
-        </div>
         <button className="apply" disabled={saving || !canSave} onClick={() => void persist()}>
           {saving ? "Saving…" : "Save profile"}
         </button>

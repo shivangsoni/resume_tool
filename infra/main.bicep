@@ -53,6 +53,22 @@ param opsAlertEmail string = 'shivangsoni22@gmail.com'
 @allowed(['F0', 'S0'])
 param documentIntelligenceSku string = 'F0'
 
+@description('Azure OpenAI pricing tier for worker option-matching.')
+@allowed(['S0'])
+param azureOpenAiSku string = 'S0'
+
+@description('Azure OpenAI chat deployment name.')
+param azureOpenAiDeploymentName string = 'gpt-5-mini'
+
+@description('Azure OpenAI model name.')
+param azureOpenAiModelName string = 'gpt-5-mini'
+
+@description('Azure OpenAI model version.')
+param azureOpenAiModelVersion string = '2025-08-07'
+
+@description('When false, skip provisioning Azure OpenAI (local/dev without quota).')
+param provisionAzureOpenAi bool = true
+
 @description('Name of the existing Azure SQL logical server.')
 param sqlServerName string
 
@@ -133,6 +149,19 @@ module documentIntelligence 'modules/document-intelligence.bicep' = {
     name: take('${safeBase}-docs-${suffix}', 64)
     location: location
     sku: documentIntelligenceSku
+    tags: tags
+  }
+}
+
+module azureOpenAi 'modules/azure-openai.bicep' = if (provisionAzureOpenAi) {
+  name: 'azureOpenAi'
+  params: {
+    name: take('${safeBase}oai${suffix}', 24)
+    location: location
+    sku: azureOpenAiSku
+    deploymentName: azureOpenAiDeploymentName
+    modelName: azureOpenAiModelName
+    modelVersion: azureOpenAiModelVersion
     tags: tags
   }
 }
@@ -220,6 +249,8 @@ module browserWorker 'modules/browser-worker.bicep' = {
     emailSenderAddress: email.outputs.senderAddress
     deploymentEnvironment: deploymentEnvironment
     applicationBaseUrl: frontend.outputs.url
+    azureOpenAiEndpoint: provisionAzureOpenAi ? azureOpenAi.outputs.endpoint : ''
+    azureOpenAiDeployment: provisionAzureOpenAi ? azureOpenAi.outputs.deploymentName : ''
     tags: tags
   }
 }
@@ -259,6 +290,15 @@ module documentIntelligenceAccess 'modules/document-intelligence-access.bicep' =
   }
 }
 
+module azureOpenAiAccess 'modules/azure-openai-access.bicep' = if (provisionAzureOpenAi) {
+  name: 'azureOpenAiAccess'
+  params: {
+    accountResourceId: azureOpenAi.outputs.id
+    workerPrincipalId: browserWorker.outputs.identityPrincipalId
+    functionPrincipalId: backend.outputs.principalId
+  }
+}
+
 
 module linkedBackend 'modules/link-backend.bicep' = {
   name: 'linkedBackend'
@@ -277,6 +317,9 @@ output backendUrl string = backend.outputs.url
 output sqlDatabase string = database.outputs.name
 output keyVaultName string = keyVault.outputs.name
 output documentIntelligenceName string = documentIntelligence.outputs.name
+output azureOpenAiEndpoint string = provisionAzureOpenAi ? azureOpenAi.outputs.endpoint : ''
+output azureOpenAiDeployment string = provisionAzureOpenAi ? azureOpenAi.outputs.deploymentName : ''
+output azureOpenAiName string = provisionAzureOpenAi ? azureOpenAi.outputs.name : ''
 output communicationServiceName string = email.outputs.name
 output emailServiceName string = email.outputs.emailServiceName
 output emailSenderAddress string = email.outputs.senderAddress

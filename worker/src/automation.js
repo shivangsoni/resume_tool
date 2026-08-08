@@ -1,4 +1,6 @@
 import { chromium } from "playwright";
+import { harvestFormCatalog, catalogAnswersForFill } from "./option-harvest.js";
+import { resolveCatalogAnswers } from "./option-match.js";
 
 const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -53,6 +55,66 @@ const PLACE_COUNTRY_TOKENS = [
   "new zealand",
 ];
 
+/** USPS abbreviations → Greenhouse geocode region names. */
+const US_STATE_BY_ABBREV = {
+  al: "Alabama", ak: "Alaska", az: "Arizona", ar: "Arkansas", ca: "California",
+  co: "Colorado", ct: "Connecticut", de: "Delaware", dc: "District of Columbia",
+  fl: "Florida", ga: "Georgia", hi: "Hawaii", id: "Idaho", il: "Illinois",
+  in: "Indiana", ia: "Iowa", ks: "Kansas", ky: "Kentucky", la: "Louisiana",
+  me: "Maine", md: "Maryland", ma: "Massachusetts", mi: "Michigan", mn: "Minnesota",
+  ms: "Mississippi", mo: "Missouri", mt: "Montana", ne: "Nebraska", nv: "Nevada",
+  nh: "New Hampshire", nj: "New Jersey", nm: "New Mexico", ny: "New York",
+  nc: "North Carolina", nd: "North Dakota", oh: "Ohio", ok: "Oklahoma", or: "Oregon",
+  pa: "Pennsylvania", ri: "Rhode Island", sc: "South Carolina", sd: "South Dakota",
+  tn: "Tennessee", tx: "Texas", ut: "Utah", vt: "Vermont", va: "Virginia",
+  wa: "Washington", wv: "West Virginia", wi: "Wisconsin", wy: "Wyoming",
+};
+
+/** Expand "Redmond, WA, United States" → "Redmond, Washington, United States". */
+const expandLocationStates = (value) => {
+  const parts = String(value || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  return parts.map((part) => {
+    if (/^[A-Za-z]{2}$/.test(part)) {
+      return US_STATE_BY_ABBREV[part.toLowerCase()] || part;
+    }
+    return part;
+  }).join(", ");
+};
+
+/**
+ * Prefer the Greenhouse suggestion that matches city + expanded state (not Redmond, OR).
+ */
+const findBestLocationOption = (options, query) => {
+  const usable = (options || []).map((option) => String(option || "").trim()).filter(Boolean);
+  if (!usable.length) return "";
+  const expanded = expandLocationStates(query);
+  const needle = normalize(expanded);
+  const exact = usable.find((option) => normalize(option) === needle);
+  if (exact) return exact;
+
+  const parts = expanded.split(",").map((part) => part.trim()).filter(Boolean);
+  const city = normalize(parts[0] || "");
+  const region = normalize(parts[1] || "");
+  const country = normalize(parts[2] || parts[parts.length - 1] || "");
+
+  let best = "";
+  let bestScore = -1;
+  for (const option of usable) {
+    const label = normalize(option);
+    if (!label) continue;
+    let score = 0;
+    if (city && (label.startsWith(`${city} `) || label.includes(` ${city} `) || label.startsWith(city))) score += 10;
+    if (region && label.includes(region)) score += 20;
+    if (country && label.includes(country)) score += 5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = option;
+    }
+  }
+  return bestScore >= 10 ? best : "";
+};
+
 /**
  * Reject course titles / brand strings that pollute Location (City).
  * Accept City, Region, Country shapes and short bare city names.
@@ -91,13 +153,13 @@ const looksLikePlaceString = (value, profile = {}) => {
 const formatLocationQuery = (answer, profile = {}) => {
   const raw = String(answer || "").trim();
   const city = String(profile.city || "").trim();
-  const state = String(profile.state || "").trim();
+  const state = expandLocationStates(String(profile.state || "").trim()) || String(profile.state || "").trim();
   const country = String(profile.country || "").trim();
-  const residence = [city, state, country].filter(Boolean).join(", ");
+  const residence = expandLocationStates([city, state, country].filter(Boolean).join(", "));
   const fullResidence = Boolean(city && (state || country));
   const location = String(profile.location || "").trim();
-  const safeLocation = looksLikePlaceString(location, profile) ? location : "";
-  const safeRaw = looksLikePlaceString(raw, profile) ? raw : "";
+  const safeLocation = looksLikePlaceString(location, profile) ? expandLocationStates(location) : "";
+  const safeRaw = looksLikePlaceString(raw, profile) ? expandLocationStates(raw) : "";
 
   if (fullResidence) {
     // Keep an already-shaped place answer; don't append state/country again.
@@ -107,7 +169,7 @@ const formatLocationQuery = (answer, profile = {}) => {
     if (!safeRaw || normalize(residence).includes(normalize(safeRaw)) || (city && normalize(safeRaw) === normalize(city))) {
       return residence;
     }
-    return [safeRaw, state, country].filter(Boolean).join(", ");
+    return expandLocationStates([safeRaw, state, country].filter(Boolean).join(", "));
   }
 
   if (safeRaw.includes(",") && safeRaw.split(",").filter((part) => part.trim()).length >= 2) {
@@ -122,7 +184,7 @@ const formatLocationQuery = (answer, profile = {}) => {
   if (city && normalize(cityPart) === normalize(city)) {
     return residence || cityPart;
   }
-  if (state || country) return [cityPart, state, country].filter(Boolean).join(", ");
+  if (state || country) return expandLocationStates([cityPart, state, country].filter(Boolean).join(", "));
   return cityPart;
 };
 
@@ -130,6 +192,7 @@ const isLocationAutocompleteLabel = (label, name = "") => {
   const text = normalize(`${label} ${name}`);
   if (!text) return false;
   if (/\bwork authorization\b|\bauthorized to work\b|\bsponsor|\bvisa\b|\bremot(e|ely)\b|\bhybrid\b/.test(text)) return false;
+  if (/\bcandidate.?location\b|\bjob_application\[location\]/.test(text)) return true;
   if (/\blocation\b.*\bcity\b|\bcity\b.*\blocation\b|\blocation \(city\)/.test(text)) return true;
   if (/\b(job_application\[)?location\b/.test(text) && !/\bcountries\b|\bcountry selection\b/.test(text)) return true;
   if (/^location$|^city$|\blocation \(city\)$/.test(text)) return true;
@@ -206,6 +269,24 @@ const lookupAnswer = (answers, { key, name, label }, profile = {}) => {
       }
     }
   }
+  // Greenhouse questionnaire ids drift (answers[12] → answers[45]); recover Yes/No by leaf + label.
+  const labelNorm = normalize(label);
+  const looksBoolean = /^(do you|are you|have you|will you|can you|did you)\b/.test(labelNorm)
+    || /\b(whatsapp|opt-?in|yes or no)\b/.test(labelNorm)
+    || /boolean_value/i.test(`${key} ${name}`);
+  if (looksBoolean) {
+    const leaf = String(name || key).match(/\[([^\]]+)\]/g)?.map((part) => part.slice(1, -1)).pop() || "";
+    for (const [storedKey, storedValue] of Object.entries(store)) {
+      const hit = tryValue(storedValue);
+      if (!hit || !/^(yes|no|true|false)$/i.test(hit)) continue;
+      if (leaf && storedKey.includes(`[${leaf}]`)) {
+        return /^(yes|true)$/i.test(hit) ? "Yes" : "No";
+      }
+      if (/\bwhatsapp\b|\bopt-?in\b/.test(labelNorm) && /boolean_value|whatsapp|opt.?in/i.test(storedKey)) {
+        return /^(yes|true)$/i.test(hit) ? "Yes" : "No";
+      }
+    }
+  }
   return knownAnswer(label, profile, store) || "";
 };
 
@@ -233,7 +314,20 @@ const knownAnswer = (label, profile, answers) => {
   if (/\blinkedin\b/.test(text)) return profile.linkedin;
   if (/\bgithub\b/.test(text)) return profile.github;
   if (/\bportfolio\b|\bwebsite\b|\bpersonal site\b/.test(text)) return profile.portfolio || profile.github;
+  if (/\bcountry where you currently reside\b|\bcountry.*currently reside\b/.test(text)) {
+    const country = String(answers.country || profile.country || "").trim();
+    if (/united states|u\.?s\.?a\.?|^us$/i.test(country)) return "US";
+    if (/united kingdom|^uk$|great britain/i.test(country)) return "UK";
+    if (/united arab|^uae$/i.test(country)) return "UAE";
+    return country;
+  }
   if (/\bcountry\b/.test(text)) return answers.country || profile.country;
+  // Stripe free-text: "If located in the US, in what city and state do you reside?"
+  if (/\bcity and state\b|\bin what city and state\b|\blocate[d]? in the (us|united states).*\breside\b/.test(text)) {
+    const city = answers.city || profile.city || "";
+    const state = expandLocationStates(String(answers.state || profile.state || "").trim());
+    return [city, state].filter(Boolean).join(", ");
+  }
   if (/\bcity\b/.test(text)) {
     // Greenhouse "Location (City)" needs "City, Region, Country" for typeahead commit.
     if (/\blocation\b/.test(text)) {
@@ -246,8 +340,53 @@ const knownAnswer = (label, profile, answers) => {
   if (/\baddress\b/.test(text)) return profile.address || [profile.city, profile.state, profile.postalCode].filter(Boolean).join(", ");
   // Authorization/sponsorship before location: Stripe asks about work rights
   // "in the location(s) you selected", which must not match as a city/location field.
-  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) return profile.workAuthorization;
-  if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) return profile.sponsorship;
+  if (/\bwork authorization\b|\bauthorized to work\b|\blegally authorized\b|\beligible to work\b/.test(text)) {
+    // Stripe asks Yes/No for authorization separately from sponsorship.
+    const raw = String(profile.workAuthorization || "").trim();
+    if (/^(yes|no)$/i.test(raw)) return /yes/i.test(raw) ? "Yes" : "No";
+    if (/need visa|sponsor/i.test(raw)) return "Yes";
+    if (/^no\b/i.test(raw)) return "No";
+    return raw || "Yes";
+  }
+  if (/\bsponsor|\bvisa\b|\bwork permit\b/.test(text)) {
+    const raw = String(profile.sponsorship || "").trim();
+    if (/^(yes|no)$/i.test(raw)) return /yes/i.test(raw) ? "Yes" : "No";
+    return raw;
+  }
+  if (/\bemployed by stripe\b|\bstripe affiliate\b/.test(text)) return "No";
+  if (/\byears? of experience\b|\bfull time, industry\b/.test(text)) {
+    const raw = String(profile.experienceLevel || answers.experienceLevel || "").trim();
+    if (!raw) return "";
+    // Map profile buckets onto Stripe-style option labels when possible.
+    if (/5\s*[-–]\s*8|5\s*to\s*8|5\+|5-10|5\s*[-–]\s*10/i.test(raw) || /^[5-9]$/.test(raw)) {
+      return "5 - 10 years of experience as a software engineer";
+    }
+    if (/1\.5\s*[-–]\s*5|2\s*[-–]\s*5|3\s*[-–]\s*5|^[2-4]$/i.test(raw)) {
+      return "1.5 - 5 years of experience as a software engineer";
+    }
+    if (/0\s*[-–]\s*1|new grad|entry/i.test(raw)) {
+      return "0 - 1.5 years of experience as a software engineer";
+    }
+    if (/10\+|10\s*\+|senior|staff/i.test(raw)) {
+      return "10+ years of experience as a software engineer";
+    }
+    return raw;
+  }
+  if (/\bdegree\b/.test(text) && !/\bhighest\b/.test(text)) {
+    const level = String(profile.educationLevel || "").trim();
+    if (/master/i.test(level) && !/mba|business/i.test(level)) return "Master's Degree";
+    if (/bachelor/i.test(level)) return "Bachelor's Degree";
+    return level;
+  }
+  // Recruiting WhatsApp / marketing opt-in — default No when unanswered.
+  if (/\bwhatsapp\b|\bopt-?in to receive\b/.test(text)) {
+    for (const [key, value] of Object.entries(answers || {})) {
+      if (!/whatsapp|opt.?in|boolean_value/i.test(key) && !/whatsapp|opt.?in/i.test(String(key))) continue;
+      const textValue = String(value || "").trim();
+      if (/^(yes|no)$/i.test(textValue)) return /^(yes)$/i.test(textValue) ? "Yes" : "No";
+    }
+    return "No";
+  }
   // Remote-intent before location: do not fill city for "work remotely" / hybrid questions.
   if (/\bwork remotely\b|\bplan to work remotely\b|\bremote (work|role|option)\b|\bhybrid\b/.test(text)) {
     const prefs = normalize([
@@ -262,7 +401,11 @@ const knownAnswer = (label, profile, answers) => {
   if (/\blocation\b|\bwork from\b/.test(text) && !/\bremot(e|ely)\b|\bhybrid\b/.test(text)) {
     return formatLocationQuery(answers.location || "", profile);
   }
-  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) return profile.school;
+  if (/\bschool\b|\buniversity\b|\bcollege\b|\balma mater\b/.test(text)) {
+    // Return the full profile school so option matching can score "University of California - Davis"
+    // over shorter false friends like "Davis College". Typeahead harvest still probes with short tokens.
+    return String(profile.school || "").trim();
+  }
   if (/\b(current |most recent |previous |last )?(employer|company name)\b|\bcompany\b/.test(text) && !/\bcompanies to exclude\b/.test(text)) {
     return profile.currentEmployer;
   }
@@ -421,16 +564,45 @@ const matchOptionLabel = (options, answer) => {
   const aliasHit = usable.find((option) => optionMatchesTokens(option, [wanted]));
   if (aliasHit) return aliasHit;
 
-  const includes = usable.find((option) => {
+  // Prefer Master's Degree over MBA when answer is a generic master/degree level.
+  if (/master/i.test(wanted) && !/mba|business/i.test(wanted)) {
+    const masters = usable.find((option) => /master'?s degree/i.test(option) && !/mba|business administration/i.test(option));
+    if (masters) return masters;
+  }
+
+  // Short codes (US, UK) must not substring-match (Australia contains "us").
+  if (needle.length <= 3) {
+    return usable.find((option) => normalize(option) === needle) || "";
+  }
+
+  // Score substring / token overlap so "University of California, Davis" beats "Davis College".
+  const needleTokens = needle.split(/\s+/).filter((token) => token.length > 2);
+  let best = "";
+  let bestScore = 0;
+  for (const option of usable) {
     const label = normalize(option);
-    if (!label) return false;
-    if (label.includes(needle) || needle.includes(label)) return true;
+    if (!label) continue;
     const labelCompact = label.replace(/\s+/g, "");
     const needleCompact = needle.replace(/\s+/g, "");
-    return Boolean(needleCompact && labelCompact && (labelCompact === needleCompact
-      || (needleCompact.length >= 4 && (labelCompact.includes(needleCompact) || needleCompact.includes(labelCompact)))));
-  });
-  return includes || "";
+    let score = 0;
+    if (label === needle || labelCompact === needleCompact) score += 100;
+    if (label.includes(needle)) score += 40 + needle.length;
+    if (needle.includes(label) && label.length >= 8) score += 20 + label.length;
+    if (needleCompact.length >= 4 && (labelCompact.includes(needleCompact) || needleCompact.includes(labelCompact))) {
+      score += 15;
+    }
+    for (const token of needleTokens) {
+      if (label.includes(token)) score += token.length >= 5 ? 6 : 2;
+    }
+    // Penalize short options that only share a single short token (Davis College vs UC Davis).
+    const labelTokens = label.split(/\s+/).filter(Boolean);
+    if (labelTokens.length <= 2 && needleTokens.length >= 3) score -= 10;
+    if (score > bestScore) {
+      bestScore = score;
+      best = option;
+    }
+  }
+  return bestScore >= 8 ? best : "";
 };
 
 const selectOptionTexts = async (field) => {
@@ -531,6 +703,19 @@ const locationLatLonCommitted = async (field) => {
   return result;
 };
 
+/** Read committed location from input or react-select single-value display. */
+const readLocationDisplayValue = async (field) => {
+  const inputValue = String(await field.inputValue().catch(() => "")).trim();
+  if (inputValue) return inputValue;
+  return field.evaluate((el) => {
+    const root = el.closest(".select__control, .select, [class*='select']")
+      || el.closest("[class*='field' i], [class*='question' i]")
+      || el.parentElement;
+    const single = root?.querySelector(".select__single-value, [class*='single-value' i]");
+    return String(single?.textContent || "").replace(/\s+/g, " ").trim();
+  }).catch(() => "");
+};
+
 /**
  * Greenhouse Location (City) typeahead: type, wait for geocode suggestions, click one.
  * Typing alone leaves hidden latitude/longitude empty and validation fails.
@@ -541,19 +726,22 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
     query = formatLocationQuery("", { ...profile, location: "" });
   }
   if (!query || !looksLikePlaceString(query, profile)) return false;
+  query = expandLocationStates(query);
 
-  const attemptFill = async (typedQuery) => {
-    const parts = typedQuery.split(",").map((part) => part.trim()).filter(Boolean);
-    // Type "City, Region" when available — bare city alone is flaky on Greenhouse.
-    const searchToken = (parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : parts[0] || typedQuery).slice(0, 64);
+  const attemptFill = async (matchQuery) => {
+    const expanded = expandLocationStates(matchQuery);
+    const parts = expanded.split(",").map((part) => part.trim()).filter(Boolean);
+    // Greenhouse geocode is city-first ("Redmond" → list). Typing "Redmond, WA" is flaky.
+    const searchToken = (parts[0] || expanded).slice(0, 48);
     const page = field.page();
 
     await field.scrollIntoViewIfNeeded().catch(() => {});
     await field.click({ timeout: 3000 }).catch(() => {});
     await field.fill("").catch(() => {});
-    await field.pressSequentially(searchToken, { delay: 35 }).catch(() => {});
+    await field.pressSequentially(searchToken, { delay: 40 }).catch(() => {});
 
     const optionSelectors = [
+      ".select__option",
       '[role="listbox"] [role="option"]',
       '[role="option"]',
       ".select2-results__option",
@@ -565,7 +753,7 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
 
     let optionTexts = [];
     let optionLocator = null;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       await page.waitForTimeout(250);
       for (const selector of optionSelectors) {
         const locator = page.locator(selector);
@@ -573,7 +761,6 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
         if (!count) continue;
         const texts = [];
         for (let i = 0; i < Math.min(count, 40); i += 1) {
-          if (!(await locator.nth(i).isVisible().catch(() => false))) continue;
           const text = String(await locator.nth(i).innerText().catch(() => ""))
             .replace(/\s+/g, " ")
             .trim()
@@ -591,40 +778,64 @@ const fillLocationAutocomplete = async (field, answer, profile = {}) => {
     }
 
     if (optionTexts.length && optionLocator) {
-      const cityToken = parts[0] || typedQuery;
-      const matched = matchOptionLabel(optionTexts, typedQuery)
+      const matched = findBestLocationOption(optionTexts, expanded)
+        || matchOptionLabel(optionTexts, expanded)
         || matchOptionLabel(optionTexts, searchToken)
-        || optionTexts.find((option) => normalize(option).includes(normalize(cityToken)))
+        || optionTexts.find((option) => normalize(option).includes(normalize(searchToken)))
         || optionTexts[0];
       const index = optionTexts.findIndex((option) => normalize(option) === normalize(matched));
-      const target = optionLocator.nth(index >= 0 ? index : 0);
-      await target.click({ timeout: 3000 }).catch(async () => {
-        await field.press("ArrowDown").catch(() => {});
-        await field.press("Enter").catch(() => {});
+
+      // Prefer exact option role click — more reliable on Greenhouse react-select.
+      await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(async () => {
+        const target = optionLocator.nth(index >= 0 ? index : 0);
+        await target.click({ timeout: 3000 }).catch(async () => {
+          await field.press("Enter").catch(() => {});
+        });
       });
-    } else {
-      await field.press("ArrowDown").catch(() => {});
-      await page.waitForTimeout(150);
-      await field.press("Enter").catch(() => {});
+      await page.waitForTimeout(450);
+
+      let value = await readLocationDisplayValue(field);
+      const region = normalize(parts[1] || "");
+      const matchedOk = Boolean(value) && (
+        normalize(value) === normalize(matched)
+        || (region && normalize(value).includes(region))
+        || looksLikePlaceString(value, profile)
+      );
+
+      // Only retry when nothing committed — retries can replace Washington with Oregon.
+      if (!value) {
+        await field.click({ timeout: 2000 }).catch(() => {});
+        await field.pressSequentially(searchToken, { delay: 30 }).catch(() => {});
+        await page.waitForTimeout(600);
+        await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(400);
+        value = await readLocationDisplayValue(field);
+      }
+
+      const latLon = await locationLatLonCommitted(field);
+      if (latLon.hasHidden) return Boolean(value) && latLon.ok;
+      return Boolean(value) && (
+        matchedOk
+        || normalize(value) === normalize(matched)
+        || (region && normalize(value).includes(region))
+        || looksLikePlaceString(value, profile)
+      );
     }
 
+    await field.press("ArrowDown").catch(() => {});
+    await page.waitForTimeout(150);
+    await field.press("Enter").catch(() => {});
     await page.waitForTimeout(450);
-    const value = String(await field.inputValue().catch(() => "")).trim();
+    const value = await readLocationDisplayValue(field);
     const latLon = await locationLatLonCommitted(field);
     if (latLon.hasHidden) return Boolean(value) && latLon.ok;
     return Boolean(value) && looksLikePlaceString(value, profile);
   };
 
   if (await attemptFill(query)) return true;
-  // Retry once with city-only typing when the fuller query failed to commit lat/lon.
-  const cityOnly = query.split(",")[0].trim();
-  if (cityOnly && normalize(cityOnly) !== normalize(query)) {
-    const rebuilt = formatLocationQuery(cityOnly, { ...profile, location: "" });
-    if (rebuilt && normalize(rebuilt) !== normalize(query)) {
-      return attemptFill(rebuilt);
-    }
-  }
-  return false;
+  // One more pass after a short pause — Greenhouse suggestions can lag on first focus.
+  await field.page().waitForTimeout(400).catch(() => {});
+  return attemptFill(query);
 };
 
 /**
@@ -635,6 +846,14 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
   const wanted = String(countryAnswer || profile.country || "").trim();
   if (!wanted) return true;
   const page = phoneField.page();
+
+  // Greenhouse remix phone Country is often a react-select with id=country (e.g. "United States +1").
+  const countryInput = page.locator("#country").first();
+  if (await countryInput.isVisible().catch(() => false)) {
+    const dialWanted = /united states|^us$|usa/i.test(wanted) ? "United States" : wanted;
+    const ok = await fillCustomBooleanChoice(countryInput, dialWanted);
+    if (ok) return true;
+  }
 
   const containers = [
     phoneField.locator("xpath=ancestor::*[contains(@class,'phone') or contains(@class,'field') or contains(@class,'application')][1]"),
@@ -656,30 +875,33 @@ const fillPhoneCountryDial = async (phoneField, countryAnswer, profile = {}) => 
       await trigger.click({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(350);
 
-      const options = page.locator('[role="listbox"] [role="option"], [role="option"], .iti__country, li[class*="country" i], [class*="country-list" i] li');
-      const optionCount = await options.count().catch(() => 0);
-      if (!optionCount) {
+      const labels = await page.evaluate(() => {
+        const nodes = [
+          ...document.querySelectorAll(".select__menu .select__option, [role=listbox] [role=option], .iti__country, .iti__country-list li, .select__option"),
+        ].filter((el) => el.offsetParent || el.closest(".iti__country-list:not(.iti__hide)"));
+        return nodes.map((o) => o.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
+      }).catch(() => []);
+      if (!labels.length) {
         await page.keyboard.press("Escape").catch(() => {});
         continue;
       }
 
-      const labels = [];
-      const max = Math.min(optionCount, 320);
-      for (let j = 0; j < max; j += 1) {
-        const text = String(await options.nth(j).innerText().catch(() => ""))
-          .replace(/\s+/g, " ")
-          .trim();
-        labels.push(text);
-      }
       const matched = matchOptionLabel(labels.filter(Boolean), wanted)
         || labels.find((label) => label && optionMatchesTokens(label, [wanted]));
       if (matched) {
-        const index = labels.findIndex((label) => label === matched);
-        if (index >= 0) {
-          await options.nth(index).click({ timeout: 3000 }).catch(() => {});
-          await page.waitForTimeout(200);
+        const clicked = await page.evaluate((label) => {
+          const opt = [...document.querySelectorAll(".select__option, [role=option], .iti__country")].find(
+            (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+          );
+          if (!opt) return false;
+          opt.click();
           return true;
+        }, matched);
+        if (!clicked) {
+          await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
         }
+        await page.waitForTimeout(200);
+        return true;
       }
       await page.keyboard.press("Escape").catch(() => {});
     }
@@ -694,7 +916,7 @@ const isBooleanChoiceLabel = (label) => {
   if (/\b(country|countries|nation|citizenship|select all|which of the following)\b/.test(text)) return false;
   if (/^(do you|are you|have you|will you|can you|did you)\b/.test(text)) return true;
   if (/\b(yes or no|y\/n)\b/.test(text)) return true;
-  if (/\b(agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
+  if (/\b(opt-?in|whatsapp|agree|accept|acknowledge|authorize|sponsorship|legally authorized|work authorization|remote(ly)?|hybrid)\b/.test(text)) return true;
   return false;
 };
 
@@ -753,6 +975,112 @@ async function fillSelect(field, answer) {
   return field.selectOption(match.value).then(() => true).catch(() => false);
 }
 
+/** Fill a Greenhouse react-select / custom combobox with any option text. */
+const fillCustomBooleanChoice = async (field, answer) => {
+  const wantedRaw = String(answer || "").trim();
+  if (!wantedRaw) return false;
+  const page = field.page();
+  const wanted = matchOptionLabel(["Yes", "No"], wantedRaw) || wantedRaw;
+
+  if (!(await field.isVisible().catch(() => false))) return false;
+
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  // Prefer clicking the react-select control chrome, not a leaked phone dial menu.
+  const control = field.locator("xpath=ancestor::div[contains(@class,'select__container')][1]//div[contains(@class,'select__control')]").first();
+  if (await control.isVisible().catch(() => false)) {
+    await control.click({ timeout: 3000 }).catch(() => {});
+  } else {
+    await field.click({ timeout: 3000 }).catch(() => {});
+  }
+  await page.waitForTimeout(250);
+
+  // Searchable selects (School, Degree, experience): type to filter options.
+  const isSearchable = await field.evaluate((el) => {
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    return role === "combobox" || el.className.includes("select__input") || /^question_|education|school|degree|country/i.test(el.id || "");
+  }).catch(() => true);
+  const typeFilter = isSearchable && wanted.length >= 1 && !/^(yes|no)$/i.test(wanted);
+  if (typeFilter) {
+    await field.fill("").catch(() => {});
+    // School lists are huge — type a short distinctive token so the target option appears.
+    let typeToken = wanted.slice(0, 48);
+    if (/university of california.*davis|uc\s*davis/i.test(wanted)) typeToken = "Davis";
+    else if (/master'?s/i.test(wanted)) typeToken = "Master";
+    else if (/united states/i.test(wanted)) typeToken = "United States";
+    await field.pressSequentially(typeToken, { delay: 25 }).catch(() => {});
+    const fieldId = await field.getAttribute("id").catch(() => "");
+    await page.waitForTimeout(/school|degree/i.test(fieldId || "") ? 1200 : 500);
+  }
+
+  // Read visible menu options in one evaluate — avoid N× isVisible round-trips (was hanging 45s+).
+  const labels = await page.evaluate(() => {
+    const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+    return menus.flatMap((menu) =>
+      [...menu.querySelectorAll(".select__option, [role=option]")]
+        .map((o) => o.textContent.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    );
+  }).catch(() => []);
+
+  const usable = labels.filter((text) => {
+    if (/\+\d+$/.test(text) && !/\+/.test(wanted) && !/united states|country/i.test(wanted)) return false;
+    return true;
+  });
+
+  let matched = matchOptionLabel(usable, wanted);
+  if (!matched && wanted.length > 3) {
+    matched = usable.find((text) => normalize(text).includes(normalize(wanted))) || "";
+  }
+  if (!matched && /^(yes|no)$/i.test(wanted)) {
+    matched = usable.find((text) => normalize(text) === normalize(wanted)
+      || normalize(text).startsWith(normalize(wanted))) || "";
+  }
+  if (/davis/i.test(wanted) && usable.some((text) => /california\s*-\s*davis/i.test(text))) {
+    matched = usable.find((text) => /california\s*-\s*davis/i.test(text)) || matched;
+  }
+
+  if (matched) {
+    const clicked = await page.evaluate((label) => {
+      const menus = [...document.querySelectorAll(".select__menu")].filter((m) => m.offsetParent);
+      for (const menu of menus) {
+        const opt = [...menu.querySelectorAll(".select__option, [role=option]")].find(
+          (o) => o.textContent.replace(/\s+/g, " ").trim() === label,
+        );
+        if (opt) {
+          opt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          opt.click();
+          return true;
+        }
+      }
+      return false;
+    }, matched);
+    if (!clicked) {
+      await page.getByRole("option", { name: matched, exact: true }).first().click({ timeout: 3000 }).catch(() => {});
+    }
+    await page.waitForTimeout(200);
+    return true;
+  }
+
+  await page.getByRole("option", { name: wanted, exact: wanted.length <= 3 }).first().click({ timeout: 2000 }).catch(() => {});
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(150);
+  return false;
+};
+
+/** True when a text input behaves like a Greenhouse custom select/combobox. */
+const isCustomSelectInput = async (field) => {
+  return field.evaluate((el) => {
+    if (!(el instanceof HTMLInputElement) && el.tagName !== "INPUT") return false;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    if (role === "combobox" || role === "listbox") return true;
+    if (el.getAttribute("aria-haspopup") === "listbox") return true;
+    if (el.readOnly) return true;
+    const id = String(el.id || "");
+    if (/^question_/i.test(id)) return true;
+    return false;
+  }).catch(() => false);
+};
+
 const isSkippableFieldMeta = (info) => {
   const haystack = normalize(`${info.name} ${info.label} ${info.type}`);
   if (info.type === "search" || info.type === "button" || info.type === "reset" || info.type === "image") return true;
@@ -775,7 +1103,7 @@ function resolveApplicationUrl(application) {
     const jobId = jid || tokenFromPath;
     const board = guessGreenhouseBoard(application);
     if (jobId && board && (host.includes("stripe.com") || host.includes("greenhouse.io") || host.includes(board))) {
-      return `https://boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(jobId)}`;
+      return `https://job-boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(jobId)}`;
     }
   } catch {
     // Fall through to the original listing URL.
@@ -789,14 +1117,18 @@ function guessGreenhouseBoard(application) {
   if (company.includes("cloudflare")) return "cloudflare";
   if (company.includes("figma")) return "figma";
   if (company.includes("airbnb")) return "airbnb";
+  try {
+    const host = new URL(String(application?.sourceUrl || "")).hostname.toLowerCase();
+    if (host.includes("stripe.com")) return "stripe";
+    if (host.includes("cloudflare.com")) return "cloudflare";
+    if (host.includes("figma.com")) return "figma";
+  } catch { /* ignore */ }
   const source = normalize(application?.source);
   if (source.includes("greenhouse")) {
     try {
       const url = new URL(String(application?.sourceUrl || ""));
-      const fromPath = url.pathname.match(/\/(?:embed\/job_app|boards?\/|job-boards\/)?(?:for=)?/i);
       const token = url.searchParams.get("for") || url.pathname.split("/").filter(Boolean)[0];
       if (token && /^[a-z0-9_-]+$/i.test(token) && !["embed", "jobs", "job", "boards", "job-boards"].includes(token)) return token;
-      void fromPath;
     } catch { /* ignore */ }
   }
   return "";
@@ -827,10 +1159,15 @@ async function pageHasBlockingCaptcha(page) {
   return false;
 }
 
-export async function runApplication({ application, profile, resumePath }) {
-  const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] });
+export async function runApplication({ application, profile, resumePath, dryRun = false, headed = false, timeoutMs = 8 * 60 * 1000 }) {
+  const browser = await chromium.launch({
+    headless: !headed,
+    args: ["--disable-dev-shm-usage", "--no-sandbox"],
+  });
   const page = await browser.newPage();
+  let timeoutHandle;
   try {
+    const work = (async () => {
     await page.goto(resolveApplicationUrl(application), { waitUntil: "domcontentloaded", timeout: 45000 });
     // If the embed/application form is already present, do not click listing CTAs
     // like "Quick Apply with MyGreenhouse" (those match /apply/ and derail the flow).
@@ -846,8 +1183,8 @@ export async function runApplication({ application, profile, resumePath }) {
         await page.waitForLoadState("domcontentloaded").catch(() => {});
       }
     }
-    await formReady.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(alreadyOnForm ? 500 : 1500);
+    await formReady.waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(alreadyOnForm ? 1200 : 2000);
 
     if (await pageHasBlockingCaptcha(page)) {
       return {
@@ -899,6 +1236,42 @@ export async function runApplication({ application, profile, resumePath }) {
     }
 
     const fields = scope.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select');
+    // Greenhouse resume inputs are often visually hidden — set them explicitly.
+    if (resumePath) {
+      const fileInputs = scope.locator('input[type="file"]');
+      const fileCount = await fileInputs.count().catch(() => 0);
+      for (let i = 0; i < fileCount; i += 1) {
+        await fileInputs.nth(i).setInputFiles(resumePath).catch(() => {});
+      }
+      if (!fileCount) {
+        await page.locator('input[type="file"]').first().setInputFiles(resumePath).catch(() => {});
+      }
+      await page.waitForTimeout(800);
+    }
+
+    let harvestedCatalog = [];
+    try {
+      harvestedCatalog = await harvestFormCatalog(page, scope, profile, application);
+      const { answers: matched } = await resolveCatalogAnswers({
+        catalog: harvestedCatalog,
+        profile,
+        answers: application.answers || {},
+        knownAnswer,
+        lookupAnswer,
+        matchOptionLabel,
+        useGpt: true,
+      });
+      application.answers = catalogAnswersForFill(harvestedCatalog, matched);
+    } catch (error) {
+      console.error("Option harvest/match failed; continuing with heuristics", error);
+    }
+    const catalogOptionsByKey = new Map(
+      harvestedCatalog.map((entry) => [entry.key, entry.options || []]),
+    );
+    const catalogOptionsByLabel = new Map(
+      harvestedCatalog.map((entry) => [normalize(entry.label), entry.options || []]),
+    );
+
     const missing = [];
     const seenKeys = new Set();
     const collected = [];
@@ -1123,14 +1496,19 @@ export async function runApplication({ application, profile, resumePath }) {
         continue;
       }
       if (liveType === "file" || info.type === "file") {
-        if (resumePath && /resume|cv/i.test(`${info.name} ${info.label}`)) await field.setInputFiles(resumePath);
+        if (resumePath && (/resume|cv|attach/i.test(`${info.name} ${info.label} ${info.id || ""}`) || !info.label)) {
+          await field.setInputFiles(resumePath).catch(() => {});
+        }
         continue;
       }
-      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile);
+      const answer = lookupAnswer(application.answers, { key, name: info.name, label: displayLabel }, profile)
+        || (isBooleanChoiceLabel(displayLabel) ? "No" : "");
       let filled = false;
       const isSelect = info.tag === "select" || liveType === "select";
-      const isLocationField = isLocationAutocompleteLabel(displayLabel, info.name);
+      const isLocationField = isLocationAutocompleteLabel(displayLabel, `${info.name} ${info.id || ""}`);
       const isPhoneField = isPhoneFieldLabel(displayLabel, info.name);
+      const customSelect = !isSelect && !isLocationField && !isPhoneField
+        && (isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field));
       let dialOk = true;
       if (answer || isLocationField || isPhoneField) {
         if (isPhoneField) {
@@ -1146,22 +1524,32 @@ export async function runApplication({ application, profile, resumePath }) {
           const options = await selectOptionTexts(field);
           const coerced = matchOptionLabel(options, answer) || answer;
           filled = await fillSelect(field, coerced);
+          if (!filled && isBooleanChoiceLabel(displayLabel)) {
+            filled = await fillCustomBooleanChoice(field, answer || "No");
+          }
           if (!filled && options.length) {
-            // City fields often list "Redmond, WA" — retry with includes match already in matchOptionLabel;
-            // if still empty try the first option that contains the answer token.
             const token = normalize(answer).split(/\s+/)[0];
             const fuzzy = options.find((option) => normalize(option).includes(token) && token.length >= 3);
             if (fuzzy) filled = await fillSelect(field, fuzzy);
           }
+        } else if (customSelect && answer) {
+          // Stripe Greenhouse: Yes/No and many questionnaire fields are text inputs + popup lists.
+          if (isBooleanChoiceLabel(displayLabel) || /^(yes|no)$/i.test(answer)) {
+            filled = await fillCustomBooleanChoice(field, answer);
+          } else {
+            filled = await fillCustomBooleanChoice(field, answer);
+            if (!filled) filled = await fillTextControl(field, answer);
+          }
         } else if (answer) {
           filled = await fillTextControl(field, answer);
-          // Some Greenhouse "text" questions are actually selects rematerialized after load.
           if (!filled) {
             const retryType = await liveFieldType(field, liveType);
             if (retryType === "select") {
               const options = await selectOptionTexts(field);
               const coerced = matchOptionLabel(options, answer) || answer;
               filled = await fillSelect(field, coerced);
+            } else if (isBooleanChoiceLabel(displayLabel) || await isCustomSelectInput(field)) {
+              filled = await fillCustomBooleanChoice(field, answer);
             }
           }
         }
@@ -1182,30 +1570,49 @@ export async function runApplication({ application, profile, resumePath }) {
         value = await retryField.inputValue().catch(() => "");
       }
       if (isLocationField && filled) {
+        const display = await readLocationDisplayValue(stabilizeField(scope, item));
         const latLon = await locationLatLonCommitted(stabilizeField(scope, item));
         if (latLon.hasHidden && !latLon.ok) filled = false;
+        if (!latLon.hasHidden && !display) filled = false;
       }
       const digits = (text) => String(text || "").replace(/\D+/g, "");
-      const hasValue = Boolean(String(value || "").trim());
+      const displayValue = isLocationField
+        ? (await readLocationDisplayValue(stabilizeField(scope, item))) || String(value || "")
+        : String(value || "");
+      const hasValue = Boolean(String(displayValue || "").trim());
       const digitsMatch = Boolean(
         answer && digits(value) && digits(answer) && (digits(value).includes(digits(answer)) || digits(answer).includes(digits(value))),
       );
       // Trust a successful select fill even when inputValue is briefly stale after rematerialization.
       // Phone: number filled is enough — dial-code widget failure must not re-ask Phone.
-      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled);
+      const looksFilled = hasValue || digitsMatch || (isSelect && filled) || (isLocationField && filled)
+        || (customSelect && filled) || (isBooleanChoiceLabel(displayLabel) && filled);
       void dialOk;
       if (info.required && !looksFilled) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         const options = isSelect ? await selectOptionTexts(field) : undefined;
-        let missingType = isSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
+        let missingType = isSelect || customSelect ? "select" : info.tag === "textarea" || liveType === "textarea" ? "textarea" : "text";
         if (isLocationField && !isSelect) missingType = "autocomplete";
         if (isPhoneField) missingType = "phone";
+        let missingOptions = options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt));
+        const harvested = catalogOptionsByKey.get(info.id)
+          || catalogOptionsByLabel.get(normalize(displayLabel))
+          || [];
+        if ((!missingOptions || !missingOptions.length) && harvested.length) {
+          missingOptions = harvested;
+          missingType = "select";
+        }
+        // Stripe WhatsApp / other Yes-No selects sometimes arrive without scraped options.
+        if ((missingType === "select" || missingType === "text") && isBooleanChoiceLabel(displayLabel)) {
+          missingType = "select";
+          if (!missingOptions?.length) missingOptions = ["Yes", "No"];
+        }
         missing.push({
           key,
           label: displayLabel,
           type: missingType,
-          options: options?.filter((opt) => opt.length > 0 && !/^(select|please select|choose)/i.test(opt)),
+          options: missingOptions,
           required: true,
           hadAnswer: Boolean(answer),
           placeholder: missingType === "autocomplete" ? "e.g. Redmond, Washington, United States" : undefined,
@@ -1293,16 +1700,40 @@ export async function runApplication({ application, profile, resumePath }) {
       };
     }
 
+    if (dryRun) {
+      return {
+        outcome: "dry_run",
+        detail: "Filled employer fields without submitting (dryRun=true).",
+        questions: [],
+        url: page.url(),
+      };
+    }
+
     // Advance multi-step employer flows (Continue/Next) until a final submit appears.
     for (let step = 0; step < 4; step += 1) {
       const submit = await findSubmitControl([scope, root, page]);
       if (submit) {
         await submit.scrollIntoViewIfNeeded().catch(() => {});
         await submit.click();
-        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        await page.waitForLoadState("networkidle", { timeout: 45000 }).catch(() => {});
+        await page.waitForTimeout(1500);
         const confirmation = await page.locator("body").innerText().catch(() => "");
-        if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent/i.test(confirmation)) {
-          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }] };
+        if (/verification code was sent|enter the \d+-character code|confirm you.?re a human/i.test(confirmation)) {
+          return {
+            outcome: "needs_action",
+            detail: "Greenhouse emailed a verification code. Enter it on the employer page, then retry or mark submitted.",
+            questions: [{
+              key: "email_verification",
+              label: "Enter the verification code from your email on the employer application page.",
+              type: "blocking",
+              required: true,
+            }],
+            confirmationSnippet: confirmation.slice(0, 500),
+          };
+        }
+        if (!/thank you|application (has been )?(submitted|received)|thanks for applying|application was sent|we (have )?received your application/i.test(confirmation)) {
+          return { outcome: "needs_action", detail: "Employer did not return a recognizable submission confirmation.", questions: [{ key: "submission_confirmation", label: "Review the employer page for an error or confirmation.", type: "blocking", required: true }], confirmationSnippet: confirmation.slice(0, 500) };
         }
         return { outcome: "submitted", provider: "ApplyPilot Playwright", receiptId: `${application.id}:${Date.now()}`, detail: `Confirmed at ${page.url()}` };
       }
@@ -1312,7 +1743,28 @@ export async function runApplication({ application, profile, resumePath }) {
     }
 
     return { outcome: "needs_action", detail: "The employer submission control could not be identified.", questions: [{ key: "submission_control", label: "Open the original listing to review its unsupported submission step.", type: "blocking", required: true }] };
-  } finally { await browser.close(); }
+    })();
+
+    const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 8 * 60 * 1000;
+    const timedOut = new Promise((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve({
+          outcome: "needs_action",
+          detail: `Browser submission timed out after ${Math.round(limit / 60000)} minutes.`,
+          questions: [{
+            key: "submission_timeout",
+            label: "Submission timed out. Retry queue or finish on the employer page.",
+            type: "blocking",
+            required: true,
+          }],
+        });
+      }, limit);
+    });
+    return await Promise.race([work, timedOut]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    await browser.close();
+  }
 }
 
 const SUBMIT_NAME = /submit(\s+(my\s+)?application)?|send(\s+my)?\s+application|finish(\s+application)?|complete(\s+application)?/i;
@@ -1367,4 +1819,4 @@ async function clickContinueControl(contexts) {
   return false;
 }
 
-export { knownAnswer, questionKey, groupQuestionKey, fillSelect, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
+export { knownAnswer, questionKey, groupQuestionKey, fillSelect, fillLocationAutocomplete, fillCustomBooleanChoice, fillPhoneCountryDial, compactLabel, humanizeFieldName, isUselessLabel, sanitizeLabel, answerKeyBase, lookupAnswer, parseMultiselectAnswer, optionMatchesTokens, preferredLocationTokens, flattenPreferredLocationsText, multiselectTokensFromProfile, resolveMultiselectSelections, matchOptionLabel, choiceOptionLabels, isBooleanChoiceLabel, isCheckboxGroupName, formatLocationQuery, expandLocationStates, findBestLocationOption, looksLikePlaceString, dedupeMissingQuestions, isLocationAutocompleteLabel, isPhoneFieldLabel, SUBMIT_NAME, CONTINUE_NAME, resolveApplicationUrl, pageHasBlockingCaptcha };
