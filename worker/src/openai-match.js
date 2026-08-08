@@ -118,7 +118,6 @@ export async function matchOptionsWithGpt({ profile, fields }) {
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      temperature: 0,
       response_format: { type: "json_object" },
     }),
   });

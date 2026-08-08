@@ -10,9 +10,10 @@ flowchart LR
     Auth[Static Web Apps<br/>Microsoft authentication]
     SWA[React on Static Web Apps<br/>Standard]
     API[Azure Functions<br/>Node.js 22]
-    SQL[(Azure SQL<br/>profiles, jobs, applications)]
+    SQL[(Azure SQL<br/>profiles, jobs, applications,<br/>option catalogs)]
     Blob[(Private Blob Storage<br/>original resumes)]
     DocAI[Azure AI Document Intelligence<br/>prebuilt-layout]
+    OpenAI[Azure OpenAI<br/>option matching]
     GH[Greenhouse boards]
     Remotive[Remotive API]
     Email[Azure Communication Services Email<br/>outbound notifications]
@@ -32,9 +33,10 @@ flowchart LR
     API -->|managed identity| Email
     API -->|enqueue with managed identity| Bus
     Bus -->|managed-identity consumer| Worker
-    Worker -->|fill and submit| Employer
-    Employer -->|confirmation page| Worker
-    Worker -->|attempt and receipt| SQL
+    Worker -->|harvest options / fill / submit| Employer
+    Employer -->|option lists and confirmation| Worker
+    Worker -->|rules first; GPT when ambiguous| OpenAI
+    Worker -->|attempt, receipt, catalogs| SQL
     Blob -->|resume bytes| DocAI
 ```
 
@@ -101,10 +103,11 @@ If analysis fails, the upload remains available and is recorded with `failed` ex
 3. **Simple Apply** creates a SQL `review` record containing the job and saved profile answers without navigating away from ApplyPilot.
 4. `POST /api/applications/{id}/submit` verifies ownership, changes the record to `queued`, and sends an idempotent message to Azure Service Bus.
 5. The isolated Playwright container loads the authoritative application, profile, and primary résumé using managed identities.
-6. Missing required questions, CAPTCHA, login, consent, or an unrecognized employer step moves the application to `needs_action` with structured questions; it is never represented as submitted.
-7. Transient provider errors are retried by Service Bus up to five deliveries, then retained in the dead-letter queue for investigation.
-8. Only a non-empty employer receipt advances the record to `submitted`; every attempt and receipt is audited in SQL.
-9. Only an explicit profile save refreshes blank answers on review applications; résumé uploads remain isolated from profile and application data.
+6. On supported hosted forms, the worker harvests native and react-select option lists, matches them to the profile with deterministic rules first, and calls Azure OpenAI only for remaining ambiguous selects (answers must appear in the harvested allowlist). Shared catalogs such as school lists persist in SQL for reuse.
+7. Missing required questions, CAPTCHA, login, consent, email verification, or an unrecognized employer step moves the application to `needs_action` with structured questions (including harvested `options` when available); it is never represented as submitted.
+8. Transient provider errors are retried by Service Bus up to five deliveries, then retained in the dead-letter queue for investigation.
+9. Only a non-empty employer receipt advances the record to `submitted`; every attempt and receipt is audited in SQL.
+10. Only an explicit profile save refreshes blank answers on review applications; résumé uploads remain isolated from profile and application data.
 
 ```mermaid
 stateDiagram-v2
@@ -129,15 +132,23 @@ stateDiagram-v2
 flowchart TD
     Click[Candidate selects Apply]
     Provider{Hosted form is<br/>supported?}
-    Fields{All required fields,<br/>consents, and resume available?}
+    Harvest[Harvest fields and<br/>select option catalogs]
+    Rules[Match via knownAnswer<br/>and matchOptionLabel]
+    Ambiguous{Ambiguous selects<br/>with option lists?}
+    Gpt[Azure OpenAI batch match<br/>allowlisted labels only]
+    Fields{All required fields,<br/>consents, and resume filled?}
     Submit[Submit through isolated browser]
     Confirm{Employer confirms receipt?}
     Track[Persist submitted status]
-    Review[Keep in review and show<br/>unresolved requirements]
+    Review[needs_action with<br/>unresolved questions + options]
 
     Click --> Provider
-    Provider -->|yes| Fields
+    Provider -->|yes| Harvest
     Provider -->|no| Review
+    Harvest --> Rules
+    Rules --> Ambiguous
+    Ambiguous -->|yes| Gpt --> Fields
+    Ambiguous -->|no| Fields
     Fields -->|yes| Submit
     Fields -->|no| Review
     Submit --> Confirm
@@ -145,9 +156,9 @@ flowchart TD
     Confirm -->|no| Review
 ```
 
-The public Greenhouse feed exposes application questions, but its write API requires a private key issued by each hiring company. ApplyPilot therefore uses the employer-hosted application form through its first-party Playwright worker when no authorized write API exists. It pauses for missing required questions, consent, CAPTCHA, login, and unrecognized steps. A confirmation page is required before the application is marked submitted.
+The public Greenhouse feed exposes application questions, but its write API requires a private key issued by each hiring company. ApplyPilot therefore uses the employer-hosted application form through its first-party Playwright worker when no authorized write API exists. Option matching is rules-first; Azure OpenAI is used only when a harvested select list remains ambiguous, and model output is rejected unless it is an exact option string from that field. The worker pauses for missing required questions, consent, CAPTCHA, login, email verification, and unrecognized steps. A confirmation page is required before the application is marked submitted.
 
-The worker is not a generic browser-automation proxy. It accepts only application IDs from the private Service Bus queue, retrieves server-owned URLs and user-scoped records from SQL, and runs at one application per replica. CAPTCHA bypass, account recovery, and invented answers are prohibited.
+The worker is not a generic browser-automation proxy. It accepts only application IDs from the private Service Bus queue, retrieves server-owned URLs and user-scoped records from SQL, and runs at one application per replica. CAPTCHA bypass, account recovery, and invented answers are prohibited. When `AZURE_OPENAI_ENDPOINT` is unset, GPT matching is skipped and heuristic matching alone continues.
 
 ### Provider API and browser-automation routing
 
@@ -157,8 +168,9 @@ flowchart TD
     Detect{Supported ATS?}
     Credential{Employer or partner<br/>credential configured?}
     API[Official ATS submission API]
-    Browser[Isolated Playwright<br/>Container Apps job]
-    Human{CAPTCHA, consent, login,<br/>or unknown answer?}
+    Browser[Isolated Playwright<br/>Container Apps worker]
+    Match[Harvest options → rules match<br/>→ optional Azure OpenAI]
+    Human{CAPTCHA, consent, login,<br/>email verify, or unknown answer?}
     Pause[needs_action<br/>candidate checkpoint]
     Receipt{Verifiable receipt?}
     Submitted[submitted]
@@ -168,7 +180,8 @@ flowchart TD
     Credential -->|yes| API
     Credential -->|no| Browser
     Detect -->|Workday or hosted form| Browser
-    Browser --> Human
+    Browser --> Match
+    Match --> Human
     Human -->|yes| Pause
     Human -->|no| Receipt
     API --> Receipt
@@ -184,16 +197,17 @@ Greenhouse Job Board, Lever Postings, and SmartRecruiters Application APIs can s
 | --- | --- | --- |
 | Static Web Apps Standard | React hosting, Microsoft authentication, linked `/api` proxy | Personal API routes require the `authenticated` role |
 | Azure Functions Consumption | API and orchestration | Stable user-assigned runtime identity plus system identity for private package loading; direct linked backend protected |
-| Azure SQL Basic | Users, profiles, jobs, applications, document metadata | Entra app access; personal queries include the internal user ID |
+| Azure SQL Basic | Users, profiles, jobs, applications, document metadata, shared employer option catalogs | Entra app access; personal queries include the internal user ID |
 | Storage account | Function runtime and original resumes | Public blob access disabled; private container; managed-identity RBAC |
 | Document Intelligence F0/S0 | Resume OCR and layout extraction | Local keys disabled; managed-identity RBAC |
+| Azure OpenAI | Batch match of ambiguous select options to profile answers | Local keys disabled; Cognitive Services OpenAI User on worker (and backend) managed identity; optional when endpoint unset |
 | Communication Services Email | Outbound application queue notifications | Azure-managed domain; managed-identity sender role; no inbound mailbox |
 | Azure Service Bus Basic | Durable application submission queue and dead-letter retention | Local/SAS auth disabled; Function sends and browser worker receives with managed identities |
-| Azure Container Apps | Scale-to-zero Playwright browser worker | Isolated Chromium container; managed identity for queue, SQL, Blob, and ACR |
+| Azure Container Apps | Playwright browser worker | Isolated Chromium container; managed identity for queue, SQL, Blob, ACR, and OpenAI |
 | Application Insights | Runtime diagnostics | 30-day retention configured by Bicep |
 | Key Vault | Future application secrets | Function identity access; no resume or profile payloads stored here |
 
-Traffic uses HTTPS/TLS and Azure-managed services encrypt stored data. No storage or Document Intelligence credential is exposed to the browser.
+Traffic uses HTTPS/TLS and Azure-managed services encrypt stored data. No storage, Document Intelligence, or OpenAI credential is exposed to the browser.
 
 ## Deployment boundaries
 
@@ -235,12 +249,14 @@ Infrastructure deployment precedes backend deployment when a service or setting 
 ## Current limitations and evolution
 
 - Parsing uses the general layout model plus deterministic field detection. A custom neural model can improve work-history and education extraction after at least five representative, consented training resumes are available.
-- Employer forms remain a separate trust domain. Future browser automation must preserve user review, consent, CAPTCHA, and site terms.
+- Employer forms remain a separate trust domain. Browser automation must preserve user review, consent, CAPTCHA, and site terms. GPT matching never invents option text and is skipped when OpenAI is not configured.
+- Greenhouse email-verification codes still require candidate action (`needs_action`); they are not auto-solved.
 - Production hardening should add retention/deletion controls, malware scanning, private endpoints, queue-based asynchronous extraction, dead-letter alerting/replay, and user data export/deletion.
 
 ## Design references
 
 - [Azure AI Document Intelligence overview](https://learn.microsoft.com/azure/ai-services/document-intelligence/overview)
 - [Document Intelligence models and input limits](https://learn.microsoft.com/azure/ai-services/document-intelligence/model-overview)
+- [Azure OpenAI Service](https://learn.microsoft.com/azure/ai-services/openai/overview)
 - [Static Web Apps authentication and authorization](https://learn.microsoft.com/azure/static-web-apps/authentication-authorization)
 - [Link an existing Azure Functions app to Static Web Apps](https://learn.microsoft.com/azure/static-web-apps/functions-bring-your-own)
