@@ -158,7 +158,7 @@ const pageSubtitles: Record<Page, string> = {
   auth: "Sign in to your ApplyPilot account.",
 };
 const productTourSteps = [
-  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Queued, Not applied, Applied, or Failed jobs." },
+  { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Not applied, Queued, Failed, or Submitted jobs." },
   { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
   { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
   { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
@@ -945,13 +945,6 @@ function Dashboard(p: {
       </Toolbar>
       <div className="metric-row">
         <Metric
-          n={String(p.allJobs.filter((job) => job.status === "queued").length)}
-          label="Queued"
-          color="brand"
-          active={p.status === "queued"}
-          onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
-        />
-        <Metric
           n={String(p.allJobs.filter((job) => job.status === "ready").length)}
           label="Not applied"
           color="brand"
@@ -959,11 +952,11 @@ function Dashboard(p: {
           onClick={() => p.setStatus(p.status === "ready" ? "all" : "ready")}
         />
         <Metric
-          n={String(p.allJobs.filter((job) => job.status === "applied").length)}
-          label="Applied"
-          color="green"
-          active={p.status === "applied"}
-          onClick={() => p.setStatus(p.status === "applied" ? "all" : "applied")}
+          n={String(p.allJobs.filter((job) => job.status === "queued").length)}
+          label="Queued"
+          color="brand"
+          active={p.status === "queued"}
+          onClick={() => p.setStatus(p.status === "queued" ? "all" : "queued")}
         />
         <Metric
           n={String(p.allJobs.filter((job) => job.status === "failed").length)}
@@ -971,6 +964,13 @@ function Dashboard(p: {
           color="red"
           active={p.status === "failed"}
           onClick={() => p.setStatus(p.status === "failed" ? "all" : "failed")}
+        />
+        <Metric
+          n={String(p.allJobs.filter((job) => job.status === "applied").length)}
+          label="Submitted"
+          color="green"
+          active={p.status === "applied"}
+          onClick={() => p.setStatus(p.status === "applied" ? "all" : "applied")}
         />
       </div>
       <div className="toolbar">
@@ -1004,8 +1004,8 @@ function Dashboard(p: {
           <option value="all">All matches</option>
           <option value="ready">Not applied</option>
           <option value="queued">Queued</option>
-          <option value="applied">Applied</option>
           <option value="failed">Failed</option>
+          <option value="applied">Submitted</option>
         </select>
       </div>
       {p.feedState === "error" && (
@@ -1147,7 +1147,7 @@ function JobRow({
 }) {
   const [applying, setApplying] = useState(false);
   const statusLabel = j.status === "applied"
-    ? "Applied"
+    ? "Submitted"
     : j.status === "queued"
       ? (j.applicationStatus === "processing" ? "Submitting" : "Queued")
       : j.status === "failed"
@@ -1454,7 +1454,7 @@ function JobDetail({
         <div className="submission-banner applied">
           <Checkmark24Regular />
           <div>
-            <b>Applied</b>
+            <b>Submitted</b>
             <p>This application was submitted successfully.</p>
           </div>
         </div>
@@ -1497,7 +1497,7 @@ function JobDetail({
               : job.status === "failed"
                 ? "Answer questions below"
                 : job.status === "applied"
-                  ? "Already applied"
+                  ? "Already submitted"
                   : "Queued"}
         </button>
       </div>
