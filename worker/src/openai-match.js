@@ -58,10 +58,10 @@ export function allowlistGptAnswers(parsed, fields) {
 }
 
 /**
- * @param {{ profile: object, fields: Array<{ key: string, label: string, options: string[], candidate?: string }> }} input
+ * @param {{ profile: object, fields: Array<{ key: string, label: string, options: string[], candidate?: string }>, fetchImpl?: typeof fetch, getAccessToken?: () => Promise<string> }} input
  * @returns {Promise<Record<string, string>>}
  */
-export async function matchOptionsWithGpt({ profile, fields }) {
+export async function matchOptionsWithGpt({ profile, fields, fetchImpl = fetch, getAccessToken } = {}) {
   if (!isOpenAiConfigured() || !fields?.length) return {};
 
   const compactProfile = {
@@ -105,12 +105,14 @@ export async function matchOptionsWithGpt({ profile, fields }) {
 
   const user = JSON.stringify({ profile: compactProfile, fields: payload });
 
-  const token = await credential.getToken("https://cognitiveservices.azure.com/.default");
+  const bearer = getAccessToken
+    ? await getAccessToken()
+    : (await credential.getToken("https://cognitiveservices.azure.com/.default")).token;
   const url = `${endpointBase()}/openai/deployments/${encodeURIComponent(deployment())}/chat/completions?api-version=${encodeURIComponent(apiVersion())}`;
-  const response = await fetch(url, {
+  const response = await fetchImpl(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token.token}`,
+      Authorization: `Bearer ${bearer}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

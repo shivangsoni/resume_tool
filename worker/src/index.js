@@ -16,13 +16,13 @@ const blobs = new BlobServiceClient(`https://${process.env.AZURE_STORAGE_ACCOUNT
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function load(id) {
-  // Claim queued apps, or reclaim processing rows stuck longer than 10 minutes
-  // (worker crash / auto-complete left SQL in processing with no consumer).
+  // Claim queued apps, or reclaim processing rows stuck longer than 3 minutes
+  // (container redeploy / crash leaves SQL in processing with no consumer).
   const result = await pool.request().input("id", sql.UniqueIdentifier, id).query(`
     UPDATE dbo.Applications SET Status='processing',UpdatedAt=SYSUTCDATETIME() OUTPUT inserted.*
     WHERE Id=@id AND (
       Status='queued'
-      OR (Status='processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+      OR (Status='processing' AND UpdatedAt < DATEADD(minute, -3, SYSUTCDATETIME()))
     );
   `);
   if (!result.recordset.length) return null;
@@ -213,7 +213,7 @@ async function claimNextQueuedApplication() {
       SELECT TOP (1) Id
       FROM dbo.Applications WITH (UPDLOCK, READPAST, ROWLOCK)
       WHERE Status = 'queued'
-         OR (Status = 'processing' AND UpdatedAt < DATEADD(minute, -10, SYSUTCDATETIME()))
+         OR (Status = 'processing' AND UpdatedAt < DATEADD(minute, -3, SYSUTCDATETIME()))
       ORDER BY COALESCE(SubmissionQueuedAt, UpdatedAt) ASC
     )
     UPDATE dbo.Applications

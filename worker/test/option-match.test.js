@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { matchWithConfidence, resolveCatalogAnswers } from "../src/option-match.js";
 import { matchOptionLabel, knownAnswer, lookupAnswer } from "../src/automation.js";
 import { catalogAnswersForFill } from "../src/option-harvest.js";
-import { allowlistGptAnswers, rankOptionsForPrompt } from "../src/openai-match.js";
+import { allowlistGptAnswers, rankOptionsForPrompt, matchOptionsWithGpt } from "../src/openai-match.js";
 
 test("matchWithConfidence prefers exact and alias hits", () => {
   assert.deepEqual(
@@ -72,9 +72,48 @@ test("rankOptionsForPrompt keeps relevant school near the top", () => {
     "University of California - Davis",
     "Z University",
   ];
-  // Pad so ranking/cap actually runs.
   while (options.length < 90) options.push(`School ${options.length}`);
   const ranked = rankOptionsForPrompt(options, ["University of California, Davis"], 80);
   assert.ok(ranked.includes("University of California - Davis"));
   assert.equal(ranked.length, 80);
+});
+
+test("matchOptionsWithGpt allowlists mocked HTTP responses", async () => {
+  const prevEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  const prevDeployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+  process.env.AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+  process.env.AZURE_OPENAI_DEPLOYMENT = "gpt-5-mini";
+  try {
+    const fields = [{ key: "q1", label: "Opt in?", options: ["Yes", "No"] }];
+    const rejected = await matchOptionsWithGpt({
+      profile: { country: "US" },
+      fields,
+      getAccessToken: async () => "test-token",
+      fetchImpl: async () => ({
+        ok: true,
+        async json() {
+          return { choices: [{ message: { content: JSON.stringify({ q1: "Maybe" }) } }] };
+        },
+      }),
+    });
+    assert.deepEqual(rejected, {});
+
+    const accepted = await matchOptionsWithGpt({
+      profile: { country: "US" },
+      fields,
+      getAccessToken: async () => "test-token",
+      fetchImpl: async () => ({
+        ok: true,
+        async json() {
+          return { choices: [{ message: { content: JSON.stringify({ q1: "No" }) } }] };
+        },
+      }),
+    });
+    assert.deepEqual(accepted, { q1: "No" });
+  } finally {
+    if (prevEndpoint == null) delete process.env.AZURE_OPENAI_ENDPOINT;
+    else process.env.AZURE_OPENAI_ENDPOINT = prevEndpoint;
+    if (prevDeployment == null) delete process.env.AZURE_OPENAI_DEPLOYMENT;
+    else process.env.AZURE_OPENAI_DEPLOYMENT = prevDeployment;
+  }
 });

@@ -53,35 +53,58 @@ export async function harvestReactSelectOptions(page, field, { filterText = "", 
   return options.filter((text) => !/\+\d+$/.test(text) || /united states|country/i.test(filterText));
 }
 
-function schoolSearchTokens(profile = {}) {
+const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Distinctive typeahead tokens from the profile school (no alphabet dumps). */
+export function schoolSearchTokens(profile = {}) {
   const school = String(profile.school || "").trim();
   const tokens = [];
   if (/university of california.*davis|uc\s*davis/i.test(school)) tokens.push("Davis");
   else if (school) {
-    const parts = school.split(/[\s,/-]+/).filter((part) => part.length > 3);
-    if (parts.length) tokens.push(parts[parts.length - 1], parts[0]);
-    tokens.push(school.slice(0, 24));
+    const parts = school.split(/[\s,/-]+/).filter((part) => part.length > 3 && !/^(university|college|institute|school)$/i.test(part));
+    if (parts.length) tokens.push(parts[parts.length - 1]);
+    if (parts[0] && parts[0] !== parts[parts.length - 1]) tokens.push(parts[0]);
   }
-  tokens.push("University", "a", "m", "s");
-  return [...new Set(tokens.map((t) => String(t).trim()).filter(Boolean))].slice(0, 8);
+  return [...new Set(tokens.map((t) => String(t).trim()).filter(Boolean))].slice(0, 2);
+}
+
+/** True when cache already contains a usable match for the profile school. */
+export function cacheCoversSchool(cached, profile = {}) {
+  const school = String(profile.school || "").trim();
+  if (!school || !cached?.length) return false;
+  const needle = normalize(school);
+  if (cached.some((option) => normalize(option) === needle)) return true;
+  if (/university of california.*davis|uc\s*davis/i.test(school)) {
+    return cached.some((option) => /california\s*-\s*davis/i.test(option));
+  }
+  const tokens = schoolSearchTokens(profile);
+  return tokens.some((token) => {
+    const t = normalize(token);
+    return t.length >= 4 && cached.some((option) => normalize(option).includes(t));
+  });
 }
 
 /**
- * Harvest school typeahead options (cache + live probes).
+ * Harvest school typeahead options (cache first; live probe only when needed).
  */
 export async function harvestSchoolOptions(page, field, profile = {}, { board = "stripe" } = {}) {
   const cached = await loadOptionCatalog(board, "school");
+  if (cacheCoversSchool(cached, profile)) {
+    return cached;
+  }
+
   const live = new Set(cached);
   const tokens = schoolSearchTokens(profile);
-  for (const token of tokens) {
-    const batch = await harvestReactSelectOptions(page, field, { filterText: token, waitMs: 900 });
+  // Cold cache: one short distinctive probe only (avoid a/m/s alphabet sweeps that blow the 8‑min budget).
+  for (const token of tokens.slice(0, 1)) {
+    const batch = await harvestReactSelectOptions(page, field, { filterText: token, waitMs: 700 });
     for (const option of batch) live.add(option);
   }
   const list = [...live];
   if (list.length > (cached.length || 0)) {
     await saveOptionCatalog(board, "school", list);
   }
-  return list;
+  return list.length ? list : cached;
 }
 
 function guessBoard(application = {}) {
@@ -94,9 +117,9 @@ function guessBoard(application = {}) {
   return "greenhouse";
 }
 
-function fieldKindFromLabel(label = "", id = "") {
+export function fieldKindFromLabel(label = "", id = "") {
   const text = `${label} ${id}`.toLowerCase();
-  if (/school|university|college|alma mater/.test(text)) return "school";
+  if (/school|university|college|alma mater/.test(text) || /school--/i.test(id)) return "school";
   if (/\bdegree\b/.test(text)) return "degree";
   if (/currently reside|country where you/.test(text)) return "reside_country";
   if (/years? of experience|software engineer/.test(text)) return "experience_years";
@@ -119,6 +142,7 @@ function fieldKindFromLabel(label = "", id = "") {
 export async function harvestFormCatalog(page, scope, profile = {}, application = {}) {
   const board = guessBoard(application);
   const catalog = [];
+  let schoolOptionsCache = null;
 
   const nativeSelects = scope.locator("select");
   const nativeCount = await nativeSelects.count().catch(() => 0);
@@ -175,7 +199,10 @@ export async function harvestFormCatalog(page, scope, profile = {}, application 
     const kind = fieldKindFromLabel(label, id);
     let options = [];
     if (kind === "school" || /school--/i.test(id)) {
-      options = await harvestSchoolOptions(page, field, profile, { board });
+      if (!schoolOptionsCache) {
+        schoolOptionsCache = await harvestSchoolOptions(page, field, profile, { board });
+      }
+      options = schoolOptionsCache;
     } else if (kind === "phone_country" || id === "country") {
       options = await harvestReactSelectOptions(page, field, { filterText: "United States", waitMs: 600 });
     } else if (kind === "reside_country") {
@@ -190,7 +217,6 @@ export async function harvestFormCatalog(page, scope, profile = {}, application 
     } else if (kind === "experience_years") {
       options = await harvestReactSelectOptions(page, field, { filterText: "", waitMs: 500 });
     } else {
-      // Yes/No style custom selects — open without filter
       options = await harvestReactSelectOptions(page, field, { filterText: "", waitMs: 400 });
       if (!options.length) {
         options = await harvestReactSelectOptions(page, field, { filterText: "Yes", waitMs: 400 });
