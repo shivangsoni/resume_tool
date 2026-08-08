@@ -1,7 +1,6 @@
 import { EmailClient } from "@azure/communication-email";
 import { DefaultAzureCredential } from "@azure/identity";
 import { appendMailboxMessage, ensureMailbox } from "./database.js";
-import { addressForAlias } from "./mailbox-address.js";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OPS_ALERT_EMAIL = process.env.OPS_ALERT_EMAIL || "shivangsoni22@gmail.com";
@@ -138,6 +137,5 @@ export async function sendOpsAlertEmail({ title, detail, context = {} }) {
 }
 
 export async function resolveApplyEmail(principal) {
-  const mailbox = await ensureMailbox(principal);
-  return addressForAlias(mailbox.Alias) || principal.email || null;
+  return principal?.email || null;
 }

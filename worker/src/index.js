@@ -60,9 +60,11 @@ async function fetchApplicationContext(id) {
       profile[key] = answers[key].trim();
     }
   }
-  const mailboxEmail = addressForAlias(context.MailboxAlias);
-  // Prefer private inbound alias so recruiter replies land in ApplyPilot Inbox.
-  const applyEmail = mailboxEmail || answers.email || profile.email || context.Email;
+  // Employer forms use the user's real email — never a Postmark inbound alias.
+  const applyEmail = [context.Email, profile.email, answers.email]
+    .map((value) => String(value || "").trim())
+    .find((value) => value && emailPattern.test(value) && !/inbound\.postmarkapp\.com$/i.test(value) && !(process.env.MAILBOX_DOMAIN && value.toLowerCase().endsWith(`@${String(process.env.MAILBOX_DOMAIN).toLowerCase()}`)))
+    || null;
   return {
     application: { id: app.Id, jobExternalId: app.JobExternalId, company: app.Company, title: app.Title, source: app.Source, sourceUrl: app.SourceUrl, answers: { ...answers, email: applyEmail } },
     profile: { ...profile, email: applyEmail },
@@ -76,15 +78,6 @@ async function applicationStatus(id) {
   const result = await pool.request().input("id", sql.UniqueIdentifier, id)
     .query("SELECT Status FROM dbo.Applications WHERE Id=@id");
   return result.recordset[0]?.Status || null;
-}
-
-function addressForAlias(alias) {
-  if (!alias) return null;
-  const domain = process.env.MAILBOX_DOMAIN;
-  if (domain) return `${alias}@${domain}`;
-  const inbound = process.env.POSTMARK_INBOUND_ADDRESS || "";
-  const [local, host] = inbound.split("@");
-  return local && host ? `${local}+${alias}@${host}` : null;
 }
 
 function environmentMarker() {

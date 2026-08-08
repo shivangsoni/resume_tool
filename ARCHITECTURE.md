@@ -69,7 +69,7 @@ sequenceDiagram
 
 Microsoft, Google, and GitHub are registered in `staticwebapp.config.json` and enabled in the UI when listed in `AUTH_PROVIDERS` (for example `aad,google,github`). Facebook requires a separate developer registration and remains disabled until those credentials and callbacks are configured; the app never simulates a successful provider.
 
-### Email notification and future inbound alias flow
+### Email notification and inbound mailbox
 
 ```mermaid
 flowchart LR
@@ -77,13 +77,13 @@ flowchart LR
     Function -->|managed identity| ACS[Communication Services Email]
     ACS -->|outbound confirmation| IdentityEmail[Authenticated user email]
 
-    Recruiter[Recruiter reply] -. future MX .-> Inbound[Owned-domain inbound provider]
-    Inbound -. signed webhook .-> Function
-    Function -. alias lookup .-> SQL[(User mailbox metadata)]
-    Function -. consented forwarding .-> IdentityEmail
+    EmployerForm[Employer application form] -->|signed-in email| IdentityEmail
+    Recruiter[Recruiter / OTP mail] --> IdentityEmail
+
+    StatusMirror[Outbound status copy] --> Inbox[(ApplyPilot inbox SQL)]
 ```
 
-The inbound path uses Postmark's inbound stream and authenticated Azure Function webhook. Postmark parses messages addressed to a deterministic per-user alias, the Function maps that alias to an internal user, and SQL stores bounded plain-text content. The custom Dynu hostname is activated only after its MX record and Postmark inbound-domain forwarding are verified. Azure Communication Services remains the outbound notification service.
+Employer forms always receive the authenticated user's email. Azure Communication Services remains the outbound notification service; status emails are also mirrored into `dbo.InboundMessages`. Postmark inbound aliases are not used on applications.
 
 ### Resume ingestion and profile enrichment
 

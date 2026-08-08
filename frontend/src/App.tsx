@@ -160,7 +160,7 @@ const pageSubtitles: Record<Page, string> = {
 const productTourSteps = [
   { page: "dashboard" as const, title: "Job Matches", body: "Browse AI-matched roles. Use the KPI cards to filter Not applied, Queued, Failed, or Submitted jobs." },
   { page: "applications" as const, title: "Applications", body: "Track every submission, answer employer follow-up questions, and retry failed applies." },
-  { page: "inbox" as const, title: "Email Inbox", body: "Status emails and recruiter replies land here. Applications use your private inbound address so replies are routed correctly." },
+  { page: "inbox" as const, title: "Email Inbox", body: "Status emails and related application messages land here. Employer forms use your signed-in email." },
   { page: "resume" as const, title: "Résumé", body: "Upload a PDF or DOCX. Extracted details help fill employer forms during Simple Apply." },
   { page: "profile" as const, title: "Profile", body: "Keep contact details and work history current so automated applies stay accurate." },
   { page: "preferences" as const, title: "Preferences", body: "Set target titles, locations, and workplace types to improve match quality." },
@@ -2460,13 +2460,13 @@ function LandingPage({ signedIn }: { signedIn: boolean }) {
             <span><strong>100%</strong> profile control</span>
           </div>
           <div className="preview-job"><Briefcase24Regular /><div><b>Senior Software Engineer</b><small>Matched to your profile</small></div><Checkmark24Regular /></div>
-          <div className="preview-job"><Mail24Regular /><div><b>Recruiter replies</b><small>Delivered to your private alias</small></div><Checkmark24Regular /></div>
+          <div className="preview-job"><Mail24Regular /><div><b>Status updates</b><small>Queued and submitted notices in one place</small></div><Checkmark24Regular /></div>
         </div>
       </section>
       <section className="landing-features" id="features">
         <article><Search24Regular /><h2>Live job discovery</h2><p>Search current roles with location, workplace and source filters.</p></article>
         <article><Document24Regular /><h2>Reusable profile</h2><p>Upload your résumé and review extracted details before applying.</p></article>
-        <article><Mail24Regular /><h2>Application inbox</h2><p>Track application messages through your private inbound alias.</p></article>
+        <article><Mail24Regular /><h2>Application inbox</h2><p>Track status emails and application messages in one place.</p></article>
       </section>
     </main>
   );

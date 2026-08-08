@@ -14,7 +14,7 @@ app.http("applications", {
       if (!body?.job?.id || !body.job.sourceUrl) return { status: 400, jsonBody: { error: "A valid job is required." } };
       const applyEmail = await resolveApplyEmail(principal);
       const answers = { ...(body.answers || {}) };
-      // Always use the private inbound alias so recruiter replies land in ApplyPilot Inbox.
+      // Employer forms use the signed-in user email (not a Postmark inbound alias).
       if (applyEmail) answers.email = applyEmail;
       const application = await createApplication(principal, body.job, answers);
       let notification = { sent: false };

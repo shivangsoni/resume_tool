@@ -17,7 +17,7 @@ app.http("mailbox", {
           address: addressForAlias(result.mailbox.Alias),
           messages: result.messages,
           total: result.total,
-          routingNote: "Employer applications use this address so recruiter replies appear here. Status emails are also copied into this inbox.",
+          routingNote: "Employer applications use your signed-in email. Status emails are copied into this inbox.",
         },
         headers: { "Cache-Control": "no-store" },
       };
