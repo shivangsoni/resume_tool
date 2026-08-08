@@ -122,24 +122,65 @@ function cryptoRandomUuid() {
   return globalThis.crypto.randomUUID();
 }
 
+/** Account email from dbo.Users (sign-in / registration), not the Postmark alias. */
+export async function getUserEmail(principal) {
+  const userId = await ensureUser(principal);
+  const db = await pool();
+  const result = await db.request().input("userId", sql.UniqueIdentifier, userId)
+    .query("SELECT Email FROM dbo.Users WHERE Id=@userId");
+  return result.recordset[0]?.Email || null;
+}
+
+function isMailboxAliasAddress(email) {
+  const value = String(email || "").trim().toLowerCase();
+  if (!value) return false;
+  if (/inbound\.postmarkapp\.com$/i.test(value)) return true;
+  const domain = String(process.env.MAILBOX_DOMAIN || "").trim().toLowerCase();
+  return Boolean(domain && value.endsWith(`@${domain}`));
+}
+
 export async function getProfile(principal) {
   const userId = await ensureUser(principal);
   const db = await pool();
   const result = await db.request().input("userId", sql.UniqueIdentifier, userId)
-    .query("SELECT ProfileJson, UpdatedAt FROM dbo.CandidateProfiles WHERE UserId=@userId");
-  if (!result.recordset.length) {
+    .query(`
+      SELECT p.ProfileJson, p.UpdatedAt, u.Email AS UserEmail
+      FROM dbo.Users u
+      LEFT JOIN dbo.CandidateProfiles p ON p.UserId=u.Id
+      WHERE u.Id=@userId
+    `);
+  const row = result.recordset[0];
+  if (!row) throw new Error("User was not found.");
+  const accountEmail = String(row.UserEmail || principal.email || "").trim() || null;
+  if (!row.ProfileJson) {
     const seeded = {};
-    if (principal.email) seeded.email = principal.email;
+    if (accountEmail) seeded.email = accountEmail;
     await saveProfile(principal, seeded);
     return getProfile(principal);
   }
-  return { profile: JSON.parse(result.recordset[0].ProfileJson), updatedAt: result.recordset[0].UpdatedAt };
+  const profile = JSON.parse(row.ProfileJson);
+  // Always prefer the account email on the profile surface — never a Postmark inbound alias.
+  if (accountEmail && !isMailboxAliasAddress(accountEmail)) {
+    profile.email = accountEmail;
+  } else if (isMailboxAliasAddress(profile.email)) {
+    profile.email = "";
+  }
+  return { profile, updatedAt: row.UpdatedAt };
 }
 
 export async function saveProfile(principal, profile) {
   const userId = await ensureUser(principal);
   const db = await pool();
-  await db.request().input("userId", sql.UniqueIdentifier, userId).input("json", sql.NVarChar(sql.MAX), JSON.stringify(profile)).query(`
+  const account = await db.request().input("userId", sql.UniqueIdentifier, userId)
+    .query("SELECT Email FROM dbo.Users WHERE Id=@userId");
+  const accountEmail = String(account.recordset[0]?.Email || principal.email || "").trim();
+  const next = { ...(profile || {}) };
+  if (accountEmail && !isMailboxAliasAddress(accountEmail)) {
+    next.email = accountEmail;
+  } else if (isMailboxAliasAddress(next.email)) {
+    next.email = "";
+  }
+  await db.request().input("userId", sql.UniqueIdentifier, userId).input("json", sql.NVarChar(sql.MAX), JSON.stringify(next)).query(`
     MERGE dbo.CandidateProfiles WITH (HOLDLOCK) AS target
     USING (SELECT @userId AS UserId, @json AS ProfileJson) incoming ON target.UserId=incoming.UserId
     WHEN MATCHED THEN UPDATE SET ProfileJson=incoming.ProfileJson, UpdatedAt=SYSUTCDATETIME()

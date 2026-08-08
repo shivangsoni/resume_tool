@@ -1,9 +1,26 @@
 import { EmailClient } from "@azure/communication-email";
 import { DefaultAzureCredential } from "@azure/identity";
-import { appendMailboxMessage, ensureMailbox } from "./database.js";
+import { appendMailboxMessage, ensureMailbox, getUserEmail } from "./database.js";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OPS_ALERT_EMAIL = process.env.OPS_ALERT_EMAIL || "shivangsoni22@gmail.com";
+
+function isMailboxAliasEmail(email) {
+  const value = String(email || "").trim().toLowerCase();
+  if (!value) return false;
+  if (/inbound\.postmarkapp\.com$/i.test(value)) return true;
+  const domain = String(process.env.MAILBOX_DOMAIN || "").trim().toLowerCase();
+  return Boolean(domain && value.endsWith(`@${domain}`));
+}
+
+/** First usable personal inbox address (never Postmark / MAILBOX_DOMAIN alias). */
+function pickPersonalEmail(...candidates) {
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (emailPattern.test(value) && !isMailboxAliasEmail(value)) return value;
+  }
+  return null;
+}
 
 function environmentMarker(environment = process.env.DEPLOYMENT_ENVIRONMENT || "production") {
   const isNonProduction = environment.toLowerCase() !== "production";
@@ -95,8 +112,9 @@ async function deliverAndMirror(principal, content, providerMessageId, applicati
     console.error("Inbox mirror failed", error);
   }
   try {
-    const result = await sendEmail({ to: principal.email, ...content });
-    return { ...result, mirrored };
+    const to = await resolveApplyEmail(principal);
+    const result = await sendEmail({ to, ...content });
+    return { ...result, mirrored, to: to || undefined };
   } catch (error) {
     if (mirrored) return { sent: false, reason: error instanceof Error ? error.message : String(error), mirrored: true };
     throw error;
@@ -137,5 +155,12 @@ export async function sendOpsAlertEmail({ title, detail, context = {} }) {
 }
 
 export async function resolveApplyEmail(principal) {
-  return principal?.email || null;
+  let stored = null;
+  try {
+    stored = await getUserEmail(principal);
+  } catch (error) {
+    console.error("resolveApplyEmail user lookup failed", error);
+  }
+  // Employer forms + ACS notifications use the personal account email only.
+  return pickPersonalEmail(principal?.email, stored);
 }
